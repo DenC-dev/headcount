@@ -14,19 +14,21 @@ const { config } = await import('../server/config.js');
 const src = await import('../server/sources.js');
 const { lookupBill } = await import('../server/bills.js');
 
-const cfg = { ...config, congressKey: config.congressKey || 'DEMO_KEY' };
+// LIVE_NO_DEMO=1 (set in CI, where the shared demo key is always used up) skips Congress.gov without a key.
+const cfg = { ...config, congressKey: config.congressKey || (process.env.LIVE_NO_DEMO ? '' : 'DEMO_KEY') };
+const congress = { name: 'CONGRESS_API_KEY', value: cfg.congressKey };
 const days = (n) => new Date(Date.now() - n * 864e5);
 const results = [];
 const check = (cond, msg) => { if (!cond) throw new Error(msg); };
 
 async function run(name, needs, fn) {
-  if (needs && !needs.value) { results.push([name, 'skip', `set ${needs.name} to check it`]); return; }
+  if (needs && !needs.value) { results.push([name, 'skip', `set ${needs.name} to check it`, 0]); return; }
   const t = Date.now();
-  try { const note = await fn(); results.push([name, 'ok', `${note || ''} (${((Date.now() - t) / 1000).toFixed(1)}s)`]); }
-  catch (e) { results.push([name, 'FAIL', e.message]); }
+  try { const note = await fn(); results.push([name, 'ok', `${note || ''} (${((Date.now() - t) / 1000).toFixed(1)}s)`, Date.now() - t]); }
+  catch (e) { results.push([name, 'FAIL', e.message, Date.now() - t]); }
 }
 
-await run('Congress.gov: bills updated this week', null, async () => {
+await run('Congress.gov: bills updated this week', congress, async () => {
   const bills = await src.congressUpdated(cfg, days(3), 1);
   check(bills.length > 0, 'no bills came back');
   for (const b of bills) {
@@ -36,7 +38,7 @@ await run('Congress.gov: bills updated this week', null, async () => {
   }
   return `${bills.length} bills, e.g. ${bills[0].number}: ${bills[0].title.slice(0, 50)}`;
 });
-await run('Congress.gov: bill lookup for briefs', null, async () => {
+await run('Congress.gov: bill lookup for briefs', congress, async () => {
   const b = await lookupBill(cfg, { jurisdiction: 'US', number: 'H.R. 1', session: '119' });
   check(b.title && b.sponsors.length && b.latestAction, 'title, sponsor or latest action missing');
   return `${b.number}: ${b.title.slice(0, 60)}`;
@@ -106,4 +108,13 @@ const w = Math.max(...results.map((r) => r[0].length));
 for (const [name, status, note] of results) console.log(`${status.padEnd(4)}  ${name.padEnd(w)}  ${note}`);
 const failed = results.filter((r) => r[1] === 'FAIL').length, skipped = results.filter((r) => r[1] === 'skip').length;
 console.log(`\n${results.length - failed - skipped} passed, ${failed} failed, ${skipped} skipped`);
+// LIVE_JSON=path also writes the results for the status page and alerts.
+if (process.env.LIVE_JSON) {
+  const fs = await import('node:fs');
+  fs.writeFileSync(process.env.LIVE_JSON, JSON.stringify({
+    ranAt: new Date().toISOString(), run: process.env.LIVE_RUN_URL || '',
+    passed: results.length - failed - skipped, failed, skipped,
+    checks: results.map(([name, status, note, ms]) => ({ name, status: status === 'FAIL' ? 'fail' : status, note: String(note).slice(0, 300), ms })),
+  }, null, 2));
+}
 process.exitCode = failed ? 1 : 0;

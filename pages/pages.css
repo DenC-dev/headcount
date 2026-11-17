@@ -1,0 +1,35 @@
+/* Project website additions to the shared website styles (site.css). */
+.code { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 18px 0; overflow-x: auto; font: 14.5px/1.6 var(--mono); }
+code { font-family: var(--mono); font-size: .92em; }
+.hero h1 { font-size: clamp(38px, 5.6vw, 70px); }
+.chamber svg { width: 100%; height: auto; }
+.sources td, .sources th { vertical-align: top; }
+.tested { margin-top: 28px; }
+.chip { display: inline-block; font: 600 13px/1 var(--body); padding: 5px 9px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
+.chip.st-ok { background: color-mix(in srgb, var(--yes) 16%, transparent); color: var(--yes); }
+.chip.st-fail { background: color-mix(in srgb, var(--no) 16%, transparent); color: var(--no); }
+.chip.st-skip { background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
+.statuspage { padding-block: 48px 24px; }
+.statuspage .wrap { display: flex; flex-direction: column; gap: 14px; }
+.statuspage h1 { font-size: clamp(36px, 5vw, 56px); font-weight: 800; font-stretch: 85%; }
+.statuspage h2 { font-size: 26px; font-stretch: 90%; margin-top: 22px; }
+.statuspage .intro { color: var(--muted); max-width: 44em; }
+.summary { display: flex; align-items: center; gap: 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; font-size: 17px; }
+.summary .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
+.summary.st-ok .dot { background: var(--yes); } .summary.st-fail .dot { background: var(--no); } .summary.st-fail { border-color: var(--no); }
+.checks td.note { color: var(--muted); font-size: 14px; }
+.checks th { font-weight: 500; }
+.history { display: grid; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.hrow { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 12px; align-items: center; }
+.hname { font-size: 14px; }
+.hcells { display: flex; flex-wrap: wrap; gap: 3px; }
+.hcells i, .key { display: inline-block; width: 11px; height: 18px; border-radius: 3px; background: var(--line); vertical-align: middle; }
+.hcells i.st-ok, .key.st-ok { background: var(--yes); } .hcells i.st-fail, .key.st-fail { background: var(--no); } .hcells i.st-skip, .key.st-skip { background: color-mix(in srgb, var(--muted) 40%, transparent); }
+.key { margin: 0 4px 0 10px; height: 12px; }
+.checks .phone { display: none; font-weight: 400; margin-top: 3px; }
+@media (max-width: 640px) {
+  .hrow { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  table.checks { min-width: 0; }
+  .checks .phone { display: block; }
+  .checks th:nth-child(3), .checks td.wide { display: none; }
+}

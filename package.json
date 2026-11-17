@@ -11,7 +11,8 @@
     "test": "node --disable-warning=ExperimentalWarning --test --test-timeout=30000 test/*.test.js",
     "e2e": "node test/e2e.mjs",
     "screenshots": "node scripts/screenshots.mjs",
-    "test:live": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning test/live.mjs"
+    "test:live": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning test/live.mjs",
+    "pages": "node scripts/build-pages.mjs"
   },
   "engines": {
     "node": ">=22.13"
@@ -21,5 +22,13 @@
     "@anthropic-ai/sdk": "^1.9.0",
     "nodemailer": "^10.6.0",
     "zod": "^4.6.7"
+  },
+  "homepage": "https://denc-dev.github.io/headcount/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DenC-dev/headcount.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DenC-dev/headcount/issues"
   }
 }

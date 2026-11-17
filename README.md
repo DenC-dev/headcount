@@ -1,5 +1,10 @@
 # Headcount
 
+[![Tests](https://github.com/DenC-dev/headcount/actions/workflows/tests.yml/badge.svg)](https://github.com/DenC-dev/headcount/actions/workflows/tests.yml)
+[![Live data checks](https://github.com/DenC-dev/headcount/actions/workflows/live.yml/badge.svg)](https://denc-dev.github.io/headcount/status.html)
+
+Open source under the Apache License 2.0. Project website and data source status: https://denc-dev.github.io/headcount/
+
 Whip counts, meeting requests and bill briefs for lobbying firms, government affairs teams and advocacy groups, sold per seat.
 
 - **Vote count.** Seat-by-seat positions, live odds of passage (or defeat) through committee and the floor, and a ranked list of the members whose minds matter most. Preset rosters for the U.S. House, U.S. Senate, Florida House and Florida Senate, with office contact details.
@@ -56,6 +61,23 @@ npm run test:live
 ```
 
 Checks the real public services through the same code the server uses: Congress.gov, Open States, the Federal Register, SAM.gov, LDA.gov, USAspending.gov and the Census geocoder. It confirms each one answers in the shape Headcount expects. It reads keys from the environment or `.env`; a source without its key is skipped, and Congress.gov falls back to the public `DEMO_KEY` (a few calls an hour). `LIVE_AI=1` also scores three real items with Claude, which is billed. Behind an outbound proxy it sets `NODE_USE_ENV_PROXY=1` for you (Node 22.21 or later). Run it before a release and whenever a source changes; it makes a few dozen requests.
+
+### Ongoing checks
+
+Two GitHub Actions workflows keep the project honest:
+
+- **Tests** (`.github/workflows/tests.yml`) runs `npm test` and the end-to-end browser test on every push and pull request. It needs no secrets.
+- **Live checks and website** (`.github/workflows/live.yml`) runs `npm run test:live` every morning against the real data sources, publishes the results to the project website's status page, and opens an issue labelled `live-checks` when a check fails (closing it when everything passes again). The run itself fails too, so GitHub emails the repository owner.
+
+To turn them on:
+
+1. Add the free keys as repository secrets (Settings, Secrets and variables, Actions): `CONGRESS_API_KEY`, `OPENSTATES_API_KEY` and `SAM_API_KEY`, and optionally `LDA_API_KEY`. A check whose key is missing is skipped, not failed.
+2. Turn on GitHub Pages with **GitHub Actions** as the source (Settings, Pages). Until then the checks still run and alert; only the website is not published.
+3. Scheduled runs only happen on the default branch, so the workflows need to be on it.
+
+To check Claude scoring as well (billed), add the `ANTHROPIC_API_KEY` secret and a repository variable `LIVE_AI` set to `1`.
+
+The project website lives in `pages/`. `npm run pages` builds it into `_site/` (with `LIVE_JSON` pointing at a results file from `npm run test:live` to fill in the status page).
 
 ```bash
 npm run screenshots
