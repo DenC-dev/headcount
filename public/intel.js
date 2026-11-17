@@ -60,7 +60,17 @@ function itemHtml(i) {
     <div class="meta">${[i.status && (i.prevStatus && i.changedAt ? `Moved: ${esc(i.prevStatus)} → <b>${esc(i.status)}</b>` : `Latest: ${esc(i.status)}${i.statusDate ? ` (${esc(fmtDay(i.statusDate))})` : ''}`), dueTxt && `<span class="${due !== null && due >= 0 && due <= 7 ? 'bad' : ''}">${esc(dueTxt)}</span>`, i.date && `Updated ${esc(fmtDay(i.date))}`, i.source && esc(i.source)].filter(Boolean).join(' · ')}</div>
     <div class="btnrow">${acts}</div></li>`;
 }
-function renderMonitor() {
+// Redraws keep keyboard focus on the same control, including custom dropdowns
+// (their buttons are created again for the new selects).
+function keepFocus(el, draw) {
+  const a = document.activeElement, id = a && el.contains(a) ? a.id : null;
+  draw();
+  if (window.CustomSelect) el.querySelectorAll('select').forEach(CustomSelect.enhance);
+  const f = id && document.getElementById(id);
+  if (f && f !== document.activeElement) f.focus();
+}
+function renderMonitor() { keepFocus($('#monitorPage'), drawMonitor); }
+function drawMonitor() {
   const el = $('#monitorPage');
   if (!teamMember()) { el.innerHTML = '<div class="panel empty">The Monitor is for workspace members. Sign in and join a workspace to use it.</div>'; return; }
   if (MON.org && MON.org !== ORG.id) { MON.watches = null; MON.items = null; MON.watch = ''; }
@@ -271,7 +281,8 @@ function shownContacts() {
   const q = CRM.q.trim().toLowerCase();
   return (CRM.contacts || []).filter((c) => (!CRM.tag || c.tags.includes(CRM.tag)) && (!q || `${c.name} ${c.title} ${c.organization} ${c.email} ${c.tags.join(' ')}`.toLowerCase().includes(q)));
 }
-function renderContacts() {
+function renderContacts() { keepFocus($('#contactsPage'), drawContacts); }
+function drawContacts() {
   const el = $('#contactsPage');
   if (!teamMember()) { el.innerHTML = '<div class="panel empty">Contacts are for workspace members. Sign in and join a workspace to use them.</div>'; return; }
   if (CRM.org && CRM.org !== ORG.id) { CRM.contacts = null; CRM.members = null; CRM.sel.clear(); }

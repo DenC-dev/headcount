@@ -352,9 +352,11 @@ try {
   await alice.page.waitForSelector('.cs-list[role=listbox]:not([hidden])');
   assert.equal(await kindBtn.getAttribute('aria-expanded'), 'true');
   assert.deepEqual(await alice.page.locator('.cs-list [role=option]').allInnerTexts(), ['Bills, rules and contracts', 'Bills', 'Regulations', 'Contracts']);
+  await alice.page.evaluate(() => { window.__kindBtn = document.querySelector('#mon_kind-cs'); });
   await alice.page.click('.cs-list [role=option]:text-is("Bills")');
-  await alice.page.waitForFunction(() => MON.kind === 'bill' && document.querySelector('#mon_kind-cs .cs-value').textContent === 'Bills');
-  await alice.page.focus('#mon_kind-cs'); await alice.page.keyboard.press('Home');
+  // The Monitor redraws with the filter applied; focus stays on the dropdown
+  await alice.page.waitForFunction(() => MON.kind === 'bill' && document.querySelector('#mon_kind-cs') !== window.__kindBtn && document.activeElement && document.activeElement.id === 'mon_kind-cs' && document.querySelector('#mon_kind-cs .cs-value').textContent === 'Bills');
+  await alice.page.keyboard.press('Home');
   assert.match(await alice.page.locator('#mon_kind-cs').getAttribute('aria-activedescendant'), /-o0$/);
   await alice.page.keyboard.press('Enter');
   await alice.page.waitForFunction(() => MON.kind === '' && document.querySelector('.cs-list').hidden);
