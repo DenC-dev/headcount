@@ -44,8 +44,8 @@ jobs:
       code: ${{ steps.live.outputs.code }}
       pages: ${{ steps.pages.outputs.base_url != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -90,6 +90,10 @@ jobs:
         id: pages
         continue-on-error: true # GitHub Pages is not turned on yet
         uses: actions/configure-pages@v5
+
+      - name: Explain a missing website
+        if: steps.pages.outputs.base_url == ''
+        run: echo "::warning title=Website not published::GitHub Pages is not set to publish from GitHub Actions. In Settings, Pages, set Source to GitHub Actions, then run this workflow again. The live checks above still ran."
 
       - name: Build the website
         if: steps.pages.outputs.base_url != ''

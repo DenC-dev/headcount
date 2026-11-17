@@ -72,7 +72,7 @@ Two GitHub Actions workflows keep the project honest:
 To turn them on:
 
 1. Add the free keys as repository secrets (Settings, Secrets and variables, Actions): `CONGRESS_API_KEY`, `OPENSTATES_API_KEY` and `SAM_API_KEY`, and optionally `LDA_API_KEY`. A check whose key is missing is skipped, not failed.
-2. Turn on GitHub Pages with **GitHub Actions** as the source (Settings, Pages). Until then the checks still run and alert; only the website is not published.
+2. In Settings, Pages, set **Source** to **GitHub Actions** (not "Deploy from a branch", which publishes the README instead of the website). Then run the workflow once from the Actions tab. Until then the checks still run and alert; only the website is not published.
 3. Scheduled runs only happen on the default branch, so the workflows need to be on it.
 
 To check Claude scoring as well (billed), add the `ANTHROPIC_API_KEY` secret and a repository variable `LIVE_AI` set to `1`.
@@ -159,7 +159,7 @@ On Team and Firm, a workspace admin can add the firm's email domain and verify i
 - **Federal bills** come from Congress.gov (`CONGRESS_API_KEY`, step 3). Congress.gov has no keyword search, so the Monitor reads every bill updated since its last check and matches titles.
 - **State bills and state rosters** come from Open States (`OPENSTATES_API_KEY`, step 3). Free Open States keys have a daily request limit; a watch over many states uses one request per state per check.
 - **Regulations** come from the Federal Register API, which needs no key.
-- **Contract opportunities** need a free SAM.gov API key: sign in at SAM.gov, open your profile and request a public API key, then set `SAM_API_KEY`. Without it, contract watches report that they are not set up.
+- **Contract opportunities** need a free SAM.gov API key: sign in at SAM.gov, open your profile and request a public API key, then set `SAM_API_KEY`. Without it, contract watches report that they are not set up. SAM.gov allows only 10 requests a day for an account without a SAM.gov role (1,000 with one), and asks you to replace the key every 90 days, so contract watches are checked once a day (`SAM_INTERVAL_MS`) and each uses up to three requests.
 - **Lobbying disclosures** come from LDA.gov. It works without a key at a low rate limit; register at https://lda.gov/api/register/ and set `LDA_API_KEY` for more.
 - **Contract award history** comes from USAspending.gov, and **districts for action pages** from the U.S. Census geocoder. Neither needs a key.
 - **Scoring:** with `ANTHROPIC_API_KEY` set, the Monitor sends each new item's title, summary and the watch's priorities to Claude (`claude-opus-5-5`, low effort, structured output) in batches of 25. Scoring counts against a daily cap of five times `AI_DAILY_LIMIT`; past it, and without a key, items are scored by keyword.

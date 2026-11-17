@@ -68,4 +68,6 @@ config.ldaBase = (env.LDA_API_BASE || 'https://lda.gov/api/v1').replace(/\/+$/, 
 config.usaSpendingBase = (env.USASPENDING_API_BASE || 'https://api.usaspending.gov/api/v2').replace(/\/+$/, '');
 config.geocoderBase = (env.GEOCODER_BASE || 'https://geocoding.geo.census.gov/geocoder').replace(/\/+$/, '');
 config.monitorEvery = Number(env.MONITOR_INTERVAL_MS) || 6 * 3600 * 1000;
+// SAM.gov allows 10 requests a day for accounts without a SAM.gov role, so contract watches check once a day.
+config.samEvery = Number(env.SAM_INTERVAL_MS) || 24 * 3600 * 1000;
 config.monitorOff = env.MONITOR === 'off';

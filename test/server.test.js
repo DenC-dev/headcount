@@ -496,6 +496,16 @@ test('the Monitor finds bills in Congress and the states, rules and contract not
   const tracked = ok(await api('mona', 'GET', `/api/workspaces/${MW}/items?view=tracked`)).items;
   assert.equal(tracked[0].status, 'Passed House.'); assert.equal(tracked[0].prevStatus, 'Referred to the Subcommittee on Communications.');
   assert.match(emailsTo('mona@example.org', 'monitor').at(-1).text_body, /H\.R\. 1234: Rural Broadband Access Act: now "Passed House\."/);
+  // Scheduled checks: bill watches every few hours; contract watches once a day (SAM.gov's limit)
+  const later = Date.now() + 7 * 3600e3;
+  const before = store.db.prepare('SELECT id, last_run FROM watches WHERE org_id = ?').all(MW);
+  await server.monitor.tick(later);
+  const after = new Map(store.db.prepare('SELECT id, last_run FROM watches WHERE org_id = ?').all(MW).map((r) => [r.id, r.last_run]));
+  assert.equal(after.get(bills.id), later, 'bill watch checked again after 7 hours');
+  assert.equal(after.get(gov.id), before.find((r) => r.id === gov.id).last_run, 'contract watch waits a day');
+  const dayLater = Date.now() + 25 * 3600e3;
+  await server.monitor.tick(dayLater);
+  assert.equal(store.db.prepare('SELECT last_run FROM watches WHERE id = ?').get(gov.id).last_run, dayLater, 'contract watch checked after a day');
   // Dismissed items leave the inbox
   const hb = inbox.find((i) => i.number === 'HB 77');
   ok(await api('mona', 'PATCH', `/api/workspaces/${MW}/items/${hb.id}`, { state: 'dismissed' }));

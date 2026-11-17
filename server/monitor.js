@@ -204,7 +204,14 @@ export function makeMonitor(cfg, store, { score = null } = {}) {
   async function tick(nowMs = Date.now(), max = 20) {
     if (running) return 0;
     running = true; let n = 0;
-    try { for (const w of q.due.all(nowMs - cfg.monitorEvery, max)) { try { await run(w, nowMs); } catch (e) { q.ran.run(nowMs, String(e.message || e).slice(0, 300), w.id); } n++; } }
+    try {
+      for (const w of q.due.all(nowMs - cfg.monitorEvery, max * 3)) {
+        if (n >= max) break;
+        if (w.kind === 'contract' && w.last_run && w.last_run > nowMs - Math.max(cfg.monitorEvery, cfg.samEvery || 0)) continue;
+        try { await run(w, nowMs); } catch (e) { q.ran.run(nowMs, String(e.message || e).slice(0, 300), w.id); }
+        n++;
+      }
+    }
     finally { running = false; }
     return n;
   }
