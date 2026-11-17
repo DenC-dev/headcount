@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Headcount</title>
+<meta name="description" content="Whip counts, meeting requests and bill briefs for lobbyists and advocates.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/styles.css">
+<script src="/cloud.js" defer></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <div>
+      <div class="brand">Headcount</div>
+      <div class="camp"><select id="campSel" aria-label="Campaign"></select></div>
+      <h1 id="hBill"></h1>
+      <div class="sub" id="hSub"></div>
+      <div class="sub" id="hDates"></div>
+      <div class="seg pagetabs" role="group" aria-label="View">
+        <button id="pgCount" data-page="count" aria-pressed="true">Vote count</button>
+        <button id="pgBrief" data-page="brief" aria-pressed="false">Bill brief</button>
+      </div>
+    </div>
+    <div class="tools">
+      <span class="note" id="saveState"></span>
+      <button class="btn" data-act="setup">Setup</button>
+      <details class="menu" id="moreMenu"><summary class="btn">More</summary>
+        <div class="menulist">
+          <button data-act="newCamp">New campaign</button>
+          <button data-act="reports">Reports</button>
+          <button data-act="staffDir">Staff directory</button>
+          <button data-act="account" id="menuAccount">Account</button>
+        </div>
+      </details>
+      <span class="acct" id="acct"></span>
+    </div>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+  <div class="banner warnb" id="warn" hidden></div>
+
+  <div id="countPage">
+  <section class="floor">
+    <div class="panel chamber">
+      <div class="row">
+        <span class="label">The chamber</span>
+        <div class="seg" role="group" aria-label="Stage shown">
+          <button id="vFloor" data-view="floor" aria-pressed="true">Floor</button>
+          <button id="vCmte" data-view="cmte" aria-pressed="false">Committee</button>
+        </div>
+      </div>
+      <div id="hemi"></div>
+      <div id="tally"></div>
+      <p class="path" id="path"></p>
+    </div>
+    <div class="panel odds">
+      <span class="label" id="oddsLabel"></span>
+      <div class="big" id="odds"></div>
+      <div class="stages" id="stages"></div>
+      <details class="fold" id="trendBox"><summary>Trend and recent movement</summary>
+        <div class="spark"><div id="spark"></div></div>
+        <ul class="moves" id="moves"></ul>
+      </details>
+    </div>
+  </section>
+
+  <section class="work">
+    <div class="stack">
+      <div class="panel">
+        <span class="label">Who to see next</span>
+        <ol class="calls" id="calls"></ol>
+        <div class="plan" id="plan"></div>
+      </div>
+      <div class="panel">
+        <div class="row"><span class="label">Agenda</span><span id="agendaTools"></span></div>
+        <ul class="tasks" id="meets"></ul>
+        <ul class="tasks" id="tasks"></ul>
+        <form id="tForm" class="taskadd">
+          <input id="t_text" name="text" placeholder="Add a follow-up" aria-label="Follow-up" required>
+          <input id="t_due" name="due" type="date" aria-label="Due date">
+          <button class="btn">Add</button>
+        </form>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="row"><span class="label">Whip count</span><button class="btn sm" data-act="addMember">Add member</button></div>
+      <div class="filters">
+        <input type="search" id="q" placeholder="Search members" aria-label="Search members">
+        <select id="fGroup" aria-label="Filter"><option value="">Everyone</option><option value="p4">Yes</option><option value="p3">Lean yes</option><option value="p2">Undecided</option><option value="p1">Lean no</option><option value="p0">No</option><option value="cmte">Committee</option><option value="D">Democrats</option><option value="R">Republicans</option><option value="I">Independents</option><option value="cold">Never contacted</option></select>
+      </div>
+      <div class="note" id="rowCount"></div>
+      <div class="tablewrap"><table><thead><tr><th>Member</th><th>Position</th><th>Movable</th><th>Last touch</th></tr></thead><tbody id="rows"></tbody></table></div>
+    </div>
+  </section>
+
+  <details class="how">
+    <summary>How the numbers work</summary>
+    <p>Each position is treated as a chance of a yes vote on the bill: Yes 97%, Lean yes 75%, Undecided 50%, Lean no 25%, No 3%. The odds are the exact probability that the bill clears committee and then reaches the floor threshold, with every member assumed to vote the same way at both stages and to decide independently. When the goal is to defeat the bill, the page shows the chance that it fails at either stage.</p>
+    <p>The call sheet tests each member one step in your direction, carries half of that shift to anyone marked as taking cues from them, and ranks by the gain in your odds weighted by how movable the member is. It is a planning aid built on your own reads of each member, not a forecast.</p>
+  </details>
+  </div>
+
+  <div id="briefPage" hidden></div>
+
+  <footer class="note noprint" style="text-align:center;padding-top:8px"><a href="/privacy">Privacy</a></footer>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-label="Detail"></aside>
+<div class="toast" id="toast" hidden role="status"></div>
+</body>
+</html>
