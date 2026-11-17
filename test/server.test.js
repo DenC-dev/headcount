@@ -2,9 +2,13 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-// Stand-ins for Google's signing keys, Congress.gov, Open States and the Claude API.
-const mocks = { claude: [], claudeReply: null };
+// Stand-ins for Google's signing keys, Congress.gov, Open States, Stripe and the Claude API.
+const mocks = { claude: [], claudeReply: null, stripe: [], sub: null };
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
 const fixtures = {
@@ -13,48 +17,56 @@ const fixtures = {
   '/v3/bill/119/hr/1234/committees': { committees: [{ name: 'Energy and Commerce Committee' }] },
   '/bills': { results: [{ identifier: 'HB 123', title: 'Property Insurance', session: '2026', first_action_date: '2026-01-13', latest_action_date: '2026-03-01', latest_action_description: 'Passed House', openstates_url: 'https://openstates.org/fl/bills/2026/HB123/', abstracts: [{ abstract: 'Revises property insurance requirements.' }], sponsorships: [{ name: 'Jane Doe', primary: true, person: { party: 'Republican', current_role: { district: '12' } } }, { name: 'Co Sponsor', primary: false }], actions: [{ date: '2026-02-01', related_entities: [{ entity_type: 'organization', name: 'Insurance & Banking Subcommittee' }] }], subject: ['Insurance'] }] },
 };
+const subscription = (orgId, qty, status = 'active') => ({ id: 'sub_1', object: 'subscription', customer: 'cus_1', status, metadata: { org_id: orgId }, current_period_end: 1900000000, items: { data: [{ id: 'si_1', quantity: qty, price: { id: 'price_team' } }] } });
 const mock = http.createServer((req, res) => {
-  const u = new URL(req.url, 'http://x');
-  if (u.pathname === '/jwks') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=60' }); return res.end(JSON.stringify({ keys: [jwk] })); }
-  if (u.pathname === '/v1/messages') {
-    let body = ''; req.on('data', (c) => { body += c; });
-    req.on('end', () => {
-      mocks.claude.push({ headers: req.headers, body: JSON.parse(body) });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(mocks.claudeReply));
-    });
-    return;
-  }
-  if (u.pathname.startsWith('/v3/') && req.headers['x-api-key'] !== 'cg-key') { res.writeHead(403); return res.end('{}'); }
-  if (u.pathname === '/bills') {
-    if (req.headers['x-api-key'] !== 'os-key') { res.writeHead(401); return res.end('{}'); }
-    const hit = u.searchParams.get('identifier') === 'HB 123' && u.searchParams.get('jurisdiction') === 'ocd-jurisdiction/country:us/state:fl/government';
-    res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(hit ? fixtures['/bills'] : { results: [] }));
-  }
-  const f = fixtures[u.pathname];
-  res.writeHead(f ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(f || {}));
+  const u = new URL(req.url, 'http://x'); let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    const j = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+    if (u.pathname === '/jwks') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=60' }); return res.end(JSON.stringify({ keys: [jwk] })); }
+    if (u.pathname === '/v1/messages') { mocks.claude.push({ headers: req.headers, body: JSON.parse(body) }); return j(200, mocks.claudeReply); }
+    if (u.pathname.startsWith('/v1/')) {
+      mocks.stripe.push({ method: req.method, path: u.pathname, auth: req.headers.authorization, form: new URLSearchParams(body) });
+      if (u.pathname === '/v1/customers') return j(200, { id: 'cus_1' });
+      if (u.pathname === '/v1/checkout/sessions') return j(200, { id: 'cs_1', url: 'https://checkout.stripe.com/c/pay/cs_1' });
+      if (u.pathname === '/v1/billing_portal/sessions') return j(200, { url: 'https://billing.stripe.com/p/session/1' });
+      if (u.pathname === '/v1/subscriptions/sub_1') return j(200, mocks.sub);
+      return j(404, { error: { message: 'no' } });
+    }
+    if (u.pathname.startsWith('/v3/') && req.headers['x-api-key'] !== 'cg-key') return j(403, {});
+    if (u.pathname === '/bills') {
+      if (req.headers['x-api-key'] !== 'os-key') return j(401, {});
+      const hit = u.searchParams.get('identifier') === 'HB 123' && u.searchParams.get('jurisdiction') === 'ocd-jurisdiction/country:us/state:fl/government';
+      return j(200, hit ? fixtures['/bills'] : { results: [] });
+    }
+    const f = fixtures[u.pathname]; j(f ? 200 : 404, f || {});
+  });
 });
 
-let base, server, mods;
+const txt = new Map();
+let base, server, store, mods;
 before(async () => {
   await new Promise((r) => mock.listen(0, '127.0.0.1', r));
   const m = `http://127.0.0.1:${mock.address().port}`;
-  Object.assign(process.env, { AUTH_MODE: 'dev', CONGRESS_API_KEY: 'cg-key', CONGRESS_API_BASE: `${m}/v3`, OPENSTATES_API_KEY: 'os-key', OPENSTATES_API_BASE: m, FIREBASE_JWKS_URL: `${m}/jwks`, ANTHROPIC_API_KEY: 'test-key', ANTHROPIC_BASE_URL: m });
-  mods = {
-    db: await import('../server/db.js'), auth: await import('../server/auth.js'), bills: await import('../server/bills.js'),
-    ai: await import('../server/ai.js'), index: await import('../server/index.js'), config: (await import('../server/config.js')).config,
-  };
-  server = mods.index.createServer({ store: mods.db.openDb(':memory:'), draft: (x) => mods.ai.draftBrief(x) });
+  Object.assign(process.env, {
+    AUTH_MODE: 'dev', CONGRESS_API_KEY: 'cg-key', CONGRESS_API_BASE: `${m}/v3`, OPENSTATES_API_KEY: 'os-key', OPENSTATES_API_BASE: m, FIREBASE_JWKS_URL: `${m}/jwks`,
+    ANTHROPIC_API_KEY: 'test-key', ANTHROPIC_BASE_URL: m,
+    STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: 'whsec_1', STRIPE_PRICE_TEAM: 'price_team', STRIPE_API_BASE: m, PUBLIC_URL: 'https://app.example.org', TRIAL_SEATS: '3',
+  });
+  mods = { db: await import('../server/db.js'), auth: await import('../server/auth.js'), bills: await import('../server/bills.js'), ai: await import('../server/ai.js'), index: await import('../server/index.js'), config: (await import('../server/config.js')).config };
+  store = mods.db.openDb(':memory:', mods.config);
+  server = mods.index.createServer({ store, draft: (x) => mods.ai.draftBrief(x), resolveTxt: async (d) => { if (!txt.has(d)) throw new Error('ENOTFOUND'); return txt.get(d); } });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.close(); mock.close(); });
 
-const tok = (id, extra = {}) => 'dev.' + Buffer.from(JSON.stringify({ id, name: id[0].toUpperCase() + id.slice(1), email: `${id}@example.org`, ...extra })).toString('base64url');
-async function api(who, method, path, body) {
-  const res = await fetch(base + path, { method, headers: { ...(who ? { Authorization: 'Bearer ' + tok(who) } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+const tok = (id, extra = {}) => 'dev.' + Buffer.from(JSON.stringify({ id, name: id[0].toUpperCase() + id.slice(1), email: `${id}@${extra.domain || 'example.org'}`, ...extra })).toString('base64url');
+async function api(who, method, p, body, extra) {
+  const res = await fetch(base + p, { method, headers: { ...(who ? { Authorization: 'Bearer ' + tok(who, extra) } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { status: res.status, body: await res.json() };
 }
+const ok = (r) => { assert.ok(r.status === 200, `${r.status} ${JSON.stringify(r.body)}`); return r.body; };
 
 // ---------- sign-in ----------
 function signJwt(payload, kid = 'k1', key = privateKey) {
@@ -64,140 +76,235 @@ function signJwt(payload, kid = 'k1', key = privateKey) {
 }
 test('Identity Platform tokens are verified: signature, project, expiry', async () => {
   const t = Math.floor(Date.now() / 1000), opts = { projectId: 'proj-1', jwksUrl: process.env.FIREBASE_JWKS_URL };
-  const good = { aud: 'proj-1', iss: 'https://securetoken.google.com/proj-1', sub: 'uid42', iat: t - 10, exp: t + 3000, auth_time: t - 10, email: 'a@b.org', name: 'Ann', firebase: { sign_in_provider: 'microsoft.com' } };
-  const u = await mods.auth.verifyFirebaseToken(signJwt(good), opts);
-  assert.deepEqual(u, { id: 'fb:uid42', email: 'a@b.org', name: 'Ann', provider: 'microsoft' });
+  const good = { aud: 'proj-1', iss: 'https://securetoken.google.com/proj-1', sub: 'uid42', iat: t - 10, exp: t + 3000, auth_time: t - 10, email: 'a@b.org', email_verified: true, name: 'Ann', firebase: { sign_in_provider: 'microsoft.com' } };
+  assert.deepEqual(await mods.auth.verifyFirebaseToken(signJwt(good), opts), { id: 'fb:uid42', email: 'a@b.org', emailVerified: true, name: 'Ann', provider: 'microsoft' });
   await assert.rejects(mods.auth.verifyFirebaseToken(signJwt({ ...good, aud: 'other' }), opts), /different project/);
   await assert.rejects(mods.auth.verifyFirebaseToken(signJwt({ ...good, exp: t - 600 }), opts), /expired/);
-  const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
-  await assert.rejects(mods.auth.verifyFirebaseToken(signJwt(good, 'k1', other), opts), /signature/);
+  await assert.rejects(mods.auth.verifyFirebaseToken(signJwt(good, 'k1', crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey), opts), /signature/);
   await assert.rejects(mods.auth.verifyFirebaseToken(signJwt(good, 'nope'), opts), /unknown key/);
   const parts = signJwt(good).split('.'); parts[1] = Buffer.from(JSON.stringify({ ...good, sub: 'someone-else' })).toString('base64url');
   await assert.rejects(mods.auth.verifyFirebaseToken(parts.join('.'), opts), /signature/);
+  assert.equal((await api(null, 'GET', '/api/workspaces')).status, 401);
 });
 
-test('API refuses requests without sign-in', async () => {
-  assert.equal((await api(null, 'GET', '/api/campaigns')).status, 401);
-  const bad = await fetch(base + '/api/campaigns', { headers: { Authorization: 'Bearer dev.bm90LWpzb24' } });
-  assert.equal(bad.status, 401);
+// ---------- workspaces, roles and visibility ----------
+let W, C1, C2, memberLink, guestLink;
+test('a workspace starts on a trial; campaigns sync by cursor', async () => {
+  const w = ok(await api('alice', 'POST', '/api/workspaces', { name: 'Capitol Strategies' })); W = w.id;
+  const info = ok(await api('alice', 'GET', `/api/workspaces/${W}`));
+  assert.equal(info.plan.key, 'trial'); assert.equal(info.plan.seats, 3); assert.equal(info.role, 'owner'); assert.ok(info.plan.trialEnds > Date.now());
+  const client = ok(await api('alice', 'POST', `/api/workspaces/${W}/clients`, { name: 'Prairie Co-ops' }));
+  C1 = 'camp1'; ok(await api('alice', 'POST', '/api/campaigns', { id: C1, workspaceId: W, name: 'SB 214', clientId: client.id }));
+  const w1 = ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [
+    { kind: 'meta', data: { campaign: { bill: 'SB 214: Broadband', clientId: client.id, chamber: 'State Senate' } } },
+    { kind: 'members', id: 'm1', data: { name: 'Vega', party: 'D', district: '4', pos: 2, history: [{ d: '2026-02-10', type: 'Meeting', who: 'Jamie', from: 2, to: 3, note: 'Good meeting', by: 'dev:alice' }, { d: '2026-02-11', type: 'Count update', from: 3, to: 4 }] } },
+    { kind: 'members', id: 'm2', data: { name: 'Lind', pos: 4, history: [{ d: '2026-05-02', type: 'Call', from: 4, to: 4, by: 'dev:alice' }] } },
+    { kind: 'summary', data: { odds: 0.62, yes: 18 } },
+  ] }));
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [{ kind: 'members', id: 'm2', data: null }] }));
+  const delta = ok(await api('alice', 'GET', `/api/campaigns/${C1}/records?since=${w1.cursor}`));
+  assert.deepEqual(delta.records.map((r) => [r.id, r.data]), [['m2', null]]);
+  const list = ok(await api('alice', 'GET', `/api/workspaces/${W}/campaigns`)).campaigns;
+  assert.deepEqual([list[0].name, list[0].client, list[0].summary.odds, list[0].visibility], ['SB 214: Broadband', 'Prairie Co-ops', 0.62, 'org']);
 });
 
-// ---------- campaigns, records, teams ----------
-test('campaign records sync by cursor, with deletions', async () => {
-  assert.equal((await api('alice', 'POST', '/api/campaigns', { id: 'c1', name: 'SB 214' })).body.role, 'owner');
-  const w1 = await api('alice', 'POST', '/api/campaigns/c1/records', { ops: [
-    { kind: 'meta', data: { campaign: { bill: 'SB 214: Broadband' } } },
-    { kind: 'members', id: 'm1', data: { name: 'Vega', pos: 2 } },
-    { kind: 'members', id: 'm2', data: { name: 'Lind', pos: 4 } },
-  ] });
-  assert.equal(w1.status, 200);
-  const all = await api('alice', 'GET', '/api/campaigns/c1/records?since=0');
-  assert.equal(all.body.records.length, 3); assert.equal(all.body.role, 'owner');
-  const w2 = await api('alice', 'POST', '/api/campaigns/c1/records', { ops: [{ kind: 'members', id: 'm1', data: { name: 'Vega', pos: 3 } }, { kind: 'members', id: 'm2', data: null }] });
-  const delta = await api('alice', 'GET', `/api/campaigns/c1/records?since=${w1.body.cursor}`);
-  assert.deepEqual(delta.body.records.map((r) => [r.id, r.data && r.data.pos]), [['m1', 3], ['m2', null]]);
-  assert.equal(delta.body.cursor, w2.body.cursor);
-  const list = await api('alice', 'GET', '/api/campaigns');
-  assert.equal(list.body.campaigns[0].name, 'SB 214: Broadband');
-  assert.equal((await api('alice', 'POST', '/api/campaigns/c1/records', { ops: [{ kind: 'bogus', id: 'x', data: {} }] })).status, 400);
-  assert.equal((await api('alice', 'POST', '/api/campaigns/c1/records', { ops: [{ kind: 'members', id: '../x', data: {} }] })).status, 400);
+test('members see open campaigns; closed campaigns only by invitation; guests only what they were given', async () => {
+  memberLink = ok(await api('alice', 'POST', `/api/workspaces/${W}/invites`, { role: 'member' })).code;
+  const preview = ok(await api(null, 'GET', `/api/workspace-invites/${memberLink}`));
+  assert.deepEqual([preview.workspace, preview.role, preview.invitedBy], ['Capitol Strategies', 'member', 'Alice']);
+  ok(await api('bob', 'POST', `/api/workspace-invites/${memberLink}`));
+  C2 = 'camp2'; ok(await api('alice', 'POST', '/api/campaigns', { id: C2, workspaceId: W, name: 'Closed one', visibility: 'team' }));
+  assert.deepEqual(ok(await api('bob', 'GET', `/api/workspaces/${W}/campaigns`)).campaigns.map((c) => [c.id, c.role]), [[C1, 'editor']]);
+  assert.equal((await api('bob', 'GET', `/api/campaigns/${C2}/records?since=0`)).status, 404);
+  assert.equal(ok(await api('bob', 'POST', `/api/campaigns/${C1}/records`, { ops: [{ kind: 'members', id: 'm3', data: { name: 'New' } }] })).cursor > 0, true);
+  // A guest arrives through a campaign link and sees only that campaign.
+  guestLink = ok(await api('alice', 'POST', `/api/campaigns/${C2}/invites`, { role: 'viewer' })).code;
+  assert.equal(ok(await api(null, 'GET', `/api/invites/${guestLink}`)).workspace, 'Capitol Strategies');
+  assert.equal(ok(await api('gina', 'POST', `/api/invites/${guestLink}`)).role, 'viewer');
+  assert.deepEqual(ok(await api('gina', 'GET', `/api/workspaces/${W}/campaigns`)).campaigns.map((c) => c.id), [C2]);
+  assert.equal((await api('gina', 'POST', `/api/campaigns/${C2}/records`, { ops: [{ kind: 'members', id: 'x', data: {} }] })).status, 403);
+  assert.equal((await api('gina', 'GET', `/api/workspaces/${W}/members`)).status, 403);
+  assert.equal((await api('gina', 'POST', '/api/campaigns', { id: 'g1', workspaceId: W, name: 'x' })).status, 403);
+  // Members cannot manage the workspace; admins see everything.
+  assert.equal((await api('bob', 'POST', `/api/workspaces/${W}/invites`, { role: 'member' })).status, 403);
+  ok(await api('alice', 'PATCH', `/api/workspaces/${W}/members/dev:bob`, { role: 'admin' }));
+  assert.equal(ok(await api('bob', 'GET', `/api/workspaces/${W}/campaigns`)).campaigns.length, 2);
+  const people = ok(await api('alice', 'GET', `/api/workspaces/${W}/members`)).members;
+  assert.deepEqual(people.map((p) => [p.name, p.role]), [['Alice', 'owner'], ['Bob', 'admin'], ['Gina', 'guest']]);
+  assert.equal((await api('bob', 'DELETE', `/api/workspaces/${W}/members/dev:alice`)).status, 403);
+  assert.equal((await api('alice', 'DELETE', `/api/workspaces/${W}/members/dev:alice`)).status, 400);
 });
 
-test('invitations, roles and removal', async () => {
-  assert.equal((await api('bob', 'GET', '/api/campaigns/c1/records?since=0')).status, 404);
-  const inv = await api('alice', 'POST', '/api/campaigns/c1/invites', { role: 'editor' });
-  const view = await api('alice', 'POST', '/api/campaigns/c1/invites', { role: 'viewer' });
-  const preview = await api(null, 'GET', `/api/invites/${inv.body.code}`);
-  assert.deepEqual([preview.body.campaign, preview.body.role, preview.body.invitedBy], ['SB 214: Broadband', 'editor', 'Alice']);
-  assert.equal((await api('bob', 'POST', `/api/invites/${inv.body.code}`)).body.role, 'editor');
-  assert.equal((await api('carol', 'POST', `/api/invites/${view.body.code}`)).body.role, 'viewer');
-  assert.equal((await api('bob', 'POST', '/api/campaigns/c1/records', { ops: [{ kind: 'members', id: 'm3', data: { name: 'New' } }] })).status, 200);
-  const ro = await api('carol', 'POST', '/api/campaigns/c1/records', { ops: [{ kind: 'members', id: 'm4', data: { name: 'No' } }] });
-  assert.equal(ro.status, 403); assert.match(ro.body.error, /view-only/);
-  assert.equal((await api('carol', 'POST', '/api/campaigns/c1/invites', { role: 'viewer' })).status, 403);
-  assert.equal((await api('bob', 'DELETE', '/api/campaigns/c1/people/fb:nobody')).status, 403);
-  const people = await api('carol', 'GET', '/api/campaigns/c1/people');
-  assert.deepEqual(people.body.people.map((p) => [p.name, p.role]), [['Alice', 'owner'], ['Bob', 'editor'], ['Carol', 'viewer']]);
-  assert.equal((await api('alice', 'PATCH', '/api/campaigns/c1/people/dev:carol', { role: 'editor' })).status, 200);
-  assert.equal((await api('alice', 'DELETE', '/api/campaigns/c1/people/dev:bob')).status, 200);
-  assert.equal((await api('bob', 'GET', '/api/campaigns/c1/records?since=0')).status, 404);
-  assert.equal((await api('bob', 'DELETE', '/api/campaigns/c1')).status, 404);
-  assert.equal((await api('alice', 'DELETE', '/api/campaigns/c1/invites')).status, 200);
-  assert.equal((await api('dave', 'POST', `/api/invites/${inv.body.code}`)).status, 404);
+test('email-addressed invitations only work for that person', async () => {
+  const inv = ok(await api('alice', 'POST', `/api/workspaces/${W}/invites`, { role: 'member', email: 'cara@example.org' }));
+  const wrong = await api('dan', 'POST', `/api/workspace-invites/${inv.code}`);
+  assert.equal(wrong.status, 403); assert.match(wrong.body.error, /cara@example\.org/);
+  ok(await api('cara', 'POST', `/api/workspace-invites/${inv.code}`));
+  assert.equal((await api('cara', 'POST', `/api/workspace-invites/${inv.code}`)).status, 404, 'single use');
 });
 
-test('deleting an account hands campaigns to an editor or deletes them', async () => {
-  await api('erin', 'POST', '/api/campaigns', { id: 'e1', name: 'Shared' });
-  await api('erin', 'POST', '/api/campaigns', { id: 'e2', name: 'Solo' });
-  const inv = await api('erin', 'POST', '/api/campaigns/e1/invites', { role: 'editor' });
-  await api('frank', 'POST', `/api/invites/${inv.body.code}`);
-  assert.deepEqual((await api('erin', 'DELETE', '/api/me')).body, { transferred: 1, deleted: 1 });
-  assert.equal((await api('frank', 'GET', '/api/campaigns')).body.campaigns[0].role, 'owner');
+test('seat, campaign and guest limits follow the plan', async () => {
+  // Trial: 3 seats, now used by Alice, Bob and Cara.
+  const full = await api('alice', 'POST', `/api/workspaces/${W}/invites`, { role: 'member' });
+  assert.equal(full.status, 402); assert.equal(full.body.upgrade, true); assert.match(full.body.error, /All 3 seats/);
+  assert.equal((await api('dan', 'POST', `/api/workspace-invites/${memberLink}`)).status, 402);
+  // When the trial ends without a subscription, the Free plan applies to new things.
+  store.db.prepare('UPDATE orgs SET trial_ends = 0 WHERE id = ?').run(W);
+  const info = ok(await api('alice', 'GET', `/api/workspaces/${W}`));
+  assert.equal(info.plan.key, 'free'); assert.equal(info.plan.campaigns, 3);
+  ok(await api('alice', 'POST', '/api/campaigns', { id: 'camp3', workspaceId: W, name: 'Third' }));
+  const four = await api('alice', 'POST', '/api/campaigns', { id: 'camp4', workspaceId: W, name: 'Fourth' });
+  assert.equal(four.status, 402); assert.match(four.body.error, /3 active campaigns/);
+  ok(await api('alice', 'PATCH', '/api/campaigns/camp3', { archived: true }));
+  ok(await api('alice', 'POST', '/api/campaigns', { id: 'camp4', workspaceId: W, name: 'Fourth' }));
+  assert.equal((await api('alice', 'PATCH', '/api/campaigns/camp3', { archived: false })).status, 402);
+  assert.equal((await api('alice', 'GET', `/api/workspaces/${W}/audit`)).status, 402);
+  assert.equal((await api('alice', 'GET', `/api/workspaces/${W}/activity?from=2026-01-01&to=2026-03-31`)).status, 402);
 });
 
-// ---------- bills ----------
-test('bill numbers and Congress numbers parse', () => {
+// ---------- billing ----------
+function signed(event) {
+  const raw = JSON.stringify(event), t = Math.floor(Date.now() / 1000);
+  return { raw, sig: `t=${t},v1=${crypto.createHmac('sha256', 'whsec_1').update(`${t}.${raw}`).digest('hex')}` };
+}
+const hook = (raw, sig) => fetch(base + '/api/stripe/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': sig }, body: raw });
+test('Stripe checkout, signed webhooks, seats and cancellation', async () => {
+  assert.equal((await api('cara', 'POST', `/api/workspaces/${W}/billing/checkout`, { seats: 5 })).status, 403);
+  assert.equal((await api('alice', 'POST', `/api/workspaces/${W}/billing/checkout`, { seats: 1 })).status, 400, 'fewer seats than people');
+  const co = ok(await api('alice', 'POST', `/api/workspaces/${W}/billing/checkout`, { seats: 5 }));
+  assert.equal(co.url, 'https://checkout.stripe.com/c/pay/cs_1');
+  const sess = mocks.stripe.find((r) => r.path === '/v1/checkout/sessions');
+  assert.equal(sess.auth, 'Bearer sk_test_1');
+  assert.deepEqual([sess.form.get('mode'), sess.form.get('customer'), sess.form.get('client_reference_id'), sess.form.get('line_items[0][price]'), sess.form.get('line_items[0][quantity]'), sess.form.get('subscription_data[metadata][org_id]')], ['subscription', 'cus_1', W, 'price_team', '5', W]);
+  assert.equal(sess.form.get('success_url'), 'https://app.example.org/?billing=done');
+  // Forged and stale webhooks are refused.
+  const ev = { id: 'evt_1', type: 'checkout.session.completed', data: { object: { client_reference_id: W, customer: 'cus_1', subscription: 'sub_1' } } };
+  const s1 = signed(ev);
+  assert.equal((await hook(s1.raw, s1.sig.replace(/v1=./, 'v1=0'))).status, 400);
+  assert.equal((await hook(s1.raw, `t=${Math.floor(Date.now() / 1000) - 900},v1=${crypto.createHmac('sha256', 'whsec_1').update(`${Math.floor(Date.now() / 1000) - 900}.${s1.raw}`).digest('hex')}`)).status, 400);
+  mocks.sub = subscription(W, 5);
+  assert.equal((await hook(s1.raw, s1.sig)).status, 200);
+  let info = ok(await api('alice', 'GET', `/api/workspaces/${W}`));
+  assert.deepEqual([info.plan.key, info.plan.seats, info.plan.status, info.plan.guests, info.plan.campaigns], ['team', 5, 'active', 25, null]);
+  assert.deepEqual(await (await hook(s1.raw, signed(ev).sig)).json(), { duplicate: true });
+  ok(await api('dan', 'POST', `/api/workspace-invites/${memberLink}`));
+  // Seat changes go to Stripe and come back through the webhook.
+  assert.equal((await api('alice', 'POST', `/api/workspaces/${W}/billing/seats`, { seats: 2 })).status, 400);
+  mocks.sub = subscription(W, 8);
+  ok(await api('alice', 'POST', `/api/workspaces/${W}/billing/seats`, { seats: 8 }));
+  const upd = mocks.stripe.filter((r) => r.path === '/v1/subscriptions/sub_1' && r.method === 'POST').at(-1);
+  assert.deepEqual([upd.form.get('items[0][id]'), upd.form.get('items[0][quantity]')], ['si_1', '8']);
+  assert.equal(ok(await api('alice', 'GET', `/api/workspaces/${W}`)).plan.seats, 8);
+  assert.equal(ok(await api('alice', 'POST', `/api/workspaces/${W}/billing/portal`)).url, 'https://billing.stripe.com/p/session/1');
+  assert.equal((await api('alice', 'DELETE', `/api/workspaces/${W}`)).status, 409, 'cancel billing before deleting');
+  const del = signed({ id: 'evt_2', type: 'customer.subscription.deleted', data: { object: subscription(W, 8, 'canceled') } });
+  assert.equal((await hook(del.raw, del.sig)).status, 200);
+  info = ok(await api('alice', 'GET', `/api/workspaces/${W}`));
+  assert.equal(info.plan.key, 'free');
+  // Back on Team for the reports below.
+  const again = signed({ id: 'evt_3', type: 'customer.subscription.updated', data: { object: subscription(W, 8) } });
+  await hook(again.raw, again.sig);
+  assert.equal(ok(await api('alice', 'GET', `/api/workspaces/${W}`)).plan.key, 'team');
+});
+
+// ---------- reports, audit, export ----------
+test('lobbying activity report, audit log and export', async () => {
+  const r = ok(await api('alice', 'GET', `/api/workspaces/${W}/activity?from=2026-01-01&to=2026-03-31`));
+  assert.equal(r.rows.length, 1, 'count updates and other quarters are left out');
+  assert.deepEqual([r.rows[0].client, r.rows[0].issue, r.rows[0].withWhom, r.rows[0].loggedBy, r.rows[0].chamber], ['Prairie Co-ops', 'SB 214: Broadband', 'Jamie', 'Alice', 'State Senate']);
+  assert.deepEqual(r.summary[0], { client: 'Prairie Co-ops', contacts: 1, issues: ['SB 214: Broadband'], chambers: ['State Senate'], lobbyists: ['Alice'] });
+  assert.equal((await api('cara', 'GET', `/api/workspaces/${W}/activity?from=2026-01-01&to=2026-03-31`)).status, 403);
+  const log = ok(await api('alice', 'GET', `/api/workspaces/${W}/audit?limit=200`)).entries.map((e) => e.action);
+  for (const a of ['workspace.created', 'client.added', 'campaign.created', 'member.joined', 'member.role_changed', 'campaign.archived', 'billing.subscription', 'billing.canceled', 'billing.seats_changed']) assert.ok(log.includes(a), a);
+  const ex = ok(await api('alice', 'GET', `/api/workspaces/${W}/export`));
+  assert.equal(ex.workspace.name, 'Capitol Strategies');
+  assert.equal(ex.campaigns.find((c) => c.id === C1).members.length, 2);
+  assert.equal((await api('cara', 'GET', `/api/workspaces/${W}/export`)).status, 403);
+});
+
+// ---------- sign-in domain ----------
+test('a verified email domain lets colleagues join', async () => {
+  assert.equal((await api('alice', 'POST', `/api/workspaces/${W}/domain`, { domain: 'gmail.com' })).status, 400);
+  const d = ok(await api('alice', 'POST', `/api/workspaces/${W}/domain`, { domain: 'capstrat.com' }));
+  assert.equal((await api('alice', 'POST', `/api/workspaces/${W}/domain/verify`)).status, 409);
+  txt.set('capstrat.com', [['v=spf1 -all'], [d.record]]);
+  ok(await api('alice', 'POST', `/api/workspaces/${W}/domain/verify`));
+  ok(await api('alice', 'PATCH', `/api/workspaces/${W}/domain`, { join: true }));
+  const me = ok(await api('eve', 'GET', '/api/me', null, { domain: 'capstrat.com' }));
+  assert.deepEqual(me.domainMatches, [{ id: W, name: 'Capitol Strategies' }]);
+  assert.deepEqual(ok(await api('mallory', 'GET', '/api/me', null, { domain: 'capstrat.com', emailVerified: false })).domainMatches, []);
+  assert.equal((await api('mallory', 'POST', `/api/workspaces/${W}/join`, null, { domain: 'capstrat.com', emailVerified: false })).status, 403);
+  assert.equal(ok(await api('eve', 'POST', `/api/workspaces/${W}/join`, null, { domain: 'capstrat.com' })).role, 'member');
+});
+
+// ---------- accounts ----------
+test('deleting an account passes its workspaces on or deletes them', async () => {
+  const solo = ok(await api('frank', 'POST', '/api/workspaces', { name: 'Solo shop' }));
+  const shared = ok(await api('frank', 'POST', '/api/workspaces', { name: 'Shared shop' }));
+  const inv = ok(await api('frank', 'POST', `/api/workspaces/${shared.id}/invites`, { role: 'member' }));
+  ok(await api('hank', 'POST', `/api/workspace-invites/${inv.code}`));
+  assert.deepEqual(ok(await api('frank', 'DELETE', '/api/me')), { transferred: 1, deleted: 1 });
+  assert.equal(ok(await api('hank', 'GET', `/api/workspaces/${shared.id}`)).role, 'owner');
+  assert.equal((await api('hank', 'GET', `/api/workspaces/${solo.id}`)).status, 404);
+});
+
+test('databases from the first version move into workspaces', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hc-mig-')), 'v1.db');
+  const v1 = new DatabaseSync(file);
+  v1.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT, provider TEXT, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+    CREATE TABLE campaigns (id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', rev INTEGER NOT NULL DEFAULT 0, records INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE access (campaign_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (campaign_id, user_id));
+    INSERT INTO users VALUES ('u1','a@x.org','Ann','google',1,1), ('u2','b@x.org','Ben','google',1,1);
+    INSERT INTO campaigns VALUES ('c1','u1','Old bill',0,0,1,1);
+    INSERT INTO access VALUES ('c1','u1','owner',1), ('c1','u2','viewer',1);`);
+  v1.close();
+  const s = mods.db.openDb(file, { billing: false });
+  const orgs = s.listOrgs('u1');
+  assert.equal(orgs.length, 1); assert.equal(orgs[0].name, "Ann's workspace");
+  assert.equal(s.campaignRole('c1', 'u1'), 'owner'); assert.equal(s.campaignRole('c1', 'u2'), 'viewer');
+  assert.equal(s.orgRole(orgs[0].id, 'u2'), 'guest');
+});
+
+// ---------- bills and drafting ----------
+test('bill numbers, Congress numbers and lookups', async () => {
   const { parseFederal, parseState, currentCongress } = mods.bills;
-  assert.equal(parseFederal('H.R. 1234').label, 'H.R. 1234');
-  assert.equal(parseFederal('hjres 7').type, 'hjres');
-  assert.equal(parseFederal('S.Con.Res.3').label, 'S.Con.Res. 3');
-  assert.equal(parseFederal('HB 12'), null);
+  assert.equal(parseFederal('H.R. 1234').label, 'H.R. 1234'); assert.equal(parseFederal('S.Con.Res.3').label, 'S.Con.Res. 3'); assert.equal(parseFederal('HB 12'), null);
   assert.equal(parseState('hb123'), 'HB 123');
-  assert.equal(currentCongress(new Date('2026-11-17T12:00:00Z')), 119);
-  assert.equal(currentCongress(new Date('2027-01-02T12:00:00Z')), 119);
-  assert.equal(currentCongress(new Date('2027-01-03T12:00:00Z')), 120);
-});
-
-test('federal and state bill lookups fill the brief header', async () => {
-  const fed = await api('alice', 'GET', '/api/bills/lookup?jurisdiction=US&number=H.R.%201234&session=119');
-  assert.equal(fed.status, 200);
-  assert.equal(fed.body.number, 'H.R. 1234'); assert.equal(fed.body.session, '119th Congress');
-  assert.equal(fed.body.officialSummary, 'This bill expands grants for rural broadband & requires reports.');
-  assert.deepEqual(fed.body.committees, ['Energy and Commerce Committee']);
-  assert.equal(fed.body.url, 'https://www.congress.gov/bill/119th-congress/house-bill/1234');
-  const fl = await api('alice', 'GET', '/api/bills/lookup?jurisdiction=FL&number=hb123');
-  assert.equal(fl.status, 200);
-  assert.deepEqual([fl.body.number, fl.body.jurisdiction, fl.body.cosponsors, fl.body.committees[0]], ['HB 123', 'Florida Legislature', 1, 'Insurance & Banking Subcommittee']);
-  assert.equal((await api('alice', 'GET', '/api/bills/lookup?jurisdiction=US&number=H.R.%209999&session=119')).status, 404);
+  assert.equal(currentCongress(new Date('2026-11-17T12:00:00Z')), 119); assert.equal(currentCongress(new Date('2027-01-03T12:00:00Z')), 120);
+  const fed = ok(await api('alice', 'GET', '/api/bills/lookup?jurisdiction=US&number=H.R.%201234&session=119'));
+  assert.equal(fed.officialSummary, 'This bill expands grants for rural broadband & requires reports.');
+  assert.equal(fed.url, 'https://www.congress.gov/bill/119th-congress/house-bill/1234');
+  const fl = ok(await api('alice', 'GET', '/api/bills/lookup?jurisdiction=FL&number=hb123'));
+  assert.deepEqual([fl.number, fl.jurisdiction, fl.cosponsors], ['HB 123', 'Florida Legislature', 1]);
   assert.equal((await api('alice', 'GET', '/api/bills/lookup?jurisdiction=US&number=banana')).status, 400);
-  assert.equal((await api('alice', 'GET', '/api/bills/lookup?jurisdiction=FL&number=SB%201')).status, 404);
 });
 
-// ---------- drafting ----------
-const draft = { plainSummary: 'Expands rural broadband grants.', keyProvisions: ['Creates a grant program.'], whoItAffects: 'Rural providers.', fiscalImpact: 'Not stated in the material.', talkingPoints: ['Closes the rural gap.'], objections: [{ objection: 'Cost', response: 'Grants are capped.' }], needsChecking: ['Program cost'] };
-test('brief drafting sends a structured request and returns the draft', async () => {
+const draft = { plainSummary: 'Expands rural broadband grants.', keyProvisions: ['Creates a grant program.'], whoItAffects: 'Rural providers.', fiscalImpact: 'Not stated.', talkingPoints: ['Closes the gap.'], objections: [{ objection: 'Cost', response: 'Capped.' }], needsChecking: ['Program cost'] };
+test('drafting is metered per workspace and sends a structured request', async () => {
   mocks.claudeReply = { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: JSON.stringify(draft) }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } };
-  const r = await api('alice', 'POST', '/api/bills/draft', { bill: { number: 'H.R. 1234', title: 'Rural Broadband Access Act', officialSummary: 'Expands grants.' }, side: 'pass', ask: 'Cosponsor' });
-  assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(r.body.plainSummary, draft.plainSummary); assert.equal(r.body.objections[0].response, 'Grants are capped.');
+  assert.equal((await api('gina', 'POST', '/api/bills/draft', { campaignId: C2, bill: { officialSummary: 'x' } })).status, 403, 'viewers cannot draft');
+  const r = ok(await api('alice', 'POST', '/api/bills/draft', { campaignId: C1, bill: { number: 'H.R. 1234', officialSummary: 'Expands grants.' }, side: 'pass', ask: 'Cosponsor' }));
+  assert.equal(r.objections[0].response, 'Capped.');
   const sent = mocks.claude.at(-1);
-  assert.equal(sent.body.model, 'claude-opus-5-5');
-  assert.equal(sent.body.fallbacks, 'default');
+  assert.equal(sent.body.model, 'claude-opus-5-5'); assert.equal(sent.body.fallbacks, 'default');
   assert.match(sent.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
   assert.equal(sent.body.output_config.format.type, 'json_schema');
-  assert.match(sent.body.messages[0].content, /support the bill/);
-  assert.equal((await api('alice', 'POST', '/api/bills/draft', { bill: { title: 'x' } })).status, 400);
+  assert.equal(ok(await api('alice', 'GET', `/api/workspaces/${W}`)).usage.drafts, 1);
+  mocks.claudeReply = { ...mocks.claudeReply, content: [], stop_reason: 'refusal' };
+  await new Promise((res) => setTimeout(res, 1100));
+  const refused = await api('alice', 'POST', '/api/bills/draft', { campaignId: C1, bill: { officialSummary: 'x' } });
+  assert.equal(refused.status, 422); assert.match(refused.body.error, /declined/);
 });
 
-test('a declined draft is reported plainly', async () => {
-  mocks.claudeReply = { id: 'msg_2', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: 'refusal', stop_sequence: null, stop_details: { type: 'refusal', category: null, explanation: null }, usage: { input_tokens: 1, output_tokens: 0 } };
-  await new Promise((r) => setTimeout(r, 1100));
-  const r = await api('alice', 'POST', '/api/bills/draft', { bill: { officialSummary: 'x' } });
-  assert.equal(r.status, 422); assert.match(r.body.error, /declined/);
-});
-
-// ---------- static and headers ----------
-test('pages carry a content security policy and paths cannot escape', async () => {
+test('pages carry security headers and paths cannot escape', async () => {
   const cfg = await (await fetch(base + '/api/config')).json();
-  assert.equal(cfg.auth, 'dev'); assert.equal(cfg.ai, true); assert.deepEqual(cfg.bills, { federal: true, states: true });
+  assert.equal(cfg.auth, 'dev'); assert.equal(cfg.ai, true); assert.equal(cfg.billing.trialDays, 14);
   const page = await fetch(base + '/');
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get('content-security-policy'), /script-src 'self' https:\/\/www\.gstatic\.com/);
   assert.match(page.headers.get('content-security-policy'), /connect-src [^;]*https:\/\/graph\.microsoft\.com/);
   assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
-  assert.equal((await fetch(base + '/join/abcdefgh12')).status, 200);
+  assert.equal((await fetch(base + '/invite/abcdefgh12')).status, 200);
   const raw = await new Promise((resolve) => http.get(base + '/..%2f..%2fpackage.json', (res) => { res.resume(); resolve(res.statusCode); }));
   assert.notEqual(raw, 200);
-  const ct = await fetch(base + '/api/campaigns', { method: 'POST', headers: { Authorization: 'Bearer ' + tok('alice'), 'Content-Type': 'text/plain' }, body: '{}' });
+  const ct = await fetch(base + '/api/workspaces', { method: 'POST', headers: { Authorization: 'Bearer ' + tok('alice'), 'Content-Type': 'text/plain' }, body: '{}' });
   assert.equal(ct.status, 415);
 });

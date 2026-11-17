@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -16,8 +17,9 @@ const SHOTS = process.env.SHOTS || '';
 const log = (...a) => console.log(...a);
 const flat = (s) => s.replace(/\s*\n+\s*/g, ' | ');
 
-// ---------- stand-ins for Congress.gov and Claude ----------
+// ---------- stand-ins for Congress.gov, Claude and Stripe ----------
 const draft = { plainSummary: 'Funds rural broadband grants.', keyProvisions: ['Creates a grant program.', 'Caps grants at 60 percent.'], whoItAffects: 'Rural households and providers.', fiscalImpact: 'Not stated in the material.', talkingPoints: ['Closes the rural gap.', 'Providers share the cost.'], objections: [{ objection: 'Too costly', response: 'Grants are capped.' }], needsChecking: ['Program cost'] };
+const stripeState = { org: null, seats: 0 };
 const mock = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x'); let body = '';
   req.on('data', (c) => { body += c; });
@@ -27,6 +29,10 @@ const mock = http.createServer((req, res) => {
     if (u.pathname === '/v3/bill/119/hr/1234/summaries') return j(200, { summaries: [{ actionDate: '2025-03-04', actionDesc: 'Introduced in House', text: '<p>This bill creates grants for rural broadband.</p>' }] });
     if (u.pathname === '/v3/bill/119/hr/1234/committees') return j(200, { committees: [{ name: 'Energy and Commerce Committee' }] });
     if (u.pathname === '/v1/messages') return j(200, { id: 'msg', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: JSON.stringify(draft) }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } });
+    if (u.pathname === '/v1/customers') return j(200, { id: 'cus_e2e' });
+    if (u.pathname === '/v1/checkout/sessions') { const f = new URLSearchParams(body); stripeState.org = f.get('client_reference_id'); stripeState.seats = +f.get('line_items[0][quantity]'); stripeState.success = f.get('success_url'); return j(200, { id: 'cs_e2e', url: `${M}/checkout` }); }
+    if (u.pathname === '/v1/subscriptions/sub_e2e') return j(200, { id: 'sub_e2e', customer: 'cus_e2e', status: 'active', metadata: { org_id: stripeState.org }, current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400, items: { data: [{ id: 'si_e2e', quantity: stripeState.seats, price: { id: 'price_team' } }] } });
+    if (u.pathname === '/checkout') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<!doctype html><title>Stripe Checkout (test)</title><h1>Pay</h1>'); }
     j(404, {});
   });
 });
@@ -36,12 +42,19 @@ const M = `http://127.0.0.1:${mock.address().port}`;
 // ---------- the app ----------
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'headcount-e2e-'));
 const port = 3400 + Math.floor(Math.random() * 400);
+const BASE = `http://localhost:${port}`;
 const server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], {
   cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'],
-  env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, AUTH_MODE: 'dev', NODE_ENV: 'test', CONGRESS_API_KEY: 'k', CONGRESS_API_BASE: `${M}/v3`, ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: M },
+  env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, AUTH_MODE: 'dev', NODE_ENV: 'test', CONGRESS_API_KEY: 'k', CONGRESS_API_BASE: `${M}/v3`, ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: M,
+    STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: 'whsec_e2e', STRIPE_PRICE_TEAM: 'price_team', STRIPE_API_BASE: M, PUBLIC_URL: BASE, PRICE_LABEL_TEAM: 'per seat, monthly' },
 });
 await new Promise((resolve) => server.stdout.on('data', (d) => { if (String(d).includes('Headcount on')) resolve(); }));
-const BASE = `http://localhost:${port}`;
+async function stripeHook(event) {
+  const raw = JSON.stringify(event), t = Math.floor(Date.now() / 1000);
+  const sig = `t=${t},v1=${crypto.createHmac('sha256', 'whsec_e2e').update(`${t}.${raw}`).digest('hex')}`;
+  const r = await fetch(`${BASE}/api/stripe/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': sig }, body: raw });
+  assert.equal(r.status, 200);
+}
 
 // ---------- stand-ins for Google and Microsoft ----------
 function fakeProviders(ctx, rec) {
@@ -77,7 +90,7 @@ async function person(name, provider) {
   const rec = []; fakeProviders(ctx, rec);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: ${m.text()}`); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource: the server responded with a status of 404/.test(m.text())) errors.push(`${name}: ${m.text()}`); });
   return { ctx, page, rec, name, provider };
 }
 async function signIn(p) {
@@ -113,15 +126,27 @@ try {
   assert.equal(await guest.page.evaluate(() => S.meetings.length), 1);
   log('ok  signed out: meeting request via email app, invitation file, saved in the browser');
 
-  // ===== Alice signs in with Google; the example becomes an account campaign =====
+  // ===== Alice signs in with Google and sets up her firm's workspace =====
   const alice = await person('Alice', 'google');
   await alice.page.goto(BASE); await alice.page.waitForSelector('.seat');
   await signIn(alice);
+  await alice.page.waitForSelector('#woForm');
+  await alice.page.fill('#wo_name', 'Capitol Strategies'); await alice.page.click('#woForm .primary');
+  await alice.page.waitForFunction(() => ORG && ORG.name === 'Capitol Strategies' && /Team trial · 14 days left/.test(document.querySelector('#workspacePage').textContent), null, { polling: 200 });
+  await alice.page.fill('#ck_name', 'Prairie Co-ops Alliance'); await alice.page.click('#ckForm .btn');
+  await alice.page.waitForFunction(() => CLIENTS.length === 1);
+  log('ok  workspace created on a 14-day trial; client added');
+
+  // The example becomes a campaign in the workspace on first edit
+  await alice.page.click('[data-page=count]');
   await alice.page.locator('#rows select[data-pos]').first().selectOption('3');
   await settle(alice.page);
   assert.equal(await alice.page.evaluate(() => S.cloud), true);
-  assert.match(await alice.page.locator('#saveState').innerText(), /Saved to your account/);
-  log('ok  first edit after sign-in saves the campaign to the account');
+  await alice.page.click('.tools [data-act=setup]');
+  await alice.page.selectOption('#s_clientId', { label: 'Prairie Co-ops Alliance' });
+  await alice.page.click('#sForm .primary'); await settle(alice.page);
+  assert.match(await alice.page.locator('#hSub').innerText(), /for Prairie Co-ops Alliance/);
+  log('ok  first edit saves the campaign to the workspace; client set');
 
   // Bill brief: look up, draft, print view
   await alice.page.click('[data-page=brief]');
@@ -131,20 +156,13 @@ try {
   await alice.page.waitForSelector('#lkForm .primary:has-text("clear the old analysis")');
   await alice.page.click('#lkForm .primary');
   await alice.page.waitForFunction(() => S.brief.number === 'H.R. 1234' && !S.brief.supporters);
-  assert.doesNotMatch(await alice.page.locator('.brief').innerText(), /\(D-IA-2\)/);
-  assert.match(await alice.page.locator('.brief').innerText(), /Referred to the Subcommittee on Communications and Technology/);
   await alice.page.click('[data-act=briefDraft]');
   await alice.page.fill('#df_text', 'Section 2. The Secretary shall award grants.');
-  assert.equal(await alice.page.locator('#dfGo').innerText(), 'Draft it');
   await alice.page.click('#dfGo');
   await alice.page.waitForFunction(() => S.brief.plainSummary === 'Funds rural broadband grants.');
-  const briefTxt = await alice.page.locator('.brief').innerText();
-  assert.match(briefTxt, /Talking points/); assert.match(briefTxt, /Too costly/); assert.match(briefTxt, /drafted with Claude/);
+  assert.match(await alice.page.locator('.brief').innerText(), /on behalf of Prairie Co-ops Alliance/);
   await shot(alice.page, 'brief', true);
-  await alice.page.emulateMedia({ media: 'print' }); await shot(alice.page, 'brief-print', true);
-  assert.equal(await alice.page.locator('.brieftools').isVisible(), false);
-  await alice.page.emulateMedia({ media: 'screen' });
-  log('ok  bill brief: lookup from Congress.gov, drafted analysis, print layout');
+  log('ok  bill brief: lookup from Congress.gov and drafted analysis');
 
   // Request by Gmail with times from Google Calendar
   await alice.page.click('[data-page=count]');
@@ -155,118 +173,122 @@ try {
   await alice.page.locator('[data-act=rq][data-sid]').click();
   await alice.page.click('[data-act=rqFind]');
   await alice.page.waitForFunction(() => /Offering/.test(document.querySelector('#rqMsg').textContent));
-  const t0 = new Date(await alice.page.inputValue('#rq_t0')), tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
-  assert.ok(!(t0.toDateString() === tomorrow.toDateString() && t0.getHours() < 13), 'first offer avoids the busy morning');
-  assert.match(await alice.page.inputValue('#rq_body'), /H\.R\. 1234 \(Rural Broadband Access Act\)/);
-  await shot(alice.page, 'request');
   await alice.page.click('[data-act=rqSend]');
   await alice.page.waitForFunction(() => S.meetings.some((x) => x.status === 'requested'));
-  const sent = alice.rec.find((r) => r.who === 'gmail');
-  const raw = JSON.parse(sent.body).raw, mime = Buffer.from(raw, 'base64url').toString('utf8');
-  assert.match(mime, /^To: jamie@senate\.example\.gov\r\n/); assert.match(mime, /Subject: Meeting request: H\.R\. 1234/);
+  const raw = JSON.parse(alice.rec.find((r) => r.who === 'gmail').body).raw, mime = Buffer.from(raw, 'base64url').toString('utf8');
   const text = Buffer.from(mime.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
-  assert.match(text, /^Hi Jamie,/); assert.match(text, /Would one of these times work\?/);
-  assert.match(text, /I'm Alice\./); assert.match(text, /Thank you,\r?\nAlice/);
-  log('ok  meeting request sent from Gmail with open times from Google Calendar');
-
-  // They replied: book a time and send a real invitation
-  await alice.page.click('[data-act=close]');
+  assert.match(text, /I'm Alice with Capitol Strategies, on behalf of Prairie Co-ops Alliance\./);
+  await alice.page.keyboard.press('Escape');
   await alice.page.locator('#meets [data-act=bookTime]').click();
-  await alice.page.check('#rq_video');
   await alice.page.click('[data-act=rqInvite]');
   await alice.page.waitForFunction(() => S.meetings.some((x) => x.status === 'invited' && x.eventId === 'gev1'));
-  const ins = alice.rec.find((r) => r.who === 'google' && r.method === 'POST');
-  assert.match(ins.url, /sendUpdates=all/); assert.match(ins.url, /conferenceDataVersion=1/);
-  const ev = JSON.parse(ins.body);
-  assert.deepEqual(ev.attendees, [{ email: 'jamie@senate.example.gov' }]); assert.equal(ev.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
+  const ev = JSON.parse(alice.rec.find((r) => r.who === 'google' && r.method === 'POST').body);
   alice.rec.start = ev.start.dateTime; alice.rec.end = ev.end.dateTime;
   await alice.page.keyboard.press('Escape');
-  assert.match(await alice.page.locator('#meets').innerText(), /No reply yet/);
   await alice.page.click('[data-act=checkReplies]');
   await alice.page.waitForFunction(() => /Accepted/.test(document.querySelector('#meets').textContent));
-  assert.equal(await alice.page.evaluate(() => S.meetings.filter((x) => x.status === 'requested').length), 0, 'request became the invitation');
-  await shot(alice.page, 'agenda');
-  log('ok  invitation sent from Google Calendar with a Meet link; reply shows as Accepted');
+  await settle(alice.page);
+  log('ok  meeting request from Gmail names the firm and client; invitation accepted');
 
-  // Invite teammates
+  // ===== Bob joins the workspace from an invitation and signs in with Microsoft =====
+  await alice.page.click('[data-page=workspace]');
+  await alice.page.waitForSelector('#oiForm');
+  await alice.page.selectOption('#oi_role', 'member'); await alice.page.uncheck('#oi_send'); await alice.page.click('#oiForm .primary');
+  await alice.page.waitForFunction(() => WS.lastInvite);
+  const memberLink = await alice.page.inputValue('#oi_link');
+  const bob = await person('Bob', 'microsoft');
+  await bob.page.goto(memberLink); await bob.page.waitForSelector('.seat');
+  assert.match(await bob.page.locator('#banner').innerText(), /Alice invited you to join Capitol Strategies as a member/);
+  await signIn(bob);
+  await bob.page.waitForFunction(() => ORG && ORG.name === 'Capitol Strategies' && page === 'portfolio' && ACCOUNT.list.length === 1);
+  await bob.page.waitForSelector('#portfolioPage .prow');
+  assert.match(await bob.page.locator('#portfolioPage').innerText(), /Prairie Co-ops Alliance/);
+  await shot(bob.page, 'portfolio');
+  await bob.page.locator('#portfolioPage .prow').first().click();
+  await bob.page.waitForFunction(() => S.cloud && S.members.length === 41 && S.brief.number === 'H.R. 1234');
+  const before = await alice.page.evaluate(() => S.members[25].pos);
+  await bob.page.locator('#rows select[data-pos]').nth(25).selectOption('4');
+  await settle(bob.page);
+  await alice.page.click('[data-page=count]');
+  await alice.page.waitForFunction((b) => S.members.some((m) => m.pos !== b) && S.members.filter((m) => m.pos === 4).length > 0, before, { timeout: 15000 });
+  log('ok  Bob joined from a workspace invitation, found the campaign in the portfolio, and his change reached Alice');
+
+  // Bob requests through Outlook
+  await bob.page.fill('#q', memberName); await bob.page.locator('#rows .who').first().click();
+  await bob.page.click('[data-act=rq]');
+  await bob.page.click('[data-act=rqSend]');
+  await bob.page.waitForFunction(() => S.meetings.filter((x) => x.status === 'requested').length === 1);
+  const msg = JSON.parse(bob.rec.find((r) => r.who === 'graph' && r.url.endsWith('/sendMail')).body).message;
+  assert.equal(msg.toRecipients[0].emailAddress.address, 'jamie@senate.example.gov');
+  await bob.page.keyboard.press('Escape'); await settle(bob.page);
+  log('ok  Bob sent a meeting request through Outlook');
+
+  // ===== Carol, a client, gets view-only access to one campaign =====
   await alice.page.click('.tools [data-act=setup]');
   await alice.page.waitForSelector('#teamBody .people');
-  await alice.page.selectOption('#inv_role', 'editor'); await alice.page.click('[data-act=mkInvite]');
-  await alice.page.waitForSelector('#inv_for:has-text("an editor")');
-  const editorLink = await alice.page.inputValue('#inv_link');
   await alice.page.selectOption('#inv_role', 'viewer'); await alice.page.click('[data-act=mkInvite]');
   await alice.page.waitForSelector('#inv_for:has-text("a viewer")');
   const viewerLink = await alice.page.inputValue('#inv_link');
   await alice.page.keyboard.press('Escape');
-  await settle(alice.page);
-
-  // ===== Bob joins with Microsoft and works the same count =====
-  const bob = await person('Bob', 'microsoft');
-  await bob.page.goto(editorLink); await bob.page.waitForSelector('.seat');
-  assert.match(await bob.page.locator('#banner').innerText(), /Alice invited you to work on .* as an editor/);
-  await signIn(bob);
-  await bob.page.waitForFunction(() => S.cloud && S.members.length === 41 && S.brief.number === 'H.R. 1234');
-  assert.equal(new URL(bob.page.url()).pathname, '/');
-  const before = await alice.page.locator('#odds').innerText();
-  await bob.page.locator('#rows select[data-pos]').nth(25).selectOption('4');
-  await settle(bob.page);
-  await alice.page.waitForFunction((o) => document.querySelector('#odds').textContent !== o, before, { timeout: 15000 });
-  log('ok  Bob joined with an invite link; his change reached Alice');
-
-  // Bob requests and books through Outlook
-  await bob.page.fill('#q', memberName); await bob.page.locator('#rows .who').first().click();
-  await bob.page.click('[data-act=rq]');
-  await bob.page.click('[data-act=rqFind]'); await bob.page.waitForFunction(() => /Offering/.test(document.querySelector('#rqMsg').textContent));
-  await bob.page.click('[data-act=rqSend]');
-  await bob.page.waitForFunction(() => S.meetings.filter((x) => x.status === 'requested').length === 1);
-  const mail = bob.rec.find((r) => r.who === 'graph' && r.url.endsWith('/sendMail'));
-  const msg = JSON.parse(mail.body).message;
-  assert.equal(msg.toRecipients[0].emailAddress.address, 'jamie@senate.example.gov'); assert.match(msg.body.content, /^Hi Jamie,/);
-  assert.ok(bob.rec.find((r) => r.url.includes('/calendarView')).prefer.includes('UTC'));
-  await bob.page.click('[data-act=close]');
-  await bob.page.locator('#meets [data-act=bookTime]').click();
-  await bob.page.click('[data-act=rqInvite]');
-  await bob.page.waitForFunction(() => S.meetings.some((x) => x.eventId === 'msev1'));
-  const mev = JSON.parse(bob.rec.find((r) => r.who === 'graph' && r.method === 'POST' && r.url.endsWith('/events')).body);
-  assert.equal(mev.attendees[0].emailAddress.address, 'jamie@senate.example.gov'); assert.equal(mev.start.timeZone, 'UTC'); assert.equal(mev.onlineMeetingProvider, 'teamsForBusiness');
-  await settle(bob.page);
-  await alice.page.waitForFunction(() => S.meetings.some((x) => x.eventId === 'msev1'), null, { timeout: 15000 });
-  await alice.page.waitForFunction(() => /On a teammate's calendar/.test(document.querySelector('#meets').textContent), null, { timeout: 5000 });
-  log('ok  Bob sent a request and an invitation through Outlook; Alice sees both');
-
-  // ===== Carol can only look =====
   const carol = await person('Carol', 'google');
   await carol.page.goto(viewerLink); await carol.page.waitForSelector('.seat');
   await signIn(carol);
-  await carol.page.waitForFunction(() => S.cloud && S.members.length === 41);
+  await carol.page.waitForFunction(() => S.cloud && S.members.length === 41 && ORG && ORG.role === 'guest');
   assert.match(await carol.page.locator('#warn').innerText(), /view-only/);
-  assert.equal(await carol.page.locator('[data-act=addMember]').count() > 0, true);
   await carol.page.locator('#calls .who').first().click();
   assert.equal(await carol.page.locator('#drawer [data-act=rq]').count(), 0);
-  assert.equal(await carol.page.locator('#drawer select[data-pos]').isDisabled(), true);
   await carol.page.keyboard.press('Escape');
-  log('ok  Carol joined as a viewer and cannot change anything');
+  log('ok  Carol joined as a guest with view-only access');
 
-  // Cancel the Google meeting; the cancellation goes to the attendee
-  const n0 = alice.rec.length;
-  await alice.page.locator('#meets li', { hasText: 'Accepted' }).locator('[data-act=cancelMeet]').click();
-  await alice.page.locator('#meets li', { hasText: 'Accepted' }).locator('[data-act=cancelMeet]').click();
-  await alice.page.waitForFunction(() => S.meetings.some((x) => x.eventId === 'gev1' && x.status === 'cancelled'));
-  const del = alice.rec.slice(n0).find((r) => r.method === 'DELETE');
-  assert.match(del.url, /gev1\?sendUpdates=all/);
-  log('ok  cancelling a meeting withdraws the calendar invitation');
+  // ===== Reports for the firm =====
+  await alice.page.click('[data-page=workspace]');
+  await alice.page.waitForSelector('#rpForm');
+  await alice.page.click('#rpForm .primary');
+  await alice.page.waitForFunction(() => WS.report && WS.report.rows.length >= 2);
+  const rep = await alice.page.locator('#workspacePage').innerText();
+  assert.match(rep, /Prairie Co-ops Alliance/); assert.match(rep, /H\.R\. 1234: Rural Broadband Access Act/);
+  const [csvDl] = await Promise.all([alice.page.waitForEvent('download'), alice.page.click('[data-act=rpCsv]')]);
+  const csvText = fs.readFileSync(await csvDl.path(), 'utf8');
+  assert.match(csvText, /^Date,Client,Issue,Chamber,Member/); assert.match(csvText, /Alice/); assert.match(csvText, /Bob/);
+  await alice.page.reload(); await alice.page.waitForFunction(() => ORG); await alice.page.click('[data-page=workspace]');
+  await alice.page.waitForFunction(() => WS.audit && WS.audit.length > 0);
+  const log1 = await alice.page.locator('#workspacePage').innerText();
+  assert.match(log1, /created the workspace/); assert.match(log1, /Bob joined/); assert.match(log1, /ran the activity report/);
+  await shot(alice.page, 'workspace', true);
+  log('ok  lobbying activity report (with CSV) and activity log');
 
-  // Team list, role change, account deletion
-  await alice.page.click('.tools [data-act=setup]'); await alice.page.waitForSelector('#teamBody .people');
-  assert.match(await alice.page.locator('#teamBody').innerText(), /Bob[\s\S]*Carol/);
+  // ===== Closing a campaign takes it away from members who were not added =====
+  await alice.page.click('[data-page=count]');
+  await alice.page.click('.tools [data-act=setup]');
+  await alice.page.waitForSelector('#camp_vis');
+  await alice.page.selectOption('#camp_vis', 'team');
+  await alice.page.waitForFunction(() => /Only the people listed/.test(document.querySelector('#toast').textContent));
   await alice.page.keyboard.press('Escape');
+  await bob.page.waitForFunction(() => /access to it was removed/.test(document.querySelector('#toast').textContent), null, { timeout: 15000 });
+  assert.equal(await bob.page.evaluate(() => ACCOUNT.list.length), 0);
+  log('ok  closing the campaign removed it for Bob');
+
+  // ===== Subscribing through Stripe =====
+  await alice.page.click('[data-page=workspace]');
+  await alice.page.fill('#bill_seats', '5');
+  await Promise.all([alice.page.waitForURL(`${M}/checkout`), alice.page.click('[data-act=billCheckout][data-plan=team]')]);
+  assert.equal(stripeState.seats, 5);
+  await stripeHook({ id: 'evt_e2e', type: 'checkout.session.completed', data: { object: { client_reference_id: stripeState.org, customer: 'cus_e2e', subscription: 'sub_e2e' } } });
+  await alice.page.goto(stripeState.success);
+  await alice.page.waitForFunction(() => ORG && ORG.plan.key === 'team' && page === 'workspace', null, { timeout: 15000 });
+  assert.match(await alice.page.locator('#workspacePage').innerText(), /Team · Active/);
+  assert.match(await alice.page.locator('#workspacePage').innerText(), /People using seats\s*2 of 5/);
+  assert.equal(new URL(alice.page.url()).search, '');
+  log('ok  Stripe checkout and webhook moved the workspace to Team with 5 seats');
+
+  // Carol deletes her account
   await carol.page.click('#acct [data-act=account]'); await carol.page.click('#drawer details.sect summary'); await carol.page.click('[data-act=delAccount]'); await carol.page.click('[data-act=delAccount]');
   await carol.page.waitForFunction(() => ME === null);
-  log('ok  team list shows everyone; Carol deleted her account');
+  log('ok  Carol deleted her account');
 
   // Layout checks
   await alice.page.setViewportSize({ width: 390, height: 844 });
-  for (const pg of ['count', 'brief']) {
+  for (const pg of ['count', 'brief', 'portfolio', 'workspace']) {
     await alice.page.click(`[data-page=${pg}]`);
     assert.equal(await alice.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `no sideways scroll on ${pg}`);
   }

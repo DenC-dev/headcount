@@ -122,7 +122,7 @@
     try { res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (_) { throw new CloudError('offline', 'The Headcount server could not be reached. Check your connection.', 0); }
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new CloudError(res.status === 401 ? 'signin' : 'api', json.error || `Request failed (${res.status}).`, res.status);
+    if (!res.ok) { const err = new CloudError(res.status === 401 ? 'signin' : 'api', json.error || `Request failed (${res.status}).`, res.status); err.upgrade = Boolean(json.upgrade); throw err; }
     return json;
   };
   C.publicGet = async function (path) {

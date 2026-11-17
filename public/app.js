@@ -240,7 +240,7 @@ function save() {
     if (ROLE === 'viewer') { cloudRevert(); toast('You have view-only access to this campaign, so that change was not saved.'); return; }
     clearTimeout(SYNC.timer); SYNC.timer = setTimeout(() => { SYNC.timer = null; cloudPush(); }, 400); setSaveState(); return;
   }
-  if (S.example && signedIn()) { delete S.example; adoptIntoAccount(null); return; }
+  if (S.example && signedIn() && ORG && ORG.role !== 'guest') { delete S.example; adoptIntoAccount(null); return; }
   delete S.example; saveLocal(); setSaveState();
 }
 async function flushNow() { if (S.cloud && SYNC.timer) { clearTimeout(SYNC.timer); SYNC.timer = null; await cloudPush(); } }
@@ -248,13 +248,13 @@ async function flushNow() { if (S.cloud && SYNC.timer) { clearTimeout(SYNC.timer
 // ----- your account: records sync with the server, merged per member -----
 const LISTS = ['members', 'tasks', 'meetings'];
 const metaOf = (st) => ({ campaign: st.campaign, preset: st.preset || null });
-function newSync(cid) { return { cid, shadow: { meta: null, brief: null, trend: null, members: new Map(), tasks: new Map(), meetings: new Map() }, cursor: 0, timer: null, poll: null, busy: false, again: false, loading: false, creating: false, error: '', failures: 0 }; }
+function newSync(cid) { return { cid, shadow: { meta: null, brief: null, trend: null, summary: null, members: new Map(), tasks: new Map(), meetings: new Map() }, cursor: 0, timer: null, poll: null, busy: false, again: false, loading: false, creating: false, error: '', failures: 0 }; }
 let SYNC = newSync(null);
 
 function diffOps(st, sh) {
   const ops = [];
   const one = (kind, data) => { const j = canon(data); if (sh[kind] !== j) ops.push({ kind, data: plain(data), j }); };
-  one('meta', metaOf(st)); one('brief', st.brief); one('trend', { points: st.trend });
+  one('meta', metaOf(st)); one('brief', st.brief); one('trend', { points: st.trend }); one('summary', summaryOf(st));
   LISTS.forEach((kind) => {
     const seen = new Set();
     st[kind].forEach((x) => { if (x.draft) return; seen.add(x.id); const j = canon(x); if (sh[kind].get(x.id) !== j) ops.push({ kind, id: x.id, data: plain(x), j }); });
@@ -284,11 +284,11 @@ async function cloudPush() {
     if (SYNC.cid === cid) { SYNC.error = ''; SYNC.failures = 0; }
   } catch (e) {
     if (SYNC.cid !== cid) return;
-    if (e.status === 403) { ROLE = 'viewer'; cloudRevert(); toast(e.message); }
+    if (e.status === 403) { ROLE = 'viewer'; cloudRevert(); fail(e); }
     else if (e.status === 404) { SYNC.busy = false; return lostCampaign(); }
     else {
       SYNC.failures++; SYNC.error = e.code === 'offline' ? 'Offline: will save when you reconnect' : 'Not saved yet: retrying';
-      if (SYNC.failures === 1) toast(e.message);
+      if (SYNC.failures === 1) fail(e);
       clearTimeout(SYNC.timer); SYNC.timer = setTimeout(() => { SYNC.timer = null; cloudPush(); }, Math.min(30000, 2000 * SYNC.failures));
     }
   } finally {
@@ -319,6 +319,7 @@ function applyRecords(recs) {
       sh[r.kind].set(r.id, j);
       return;
     }
+    if (r.kind === 'summary') { if (r.data !== null) sh.summary = canon(r.data); return; }
     const local = r.kind === 'meta' ? metaOf(S) : r.kind === 'brief' ? S.brief : { points: S.trend };
     if (sh[r.kind] !== null && canon(local) !== sh[r.kind]) return;
     if (r.data === null) return;
@@ -365,12 +366,13 @@ async function cloudOpen(cid) {
   try {
     const r = await CLOUD.api('GET', `/api/campaigns/${encodeURIComponent(cid)}/records?since=0`);
     if (SYNC.cid !== cid) return;
+    if (r.orgId && (!ORG || ORG.id !== r.orgId)) await loadOrg(r.orgId, { quiet: true });
     ROLE = r.role; applyRecords(r.records); SYNC.cursor = r.cursor;
   } catch (e) {
     if (SYNC.cid !== cid) return;
     SYNC.loading = false;
     if (e.status === 404) return lostCampaign();
-    SYNC.error = 'Could not load: retrying'; render(); toast(e.message);
+    SYNC.error = 'Could not load: retrying'; render(); fail(e);
     setTimeout(() => { if (SYNC.cid === cid && S.cloud) cloudOpen(cid); }, 8000);
     return;
   }
@@ -382,7 +384,7 @@ async function adoptIntoAccount(localId) {
   const cid = uid();
   S.id = cid; S.cloud = true; delete S.example; ROLE = 'owner';
   stopPoll(); SYNC = newSync(cid); SYNC.creating = true; setSaveState();
-  try { await CLOUD.api('POST', '/api/campaigns', { id: cid, name: S.campaign.bill }); }
+  try { await CLOUD.api('POST', '/api/campaigns', { id: cid, workspaceId: ORG.id, name: S.campaign.bill, clientId: S.campaign.clientId || undefined }); }
   catch (e) {
     SYNC.creating = false; delete S.cloud; S.id = localId || uid(); saveLocal(); render();
     return toast(`${e.message} The campaign is saved in this browser instead.`);
@@ -399,9 +401,9 @@ async function moveLocalToAccount() {
     if (id === first) continue;
     const st = normalize(lsGet(LSC + id)), cid = uid();
     try {
-      await CLOUD.api('POST', '/api/campaigns', { id: cid, name: st.campaign.bill });
+      await CLOUD.api('POST', '/api/campaigns', { id: cid, workspaceId: ORG.id, name: st.campaign.bill });
       await sendOps(cid, diffOps(st, newSync(cid).shadow), null);
-    } catch (e) { toast(e.message); break; }
+    } catch (e) { fail(e); break; }
     lsDel(LSC + id); BOOK.list = BOOK.list.filter((x) => x.id !== id); lsSet(LSB, BOOK); moved++;
   }
   await refreshAccount();
@@ -409,8 +411,8 @@ async function moveLocalToAccount() {
   render(); toast(`${moved} campaign${moved === 1 ? '' : 's'} moved to your account`);
 }
 async function refreshAccount() {
-  if (!signedIn()) return;
-  try { const r = await CLOUD.api('GET', '/api/campaigns'); ACCOUNT.list = r.campaigns; ACCOUNT.loaded = true; soon(); } catch (_) { /* try again later */ }
+  if (!signedIn() || !ORG) return;
+  try { const r = await CLOUD.api('GET', `/api/workspaces/${ORG.id}/campaigns`); ACCOUNT.list = r.campaigns; ACCOUNT.loaded = true; soon(); } catch (_) { /* try again later */ }
 }
 setInterval(() => { if (signedIn() && !document.hidden) refreshAccount(); }, 60000);
 async function loadPeople(force) {
@@ -419,8 +421,8 @@ async function loadPeople(force) {
 }
 function fillNames() {
   const els = [...document.querySelectorAll('#drawer [data-by]')]; if (!els.length) return;
-  const put = () => els.forEach((el) => { const p = PEOPLE[el.dataset.by]; el.textContent = `logged by ${el.dataset.by === ME ? 'you' : (p && p.name) || 'a teammate'}`; });
-  put(); if (S.cloud) loadPeople().then(put);
+  const put = () => els.forEach((el) => { const p = PEOPLE[el.dataset.by] || (WS.members || []).find((x) => x.id === el.dataset.by); el.textContent = `logged by ${el.dataset.by === ME ? 'you' : (p && p.name) || 'a teammate'}`; });
+  put(); if (S.cloud) loadPeople().then(() => (WS.members === null && ORG && ORG.role !== 'guest' ? CLOUD.api('GET', `/api/workspaces/${ORG.id}/members`).then((r) => { WS.members = r.members; }).catch(() => {}) : null)).then(put);
 }
 
 async function switchTo(v) {
@@ -434,17 +436,18 @@ async function switchTo(v) {
 }
 async function addCampaign(st) {
   await flushNow();
-  if (signedIn()) {
-    try { await CLOUD.api('POST', '/api/campaigns', { id: st.id, name: st.campaign.bill }); } catch (e) { return toast(e.message); }
+  if (signedIn() && ORG) {
+    const vis = st.visibility; delete st.visibility;
+    try { await CLOUD.api('POST', '/api/campaigns', { id: st.id, workspaceId: ORG.id, name: st.campaign.bill, clientId: st.campaign.clientId || undefined, visibility: vis }); } catch (e) { return fail(e); }
     stopPoll(); S = normalize(st); S.cloud = true; SYNC = newSync(S.id); ROLE = 'owner'; PEOPLE = {};
-    ACCOUNT.list.unshift({ id: S.id, name: S.campaign.bill, role: 'owner', people: 1 }); lsSet(LAST, S.id);
+    ACCOUNT.list.unshift({ id: S.id, name: S.campaign.bill, role: 'owner', people: 1, clientId: S.campaign.clientId, client: clientOf(), visibility: vis === 'team' ? 'team' : 'org' }); lsSet(LAST, S.id);
     view = 'floor'; recordTrend(); await cloudPush(); startPoll(); render(); return;
   }
   if (S.example) BOOK.list = BOOK.list.filter((c) => c.id !== 'ex');
   stopPoll(); SYNC = newSync(null); S = st; view = 'floor'; recordTrend(); save(); render();
 }
 async function openFallback() {
-  if (signedIn() && ACCOUNT.list.length) return cloudOpen(ACCOUNT.list[0].id);
+  if (signedIn() && ORG) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); page = 'portfolio'; closeDrawer(); return render(); }
   const ids = localIds();
   stopPoll(); SYNC = newSync(null);
   if (ids.length) { S = normalize(lsGet(LSC + ids[0])); delete S.cloud; BOOK.active = S.id; }
@@ -460,7 +463,7 @@ async function lostCampaign() {
 async function deleteCampaign() {
   if (S.cloud) {
     const cid = S.id;
-    try { await CLOUD.api('DELETE', `/api/campaigns/${encodeURIComponent(cid)}`); } catch (e) { return toast(e.message); }
+    try { await CLOUD.api('DELETE', `/api/campaigns/${encodeURIComponent(cid)}`); } catch (e) { return fail(e); }
     stopPoll(); ACCOUNT.list = ACCOUNT.list.filter((x) => x.id !== cid); lsDel(LAST);
     return openFallback();
   }
@@ -474,32 +477,37 @@ function goExample() { S = exampleState(); BOOK.list = BOOK.list.filter((c) => c
 async function onAuthChange(user) {
   if (user && !ME) return onSignedIn();
   if (!user && ME) {
-    ME = null; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {};
+    ME = null; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = [];
+    WS.members = WS.invites = WS.audit = WS.report = WS.lastInvite = null;
     if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
+    if (page === 'portfolio' || page === 'workspace') page = 'count';
     closeDrawer(); render();
   }
 }
 async function onSignedIn() {
-  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; }
-  catch (e) { toast(e.message); return render(); }
-  await refreshAccount();
+  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; }
+  catch (e) { fail(e); return render(); }
   if (JOIN && JOIN.info) return acceptJoin();
+  const want = lsGet(LASTORG), oid = ORGS.some((o) => o.id === want) ? want : ORGS[0] && ORGS[0].id;
+  if (oid) await loadOrg(oid, { quiet: true });
+  if (!ORG) { page = 'workspace'; return render(); }
   if (!S.cloud) {
     const last = lsGet(LAST);
     if (last && ACCOUNT.list.some((e) => e.id === last)) return cloudOpen(last);
-    if ((S.example || !S.members.length) && ACCOUNT.list.length) return cloudOpen(ACCOUNT.list[0].id);
+    if (S.example && ACCOUNT.list.length) page = 'portfolio';
   }
   render();
 }
 async function acceptJoin() {
   try {
-    const r = await CLOUD.api('POST', `/api/invites/${JOIN.code}`);
-    const name = JOIN.info.campaign; JOIN = null; history.replaceState(null, '', '/');
-    await refreshAccount(); await cloudOpen(r.campaignId);
-    toast(`You joined ${name}`);
+    const r = await CLOUD.api('POST', JOIN.kind === 'org' ? `/api/workspace-invites/${JOIN.code}` : `/api/invites/${JOIN.code}`);
+    const info = JOIN.info; JOIN = null; history.replaceState(null, '', '/');
+    ORGS = (await CLOUD.api('GET', '/api/workspaces')).workspaces;
+    await loadOrg(r.orgId);
+    if (r.campaignId) { await cloudOpen(r.campaignId); toast(`You joined ${info.campaign}`); }
+    else { page = 'portfolio'; render(); toast(`Welcome to ${info.workspace}`); }
   } catch (e) { JOIN.error = e.message; render(); }
 }
-
 function recordTrend() {
   if (!S.members.length) return;
   const p = goal(S, passage(S.members, baseProbs(S), needs(S)).both);
@@ -671,7 +679,7 @@ function briefDoc(b) {
     <div><div class="eyebrow">Bill brief${b.jurisdiction ? ` · ${esc(b.jurisdiction)}` : ''}${b.session ? ` · ${esc(b.session)}` : ''}</div>
     <h2>${esc(b.number || '')}${b.number && b.title ? ': ' : ''}${esc(b.title || (b.number ? '' : c.bill))}</h2></div>
     ${facts.length ? `<dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
-    <div class="position"><b>Our position:</b> we ${c.side === 'defeat' ? 'oppose' : 'support'} this bill${c.client ? ` on behalf of ${esc(c.client)}` : ''}.${c.ask ? ` <b>The ask:</b> ${esc(c.ask)}.` : ''}</div>
+    <div class="position"><b>Our position:</b> we ${c.side === 'defeat' ? 'oppose' : 'support'} this bill${clientOf() ? ` on behalf of ${esc(clientOf())}` : ''}.${c.ask ? ` <b>The ask:</b> ${esc(c.ask)}.` : ''}</div>
     ${b.draftedAt ? `<p class="draftnote noprint">The analysis below was drafted with Claude on ${esc(fmtDay(b.draftedAt.slice(0, 10)))} from the bill material. Check every point against the bill before you rely on it.</p>` : ''}
     ${sec('Summary', para(b.plainSummary || firstSentences(b.officialSummary, 900)))}
     ${sec('What it does', list(lines(b.keyProvisions)))}
@@ -736,7 +744,7 @@ function briefPlain(b) {
   const c = S.campaign, out = [];
   out.push(`BILL BRIEF: ${b.number || ''}${b.number && b.title ? ': ' : ''}${b.title || ''}`.trim());
   [['Legislature', [b.jurisdiction, b.session].filter(Boolean).join(', ')], ['Sponsors', b.sponsors], ['Status', b.status], ['Committee', b.committees]].forEach(([k, v]) => { if (v) out.push(`${k}: ${v}`); });
-  out.push('', `Our position: we ${c.side === 'defeat' ? 'oppose' : 'support'} this bill${c.client ? ` on behalf of ${c.client}` : ''}.${c.ask ? ` The ask: ${c.ask}.` : ''}`);
+  out.push('', `Our position: we ${c.side === 'defeat' ? 'oppose' : 'support'} this bill${clientOf() ? ` on behalf of ${clientOf()}` : ''}.${c.ask ? ` The ask: ${c.ask}.` : ''}`);
   const block = (t, body) => { if (body && body.length) out.push('', t.toUpperCase(), ...[].concat(body)); };
   block('Summary', b.plainSummary || firstSentences(b.officialSummary, 900));
   block('What it does', lines(b.keyProvisions).map((x) => `- ${x}`));
@@ -774,7 +782,7 @@ async function lookupBill(form) {
       url: r.url, officialSummary: r.officialSummary, officialSummaryLabel: r.officialSummaryLabel, source: r.source, fetchedAt: r.fetchedAt });
     if (!S.campaign.bill || /^(your bill|new campaign|untitled)/i.test(S.campaign.bill)) S.campaign.bill = `${r.number}: ${r.title}`.slice(0, 140);
     briefPanel = ''; save(); render(); toast(`${r.number} filled in from ${r.source}`);
-  } catch (e) { btn.disabled = false; btn.textContent = 'Look it up'; btn.dataset.sure = ''; if (msgEl) msgEl.textContent = e.message; else toast(e.message); }
+  } catch (e) { btn.disabled = false; btn.textContent = 'Look it up'; btn.dataset.sure = ''; if (msgEl) msgEl.textContent = e.message; else fail(e); }
 }
 async function draftAnalysis(form) {
   const go = $('#dfGo'), msg = $('#dfMsg');
@@ -783,7 +791,7 @@ async function draftAnalysis(form) {
   const b = S.brief, c = S.campaign, material = $('#df_text').value;
   go.disabled = true; msg.textContent = 'Claude is drafting. This can take up to a minute.';
   try {
-    const r = await CLOUD.api('POST', '/api/bills/draft', { bill: { number: b.number, title: b.title || c.bill, jurisdiction: b.jurisdiction, session: b.session, sponsors: b.sponsors, status: b.status, committees: b.committees, officialSummary: b.officialSummary }, material, side: c.side, ask: c.ask, client: c.client });
+    const r = await CLOUD.api('POST', '/api/bills/draft', { bill: { number: b.number, title: b.title || c.bill, jurisdiction: b.jurisdiction, session: b.session, sponsors: b.sponsors, status: b.status, committees: b.committees, officialSummary: b.officialSummary }, material, side: c.side, ask: c.ask, client: clientOf(), campaignId: S.cloud ? S.id : undefined });
     Object.assign(b, { plainSummary: r.plainSummary, keyProvisions: r.keyProvisions, whoItAffects: r.whoItAffects, fiscalImpact: r.fiscalImpact, talkingPoints: r.talkingPoints, objections: r.objections, needsChecking: r.needsChecking, draftedAt: r.draftedAt });
     briefPanel = ''; save(); render(); toast('Draft ready. Check it against the bill before you use it.');
   } catch (e) { go.disabled = false; msg.textContent = e.message; }
@@ -821,7 +829,7 @@ function briefText(m) {
   const tasks = S.tasks.filter((t) => t.mid === m.id && !t.done);
   return [
     `MEETING BRIEF: ${m.name} (${m.party}-${m.district})`,
-    `${c.bill}${c.client ? ` | ${c.client}` : ''} | prepared ${today()}`, '',
+    `${c.bill}${clientOf() ? ` | ${clientOf()}` : ''} | prepared ${today()}`, '',
     `Position on the bill: ${POS[m.pos]} (movability ${m.mov}/5)`,
     m.role || m.cmte ? `Committee: ${m.role ? m.role + ', ' : 'member, '}${c.committee || 'committee of referral'}` : '',
     m.interests ? `Cares about: ${m.interests}` : '',
@@ -844,7 +852,7 @@ function clientReport() {
   const touched = S.members.reduce((n, m) => n + m.history.filter((h) => h.d >= from && h.type !== 'Count update').length, 0);
   const dates = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]}: ${x[1]} (${inDays(x[1])})`);
   return [
-    `${c.bill}: status as of ${today()}`, c.client ? `Prepared for ${c.client}${c.me ? ' by ' + c.me : ''}` : null, '',
+    `${c.bill}: status as of ${today()}`, clientOf() ? `Prepared for ${clientOf()}${c.me ? ' by ' + c.me : ''}${firmOf() ? `, ${firmOf()}` : ''}` : null, '',
     `Goal: ${defeat ? 'defeat' : 'pass'} the bill. Our estimate today: ${pct(goal(S, base.both))}% (${defeat ? `stopped in committee ${nd.c ? pct(1 - base.cm) + '%' : 'n/a'}, fails on the floor ${pct(1 - base.fl)}%` : `clears committee ${nd.c ? pct(base.cm) + '%' : 'n/a'}, wins the floor ${pct(base.fl)}%`}).`,
     hasBrief(S.brief) && S.brief.status ? `Bill: ${billLabel(S.brief)}. Status: ${S.brief.status}.` : null,
     `Floor count (${c.chamber || 'chamber'}, ${nd.n} members, ${nd.needF} needed to pass): ${count(S.members)}.`,
@@ -899,18 +907,18 @@ function requestText(m) {
     subject: `Meeting request: ${b.number || (c.bill || 'legislation').split(':')[0]}`.slice(0, 140),
     body: [
       `Hi ${hello},`, '',
-      `I'm ${senderName()}${c.client ? ` with ${c.client}` : ''}. I'd like ${RQ.mins} minutes with ${ref}${st ? ' or with you' : ''} to discuss ${billLabel(b)}${m.cmte && c.committee ? `, which is before ${c.committee}` : ''}.`, '',
+      `I'm ${senderName()}${firmOf() ? ` with ${firmOf()}${clientOf() && clientOf() !== firmOf() ? `, on behalf of ${clientOf()}` : ''}` : clientOf() ? ` with ${clientOf()}` : ''}. I'd like ${RQ.mins} minutes with ${ref}${st ? ' or with you' : ''} to discuss ${billLabel(b)}${m.cmte && c.committee ? `, which is before ${c.committee}` : ''}.`, '',
       ...(about ? [`In short: ${about}`, ''] : []),
       ...(c.ask ? [`What we are asking: ${c.ask}.`, ''] : []),
       ...(times.length ? ['Would one of these times work?', ...times, `(Times are ${tzName() || 'local time'}.)`] : ['What times would work over the next two weeks?']), '',
       'I can come to the office or meet by phone or video, whichever is easier.', '',
-      'Thank you,', senderName(), ...(c.client ? [c.client] : []),
+      'Thank you,', senderName(), ...(firmOf() || clientOf() ? [firmOf() || clientOf()] : []),
     ].join('\n'),
   };
 }
 function inviteText(m) {
   const c = S.campaign, b = S.brief, ct = contact(m);
-  return [billLabel(b), briefSummaryLine(b), c.ask ? `Our ask: ${c.ask}.` : '', RQ.note, `Requested by ${senderName()}${c.client ? `, ${c.client}` : ''}.`, ct.phone ? `Office phone: ${ct.phone}` : ''].filter(Boolean).join('\n\n');
+  return [billLabel(b), briefSummaryLine(b), c.ask ? `Our ask: ${c.ask}.` : '', RQ.note, `Requested by ${senderName()}${firmOf() || clientOf() ? `, ${firmOf() || clientOf()}` : ''}.`, ct.phone ? `Office phone: ${ct.phone}` : ''].filter(Boolean).join('\n\n');
 }
 function rqStart(m, opts = {}) {
   const list = recipients(m), st = opts.sid && m.staffers.find((s) => s.id === opts.sid);
@@ -1032,7 +1040,7 @@ async function checkReplies() {
       if (r.link) mt.link = r.link;
       mt.replies = Object.fromEntries(Object.entries(r.replies || {}).filter(([e, s]) => s !== 'organizer' && (mt.to || []).map((x) => x.toLowerCase()).includes(e)));
       Object.values(mt.replies).forEach((s) => { if (s === 'accepted') acc++; else if (s === 'declined') dec++; else wait++; });
-    } catch (e) { save(); render(); return toast(e.message); }
+    } catch (e) { save(); render(); return fail(e); }
   }
   save(); render();
   toast(list.length ? [acc && `${acc} accepted`, dec && `${dec} declined`, wait && `${wait} waiting`, gone && `${gone} cancelled`].filter(Boolean).join(', ') || 'No replies yet' : 'No invitations to check on this calendar.');
@@ -1119,14 +1127,262 @@ function parseRoster(text) {
     id: uid(), name: r[0].slice(0, 80), party: /^[DRI]$/i.test(r[1] || '') ? r[1].toUpperCase() : 'I', district: (r[2] || '').slice(0, 12),
     cmte: /^(y|yes|1|true)$/i.test(r[3] || ''), pos: posOf(r[4] || ''), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], phone: (r[5] || '').slice(0, 40), email: (r[6] || '').slice(0, 120) }));
 }
+// ---------- workspaces ----------
+let ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [];
+const WS = { members: null, invites: null, audit: null, auditMore: true, report: null, lastInvite: null, loading: false, filter: { client: '', q: '', archived: false } };
+const LASTORG = 'headcount.lastOrg';
+const isAdmin = () => ORG && (ORG.role === 'owner' || ORG.role === 'admin');
+const clientOf = (st = S) => (st.cloud && st.campaign.clientId ? (CLIENTS.find((k) => k.id === st.campaign.clientId) || {}).name || '' : st.campaign.client || '');
+const firmOf = (st = S) => (st.cloud && ORG ? ORG.name : '');
+const fmtDate = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+const limitText = (used, max) => (max === null || max === undefined ? `${used}` : `${used} of ${max}`);
+function fail(e) { if (e && e.upgrade) notify(e.message, isAdmin() ? 'See plans' : '', 'gotoPlans'); else toast(e && e.message ? e.message : String(e)); }
+function notify(msg, label, act) {
+  const t = $('#toast'); t.innerHTML = `${esc(msg)}${label ? ` <button class="btn sm" data-act="${act}">${esc(label)}</button>` : ''}`; t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 7000);
+}
+
+async function loadOrg(oid, { quiet } = {}) {
+  try {
+    const [info, cl] = await Promise.all([CLOUD.api('GET', `/api/workspaces/${oid}`), CLOUD.api('GET', `/api/workspaces/${oid}/clients`)]);
+    const changed = !ORG || ORG.id !== oid;
+    ORG = info; CLIENTS = cl.clients; lsSet(LASTORG, oid);
+    if (changed) { WS.members = WS.invites = WS.audit = WS.report = WS.lastInvite = null; WS.auditMore = true; ACCOUNT.list = []; }
+    await refreshAccount();
+    return true;
+  } catch (e) { if (!quiet) fail(e); return false; }
+}
+async function switchOrg(oid) {
+  await flushNow();
+  if (!(await loadOrg(oid))) return render();
+  if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
+  const last = lsGet(LAST);
+  if (last && ACCOUNT.list.some((e) => e.id === last)) return cloudOpen(last);
+  page = 'portfolio'; render();
+}
+async function createOrg(name) {
+  try {
+    const r = await CLOUD.api('POST', '/api/workspaces', { name });
+    ORGS = (await CLOUD.api('GET', '/api/workspaces')).workspaces;
+    await loadOrg(r.id); page = 'workspace'; render();
+    toast(`${r.name} created. Invite your team next.`);
+  } catch (e) { fail(e); }
+}
+function summaryOf(st) {
+  const nd = needs(st), base = passage(st.members, baseProbs(st), nd), c = st.campaign;
+  const ups = st.meetings.filter((x) => x.status === 'requested' || x.status === 'invited').sort((a, b) => String(a.start || a.sentAt).localeCompare(String(b.start || b.sentAt)));
+  return {
+    odds: st.members.length ? Math.round(goal(st, base.both) * 1000) / 1000 : null, side: c.side, n: nd.n, needF: nd.needF,
+    counts: [4, 3, 2, 1, 0].map((p) => st.members.filter((m) => m.pos === p).length), trend: (st.trend || []).slice(-12),
+    cmteDate: c.cmteDate || '', floorDate: c.floorDate || '', bill: st.brief.number || '', billStatus: st.brief.status || '',
+    requested: ups.filter((x) => x.status === 'requested').length, meetings: ups.filter((x) => x.status === 'invited').slice(0, 3).map((x) => ({ start: x.start, title: x.title })),
+    openTasks: st.tasks.filter((t) => !t.done).length, dueDates: st.tasks.filter((t) => !t.done && t.due).map((t) => t.due).sort().slice(0, 20),
+  };
+}
+
+// ---------- portfolio ----------
+function renderPortfolio() {
+  const el = $('#portfolioPage');
+  if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to see every campaign in your workspace in one place. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'The portfolio needs accounts, which are not set up on this server.'}</div>`; return; }
+  if (!ORG) { el.innerHTML = '<div class="panel empty">Create or join a workspace to see your portfolio. <button class="btn sm primary" data-page="workspace">Set up a workspace</button></div>'; return; }
+  const f = WS.filter, q = f.q.trim().toLowerCase();
+  const list = ACCOUNT.list.filter((c) => (f.archived || !c.archived) && (!f.client || c.clientId === f.client) && (!q || `${c.name} ${c.client} ${(c.summary || {}).bill || ''}`.toLowerCase().includes(q)));
+  const soonest = (s) => [['Committee vote', s.cmteDate], ['Floor vote', s.floorDate]].filter((x) => x[1] && dayDiff(x[1]) >= 0).sort((a, b) => a[1].localeCompare(b[1]))[0];
+  const upcoming = [];
+  ACCOUNT.list.filter((c) => !c.archived && c.summary).forEach((c) => {
+    const s = c.summary;
+    [['Committee vote', s.cmteDate], ['Floor vote', s.floorDate]].forEach(([k, d]) => { if (d && dayDiff(d) >= 0 && dayDiff(d) <= 14) upcoming.push({ when: d + 'T00:00', label: `${k}: ${c.name}`, id: c.id, day: true }); });
+    (s.meetings || []).forEach((m) => { const t = new Date(m.start); if (t > Date.now() && t - Date.now() < 7 * 864e5) upcoming.push({ when: m.start, label: m.title, id: c.id }); });
+  });
+  upcoming.sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  const row = (c) => {
+    const s = c.summary || {}, odds = s.odds, wk = (s.trend || []).filter((t) => t.d <= daysAgo(7)).slice(-1)[0];
+    const delta = odds !== null && odds !== undefined && wk ? Math.round((odds - wk.p) * 100) : null;
+    const cnt = s.counts || [0, 0, 0, 0, 0], have = s.side === 'defeat' ? cnt[3] + cnt[4] : cnt[0] + cnt[1];
+    const target = s.side === 'defeat' ? (s.n || 0) - (s.needF || 0) + 1 : s.needF;
+    const overdue = (s.dueDates || []).filter((d) => dayDiff(d) < 0).length, next = s.cmteDate || s.floorDate ? soonest(s) : null;
+    return `<tr class="prow" data-opencamp="${esc(c.id)}" tabindex="0">
+      <td><b>${esc(c.name || 'Untitled campaign')}</b>${c.archived ? ' <span class="status">Archived</span>' : ''}${c.visibility === 'team' ? ' <span class="status">Closed</span>' : ''}<div class="meta">${esc(s.billStatus || '')}</div></td>
+      <td>${esc(c.client || '')}</td>
+      <td class="num">${odds === null || odds === undefined ? '<span class="note">No roster</span>' : `<b>${pct(odds)}%</b>${delta ? ` <span class="${delta > 0 ? 'good' : 'bad'}">${delta > 0 ? '+' : ''}${delta}</span>` : ''}<div class="meta">${s.side === 'defeat' ? 'to defeat' : 'to pass'}</div>`}</td>
+      <td class="num">${s.n ? `${have} / ${target}` : ''}</td>
+      <td>${next ? `${esc(next[0])}<div class="meta">${esc(fmtDay(next[1]))}, ${esc(inDays(next[1]))}</div>` : ''}</td>
+      <td class="num">${(s.meetings || []).length ? `${s.meetings.length} booked` : ''}${s.requested ? `<div class="meta">${s.requested} requested</div>` : ''}</td>
+      <td class="num">${overdue ? `<span class="bad"><b>${overdue} overdue</b></span>` : ''}${s.openTasks ? `<div class="meta">${s.openTasks} open</div>` : ''}</td>
+      <td class="meta">${esc(fmtDate(c.updatedAt))}</td></tr>`;
+  };
+  el.innerHTML = `
+    ${upcoming.length ? `<div class="panel"><span class="label">Coming up</span><ul class="moves">${upcoming.slice(0, 8).map((u) => `<li><span class="when">${esc(u.day ? fmtDay(u.when.slice(0, 10)) : fmtWhen(u.when))}</span> · <button class="linkbtn" data-opencamp="${esc(u.id)}">${esc(u.label)}</button></li>`).join('')}</ul></div>` : ''}
+    <div class="panel">
+      <div class="row"><span class="label">Campaigns in ${esc(ORG.name)}</span>${ORG.role !== 'guest' ? '<button class="btn sm primary" data-act="newCamp">New campaign</button>' : ''}</div>
+      <div class="filters">
+        <input type="search" id="pf_q" placeholder="Search campaigns" value="${esc(f.q)}" aria-label="Search campaigns">
+        <select id="pf_client" aria-label="Client"><option value="">All clients</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}" ${f.client === k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</select>
+        <label class="check note"><input type="checkbox" id="pf_arch" ${f.archived ? 'checked' : ''}> Show archived</label>
+      </div>
+      <div class="tablewrap" style="max-height:none"><table class="ptable"><thead><tr><th>Campaign</th><th>Client</th><th>Odds</th><th>Count</th><th>Next vote</th><th>Meetings</th><th>Follow-ups</th><th>Updated</th></tr></thead>
+      <tbody>${list.length ? list.map(row).join('') : `<tr><td colspan="8" class="note">${ACCOUNT.list.length ? 'No campaigns match.' : 'No campaigns yet. Create one, or open the example and edit it to save it here.'}</td></tr>`}</tbody></table></div>
+    </div>`;
+}
+
+// ---------- workspace settings ----------
+const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: 'Member', guest: 'Guest' };
+const ACTIONS = { 'workspace.created': 'created the workspace', 'workspace.renamed': 'renamed the workspace', 'workspace.exported': 'exported all data', 'workspace.owner_changed': 'passed ownership to', 'member.joined': 'joined', 'member.left': 'left the workspace', 'member.removed': 'removed', 'member.role_changed': 'changed the role of', 'invite.created': 'created an invitation for', 'invite.revoked': 'revoked an invitation', 'client.added': 'added client', 'client.updated': 'updated client', 'client.deleted': 'deleted client', 'campaign.created': 'created campaign', 'campaign.deleted': 'deleted campaign', 'campaign.archived': 'archived campaign', 'campaign.restored': 'restored campaign', 'campaign.visibility': 'changed who can see', 'billing.checkout_started': 'started checkout', 'billing.subscription': 'subscription is now', 'billing.canceled': 'subscription canceled', 'billing.seats_changed': 'changed the number of seats', 'billing.payment_failed': 'a payment failed', 'domain.added': 'added the email domain', 'domain.verified': 'verified the email domain', 'domain.join_on': 'let colleagues join from', 'domain.join_off': 'stopped joining from', 'domain.removed': 'removed the email domain', 'report.activity': 'ran the activity report for' };
+function quarters() {
+  const out = [], d = new Date();
+  let y = d.getFullYear(), q = Math.floor(d.getMonth() / 3) + 1;
+  for (let i = 0; i < 8; i++) {
+    const from = `${y}-${pad((q - 1) * 3 + 1)}-01`, endMonth = q * 3, to = `${y}-${pad(endMonth)}-${pad(new Date(y, endMonth, 0).getDate())}`;
+    out.push({ label: `Q${q} ${y}`, from, to });
+    q--; if (!q) { q = 4; y--; }
+  }
+  return out;
+}
+async function loadWs() {
+  if (WS.loading || !ORG) return;
+  WS.loading = true;
+  try {
+    const jobs = [];
+    if (ORG.role !== 'guest' && WS.members === null) jobs.push(CLOUD.api('GET', `/api/workspaces/${ORG.id}/members`).then((r) => { WS.members = r.members; }));
+    if (isAdmin() && WS.invites === null) jobs.push(CLOUD.api('GET', `/api/workspaces/${ORG.id}/invites`).then((r) => { WS.invites = r.invites; }));
+    if (isAdmin() && WS.audit === null && ORG.plan.features.audit) jobs.push(CLOUD.api('GET', `/api/workspaces/${ORG.id}/audit?limit=25`).then((r) => { WS.audit = r.entries; WS.auditMore = r.entries.length === 25; }));
+    await Promise.all(jobs);
+  } catch (e) { fail(e); } finally { WS.loading = false; }
+  if (page === 'workspace') renderWorkspace(true);
+}
+function planPanel() {
+  const p = ORG.plan, u = ORG.usage, b = (CLOUD.config && CLOUD.config.billing) || null, admin = isAdmin();
+  const daysLeft = p.trialEnds ? Math.max(0, Math.ceil((p.trialEnds - Date.now()) / 864e5)) : 0;
+  const status = p.key === 'trial' ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left` : p.status === 'past_due' ? 'Payment overdue' : p.key === 'unlimited' ? 'No limits on this server' : p.key === 'free' ? 'Free' : 'Active';
+  const rows = [['People using seats', limitText(u.seats, p.seats)], ['Guests', limitText(u.guests, p.guests)], ['Active campaigns', limitText(u.campaigns, p.campaigns)], ['Briefs drafted this month', limitText(u.drafts, p.drafts)]];
+  let actions = '';
+  if (b && admin) {
+    const sub = ORG.billing.subscription && ['active', 'trialing', 'past_due'].includes(p.status);
+    if (sub) actions = `<div class="btnrow"><label class="note">Seats <input type="number" id="bill_seats" min="${u.seats}" max="1000" value="${p.seats}" style="width:80px"></label><button class="btn" data-act="billSeats">Change seats</button><button class="btn" data-act="billPortal">Invoices, card and cancellation</button></div>`;
+    else actions = `<div class="btnrow"><label class="note">Seats <input type="number" id="bill_seats" min="${Math.max(1, u.seats)}" max="1000" value="${Math.max(u.seats, 3)}" style="width:80px"></label><button class="btn primary" data-act="billCheckout" data-plan="team">Subscribe to Team${b.team.price ? ` (${esc(b.team.price)})` : ''}</button>${b.firm ? `<button class="btn" data-act="billCheckout" data-plan="firm">Subscribe to Firm${b.firm.price ? ` (${esc(b.firm.price)})` : ''}</button>` : ''}${ORG.billing.customer ? '<button class="btn" data-act="billPortal">Past invoices</button>' : ''}</div>
+      <p class="note">Team adds the lobbying activity report, the activity log, joining by email domain, ${p.key === 'free' ? 'unlimited campaigns, ' : ''}guests and more drafted briefs. Checkout and billing are handled by Stripe.${b.salesEmail ? ` For a firm-wide agreement or invoicing, write to ${esc(b.salesEmail)}.` : ''}</p>`;
+  }
+  return `<div class="panel"><div class="row"><span class="label">Plan</span><span class="status ${p.status === 'past_due' ? 'bad' : p.key === 'free' ? 'wait' : 'ok'}">${esc(p.label)} · ${esc(status)}</span></div>
+    <dl class="kv" style="margin-top:10px">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}${p.periodEnd ? `<dt>Renews</dt><dd>${esc(fmtDate(p.periodEnd))}</dd>` : ''}</dl>
+    ${actions}${!admin && b && p.key !== 'unlimited' ? '<p class="note">Workspace admins manage the plan.</p>' : ''}</div>`;
+}
+function peoplePanel() {
+  if (ORG.role === 'guest') return '';
+  const admin = isAdmin(), owner = ORG.role === 'owner', ms = WS.members;
+  const roleSel = (m) => `<select data-orgrole="${esc(m.id)}" aria-label="Role for ${esc(m.name)}">${['owner', 'admin', 'member', 'guest'].filter((r) => owner || (r !== 'owner' && m.role !== 'owner')).map((r) => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('')}</select>`;
+  const canManage = (m) => admin && !m.you && (owner || m.role !== 'owner');
+  return `<div class="panel"><span class="label">People</span>
+    ${ms ? `<ul class="people">${ms.map((m) => `<li><span><b>${esc(m.name || m.email)}</b>${m.you ? ' (you)' : ''}<br><span class="note">${esc(m.email)}</span></span>
+      <span class="btnrow">${canManage(m) ? `${roleSel(m)}<button class="btn sm warn" data-act="orgRemove" data-uid="${esc(m.id)}">Remove</button>` : `<span class="status">${ROLE_LABEL[m.role]}</span>`}</span></li>`).join('')}</ul>` : '<p class="note">Loading</p>'}
+    ${admin ? `<form id="oiForm" class="form" style="margin-top:12px">
+      <label>Email <span class="note">optional</span><input id="oi_email" name="email" type="email" placeholder="colleague@yourfirm.com"></label>
+      <label>Role<select id="oi_role" name="role"><option value="member">Member</option><option value="admin">Admin</option><option value="guest">Guest</option></select></label>
+      <div class="wide btnrow"><button class="btn primary">Create invitation</button>${signedIn() && CLOUD.user ? `<label class="check note"><input type="checkbox" id="oi_send" checked> Email it from my ${CLOUD.mailName(CLOUD.provider())} when an address is given</label>` : ''}</div>
+      </form>
+      ${WS.lastInvite ? `<div class="linkbox" style="margin-top:8px"><input id="oi_link" readonly value="${esc(WS.lastInvite)}" aria-label="Invitation link"><button class="btn sm" data-copy="${esc(WS.lastInvite)}">Copy</button></div>` : ''}
+      <p class="note">Members and admins use a seat; admins also manage people, billing and settings. Guests (clients, coalition partners) see only the campaigns they are added to and do not use a seat. An invitation with an email address works once, for that person; without one, anyone with the link can join for 14 days.</p>
+      ${WS.invites && WS.invites.length ? `<span class="label">Open invitations</span><ul class="people">${WS.invites.map((i) => `<li><span>${esc(i.email || 'Anyone with the link')} · ${ROLE_LABEL[i.role]}<br><span class="note">expires ${esc(fmtDate(i.expiresAt))}${i.email ? '' : `, used ${i.uses} time${i.uses === 1 ? '' : 's'}`}</span></span><span class="btnrow"><button class="btn sm" data-copy="${esc(location.origin + '/invite/' + i.code)}">Copy link</button><button class="btn sm warn" data-act="orgRevoke" data-code="${esc(i.code)}">Revoke</button></span></li>`).join('')}</ul>` : ''}` : ''}
+  </div>`;
+}
+function clientsPanel() {
+  if (ORG.role === 'guest') return '';
+  return `<div class="panel"><span class="label">Clients</span>
+    <ul class="people">${CLIENTS.length ? CLIENTS.map((k) => `<li><span>${esc(k.name)}${k.archived ? ' <span class="status">Archived</span>' : ''}<br><span class="note">${ACCOUNT.list.filter((c) => c.clientId === k.id && !c.archived).length} active campaigns</span></span>
+      <span class="btnrow"><button class="btn sm" data-act="clientRename" data-id="${esc(k.id)}">Rename</button><button class="btn sm" data-act="clientArchive" data-id="${esc(k.id)}">${k.archived ? 'Restore' : 'Archive'}</button>${isAdmin() ? `<button class="btn sm warn" data-act="clientDelete" data-id="${esc(k.id)}">Delete</button>` : ''}</span></li>`).join('') : '<li class="note">No clients yet. Add the organizations you represent, then pick one for each campaign.</li>'}</ul>
+    <form id="ckForm" class="taskadd"><input id="ck_name" name="name" placeholder="Client name" aria-label="Client name" required><button class="btn">Add client</button></form></div>`;
+}
+function domainPanel() {
+  if (!isAdmin()) return '';
+  const d = ORG.domain, on = ORG.plan.features.domain;
+  let body;
+  if (!on) body = '<p class="note">On the Team plan, colleagues with an email address at your firm\'s domain can join without an invitation.</p>';
+  else if (!d) body = `<p class="note">Let colleagues with an email address at your firm's domain join this workspace as members, without an invitation. You prove you own the domain with a DNS record.</p><form id="dmForm" class="taskadd"><input id="dm_name" name="domain" placeholder="yourfirm.com" aria-label="Domain" required><button class="btn">Add domain</button></form>`;
+  else if (!d.verified) body = `<p class="note">Add this TXT record to <b>${esc(d.name)}</b> at your DNS provider, then press Verify. Changes can take up to an hour to appear.</p><div class="linkbox"><input readonly value="headcount-verification=${esc(d.token)}" aria-label="TXT record"><button class="btn sm" data-copy="headcount-verification=${esc(d.token)}">Copy</button></div><div class="btnrow" style="margin-top:8px"><button class="btn primary" data-act="dmVerify">Verify</button><button class="btn" data-act="dmRemove">Remove</button></div>`;
+  else body = `<p><span class="status ok">Verified</span> ${esc(d.name)}</p><label class="check"><input type="checkbox" id="dm_join" ${d.join ? 'checked' : ''}> Anyone who signs in with a verified @${esc(d.name)} address can join as a member (each uses a seat)</label><div><button class="btn sm" data-act="dmRemove">Remove domain</button></div>`;
+  return `<div class="panel"><span class="label">Email domain</span>${body}</div>`;
+}
+function reportPanel() {
+  if (!isAdmin()) return '';
+  if (!ORG.plan.features.activityReport) return '<div class="panel"><span class="label">Lobbying activity report</span><p class="note">On the Team plan: every contact your team logged in a quarter, grouped by client and issue, ready to help prepare disclosure reports such as the LD-2. <button class="btn sm" data-act="gotoPlans">See plans</button></p></div>';
+  const qs = quarters(), r = WS.report;
+  return `<div class="panel"><span class="label">Lobbying activity report</span>
+    <form id="rpForm" class="filters" style="margin-top:10px">
+      <select id="rp_q" name="q" aria-label="Quarter">${qs.map((q, i) => `<option value="${i}" ${r && r.from === q.from ? 'selected' : ''}>${q.label}</option>`).join('')}</select>
+      <select id="rp_client" name="client" aria-label="Client"><option value="">All clients</option>${CLIENTS.map((k) => `<option value="${esc(k.id)}" ${r && r.client === k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</select>
+      <button class="btn primary">Run report</button>${r ? '<button type="button" class="btn" data-act="rpCsv">Download CSV</button>' : ''}
+    </form>
+    ${r ? `<p class="note">${r.rows.length} contact${r.rows.length === 1 ? '' : 's'} logged from ${esc(fmtDay(r.from))} to ${esc(fmtDay(r.to))}.</p>
+      ${r.summary.length ? `<div class="tablewrap" style="max-height:none"><table><thead><tr><th>Client</th><th>Contacts</th><th>Issues</th><th>Chambers</th><th>Lobbyists</th></tr></thead><tbody>${r.summary.map((g) => `<tr><td><b>${esc(g.client)}</b></td><td class="num">${g.contacts}</td><td>${esc(g.issues.join('; '))}</td><td>${esc(g.chambers.join('; '))}</td><td>${esc(g.lobbyists.join(', '))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${r.rows.length ? `<details><summary class="note">Every contact</summary><div class="tablewrap"><table><thead><tr><th>Date</th><th>Client</th><th>Member</th><th>With</th><th>Type</th><th>Logged by</th></tr></thead><tbody>${r.rows.map((x) => `<tr><td class="num">${esc(x.date)}</td><td>${esc(x.client)}</td><td>${esc(x.member)} <span class="note">${esc(x.party || '')}-${esc(x.district || '')}</span></td><td>${esc(x.withWhom)}</td><td>${esc(x.type)}</td><td>${esc(x.loggedBy)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}` : ''}
+    <p class="note">This lists contacts logged in Headcount. It is a worksheet, not a filing: disclosure laws define lobbying contacts and activities in their own terms, and some work happens outside the app. Check it against your records and with counsel.</p></div>`;
+}
+function auditPanel() {
+  if (!isAdmin() || !ORG.plan.features.audit) return '';
+  return `<div class="panel"><div class="row"><span class="label">Activity log</span>${WS.audit && WS.audit.length ? '<button class="btn sm" data-act="auditCsv">Download CSV</button>' : ''}</div>
+    ${WS.audit ? `<ul class="hist">${WS.audit.map((a) => `<li><time>${esc(new Date(a.at).toLocaleString())}</time> · ${esc(a.actor || 'Billing')} ${esc(a.action === 'invite.created' && !a.target ? 'created an invitation link' : ACTIONS[a.action] || a.action)}${a.target ? ` <b>${esc(a.target)}</b>` : ''}${a.detail && a.detail.role ? ` as ${esc(ROLE_LABEL[a.detail.role] || a.detail.role)}` : ''}${a.detail && a.detail.to ? ` to ${esc(ROLE_LABEL[a.detail.to] || a.detail.to)}` : ''}${a.detail && a.detail.seats ? ` (${a.detail.seats} seats)` : ''}</li>`).join('') || '<li class="note">Nothing yet.</li>'}</ul>${WS.auditMore ? '<button class="btn sm" data-act="auditMore">Show older</button>' : ''}` : '<p class="note">Loading</p>'}</div>`;
+}
+function dataPanel() {
+  const owner = ORG.role === 'owner';
+  return `<div class="panel"><span class="label">Workspace</span>
+    ${isAdmin() ? `<form id="wnForm" class="taskadd"><input id="wn_name" name="name" value="${esc(ORG.name)}" aria-label="Workspace name" required><button class="btn">Rename</button></form>
+    <p class="note">The workspace name appears in meeting requests as the organization you are writing from.</p>
+    <div class="btnrow"><button class="btn" data-act="orgExport">Download all data (JSON)</button></div>` : ''}
+    <details class="sect"><summary>${owner ? 'Delete workspace' : 'Leave workspace'}</summary>
+      <p class="note">${owner ? 'Deletes every campaign, client and invitation in this workspace for everyone. Download the data first if you need it. This cannot be undone.' : 'You lose access to its campaigns until someone invites you again.'}</p>
+      <div><button class="btn sm warn" data-act="${owner ? 'orgDelete' : 'orgLeave'}">${owner ? 'Delete this workspace' : 'Leave this workspace'}</button></div></details></div>`;
+}
+function onboardingHtml() {
+  const guess = CLOUD.user && CLOUD.user.email ? CLOUD.user.email.split('@')[1].split('.')[0] : '';
+  const domainName = guess && !/^(gmail|outlook|hotmail|yahoo|icloud|live|aol|proton|me)$/i.test(guess) ? guess.charAt(0).toUpperCase() + guess.slice(1) : '';
+  return `<div class="panel" style="max-width:640px;margin:0 auto">
+    <h2 style="margin:0 0 8px;font:700 22px var(--display)">Set up your workspace</h2>
+    ${DOMAIN_MATCHES.map((o) => `<p>Your colleagues at <b>${esc(o.name)}</b> already use Headcount. <button class="btn sm primary" data-act="joinDomain" data-id="${esc(o.id)}">Join ${esc(o.name)}</button></p>`).join('')}
+    <p class="note">A workspace holds your firm's campaigns, clients and team. You can invite colleagues once it exists.${CLOUD.config && CLOUD.config.billing ? ` New workspaces start with a ${CLOUD.config.billing.trialDays}-day Team trial.` : ''}</p>
+    <form id="woForm" class="taskadd"><input id="wo_name" name="name" placeholder="Your firm or organization" value="${esc(domainName)}" aria-label="Workspace name" required><button class="btn primary">Create workspace</button></form>
+    <p class="note">Invited to someone else's workspace? Open the link from your invitation.</p></div>`;
+}
+function renderWorkspace(fromLoad) {
+  const el = $('#workspacePage');
+  if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to set up a workspace for your team. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'Workspaces need accounts, which are not set up on this server.'}</div>`; return; }
+  if (!ORG) { el.innerHTML = onboardingHtml(); return; }
+  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
+  if (!fromLoad) loadWs();
+}
+async function runReport(form) {
+  const fd = new FormData(form), q = quarters()[+fd.get('q')];
+  try {
+    const r = await CLOUD.api('GET', `/api/workspaces/${ORG.id}/activity?from=${q.from}&to=${q.to}&client=${encodeURIComponent(fd.get('client') || '')}`);
+    WS.report = { ...r, client: fd.get('client') || '' }; renderWorkspace(true);
+  } catch (e) { fail(e); }
+}
+async function sendOrgInvite(form) {
+  const fd = new FormData(form), email = String(fd.get('email') || '').trim(), role = fd.get('role');
+  const sendIt = email && $('#oi_send') && $('#oi_send').checked;
+  const access = sendIt && !CLOUD.connected() ? CLOUD.connect() : null;
+  try {
+    const r = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/invites`, { role, email: email || undefined });
+    WS.lastInvite = `${location.origin}/invite/${r.code}`; WS.invites = null;
+    if (sendIt) {
+      if (access) await access;
+      await CLOUD.mail.send({ to: [email], subject: `Join ${ORG.name} on Headcount`, body: `Hi,\n\n${CLOUD.user.name} invited you to join ${ORG.name} on Headcount as ${role === 'guest' ? 'a guest' : role === 'admin' ? 'an admin' : 'a member'}. Headcount is where we track vote counts, meetings and bill briefs.\n\nJoin here (the link works for 14 days and only for ${email}):\n${WS.lastInvite}\n\n${CLOUD.user.name}` });
+      toast(`Invitation sent to ${email}`);
+    } else toast('Invitation link created. Copy it and send it to your colleague.');
+  } catch (e) { fail(e); }
+  loadWs(); renderWorkspace(true);
+}
+function csvDownload(name, rows) { download(name, csv(rows), 'text/csv'); }
+
 // ---------- page ----------
 function renderSwitcher() {
   const c = S.campaign, opts = [];
   const opt = (v, label, sel) => `<option value="${esc(v)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
-  if (signedIn()) {
-    const acct = ACCOUNT.list.slice(); if (S.cloud && !acct.some((e) => e.id === S.id)) acct.unshift({ id: S.id, name: c.bill, role: ROLE, people: 1 });
-    const tag = (e) => (e.role === 'viewer' ? ' (view only)' : e.people > 1 ? ' (shared)' : '');
-    if (acct.length) opts.push(`<optgroup label="Your account">${acct.map((e) => opt('cloud:' + e.id, (S.cloud && e.id === S.id ? c.bill || 'Untitled campaign' : e.name || 'Untitled campaign') + tag(e), S.cloud && e.id === S.id)).join('')}</optgroup>`);
+  const os = $('#orgSel');
+  os.hidden = !signedIn();
+  if (signedIn()) os.innerHTML = (ORG ? '' : '<option value="">No workspace yet</option>') + ORGS.map((o) => opt(o.id, o.name + (o.role === 'guest' ? ' (guest)' : ''), ORG && o.id === ORG.id)).join('') + '<option value="__new">New workspace…</option>';
+  if (signedIn() && ORG) {
+    const acct = ACCOUNT.list.filter((e) => !e.archived || (S.cloud && e.id === S.id)); if (S.cloud && !acct.some((e) => e.id === S.id)) acct.unshift({ id: S.id, name: c.bill, role: ROLE, people: 1 });
+    const tag = (e) => (e.role === 'viewer' ? ' (view only)' : e.client ? ` · ${e.client}` : '');
+    if (acct.length) opts.push(`<optgroup label="${esc(ORG.name)}">${acct.map((e) => opt('cloud:' + e.id, (S.cloud && e.id === S.id ? c.bill || 'Untitled campaign' : e.name || 'Untitled campaign') + tag(e), S.cloud && e.id === S.id)).join('')}</optgroup>`);
     const loc = BOOK.list.filter((e) => e.id !== 'ex' && localIds().includes(e.id));
     if (loc.length) opts.push(`<optgroup label="This browser only">${loc.map((e) => opt('local:' + e.id, e.name, !S.cloud && e.id === S.id)).join('')}</optgroup>`);
     if (!S.cloud && S.example) opts.push(opt('local:ex', `${c.bill} (example)`, true));
@@ -1145,34 +1401,52 @@ function renderAcct() {
   else el.innerHTML = '';
 }
 function render() {
-  const nd = needs(S), base = passage(S.members, baseProbs(S), nd), c = S.campaign;
+  const c = S.campaign, cfg = CLOUD.config || {}, campaignPage = page === 'count' || page === 'brief';
   renderSwitcher();
-  $('#hBill').textContent = c.bill || (SYNC.loading ? 'Loading' : 'Untitled campaign');
-  const shared = S.cloud && (ACCOUNT.list.find((e) => e.id === S.id) || {}).people > 1;
-  $('#hSub').textContent = `${shared ? 'Shared · ' : ''}${dirOf(S) < 0 ? 'Working to defeat' : 'Working to pass'}${c.client ? ` for ${c.client}` : ''} · ${c.chamber || 'Chamber not set'} · ${nd.n} members, ${nd.needF} to pass`;
-  $('#hDates').textContent = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]} ${inDays(x[1])} (${fmtDay(x[1])})`).concat((() => { const n = S.tasks.filter((t) => !t.done && t.due && dayDiff(t.due) < 0).length; return n ? [`${n} follow-up${n > 1 ? 's' : ''} overdue`] : []; })()).join(' · ');
-  const b = $('#banner'), cfg = CLOUD.config || {};
-  let banner = '';
+  $('.camp').hidden = !campaignPage;
+  ['pgPortfolio', 'pgWorkspace'].forEach((id) => { $('#' + id).hidden = !signedIn(); });
+  ['portfolio', 'count', 'brief', 'workspace'].forEach((k) => { $('#pg' + k[0].toUpperCase() + k.slice(1)).setAttribute('aria-pressed', page === k); });
+  if (campaignPage) {
+    const nd = needs(S);
+    $('#hBill').textContent = c.bill || (SYNC.loading ? 'Loading' : 'Untitled campaign');
+    const camp = S.cloud && ACCOUNT.list.find((e) => e.id === S.id);
+    $('#hSub').textContent = `${camp && camp.visibility === 'team' ? 'Closed · ' : ''}${dirOf(S) < 0 ? 'Working to defeat' : 'Working to pass'}${clientOf() ? ` for ${clientOf()}` : ''} · ${c.chamber || 'Chamber not set'} · ${nd.n} members, ${nd.needF} to pass`;
+    $('#hDates').textContent = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]} ${inDays(x[1])} (${fmtDay(x[1])})`).concat((() => { const n = S.tasks.filter((t) => !t.done && t.due && dayDiff(t.due) < 0).length; return n ? [`${n} follow-up${n > 1 ? 's' : ''} overdue`] : []; })()).join(' · ');
+  } else {
+    $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : ORG ? `${ORG.name} settings` : 'Workspace';
+    $('#hSub').textContent = ORG ? `${ORG.plan.label} · ${ROLE_LABEL[ORG.role]}${ORG.role === 'guest' ? ': you see only the campaigns you were added to' : ''}` : '';
+    $('#hDates').textContent = '';
+  }
+  const b = $('#banner'); let banner = '';
+  const match = DOMAIN_MATCHES.find((o) => !ORGS.some((x) => x.id === o.id));
   if (JOIN) {
+    const role = JOIN.info ? ({ editor: 'an editor', viewer: 'a viewer', admin: 'an admin', member: 'a member', guest: 'a guest' })[JOIN.info.role] : '';
+    const what = JOIN.info ? (JOIN.kind === 'org' ? `<b>${esc(JOIN.info.workspace)}</b>` : `<b>${esc(JOIN.info.campaign)}</b> in ${esc(JOIN.info.workspace)}`) : '';
     banner = JOIN.error ? `<span>${esc(JOIN.error)}</span>`
-      : JOIN.info ? `<span><b>${esc(JOIN.info.invitedBy)}</b> invited you to work on <b>${esc(JOIN.info.campaign)}</b> as ${JOIN.info.role === 'editor' ? 'an editor' : 'a viewer'}.${signedIn() ? '' : ' Sign in to join.'}</span>${signedIn() ? '<button class="btn sm primary" data-act="joinNow">Join</button>' : '<button class="btn sm primary" data-act="signin">Sign in to join</button>'}` : '<span>Checking your invitation</span>';
+      : JOIN.info ? `<span><b>${esc(JOIN.info.invitedBy)}</b> invited you to ${JOIN.kind === 'org' ? 'join' : 'work on'} ${what} as ${role}.${signedIn() ? '' : ' Sign in to accept.'}</span>${signedIn() ? '<button class="btn sm primary" data-act="joinNow">Accept</button>' : '<button class="btn sm primary" data-act="signin">Sign in to accept</button>'}` : '<span>Checking your invitation</span>';
   } else if (cfg.authError) banner = `<span>${esc(cfg.authError)}</span>`;
-  else if (signedIn() && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to my account</button>`;
-  else if (S.example) banner = `<span><b>Example campaign.</b> The chamber, bill and members are invented. Edit anything to make it yours${signedIn() ? '' : ', or load a real roster'}.</span><button class="btn sm" data-act="setup">Load a roster</button>`;
+  else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
+  else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
+  else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
+  else if (ORG && isAdmin() && page === 'portfolio' && (ORG.plan.key === 'trial' || ORG.plan.key === 'free' || ORG.plan.status === 'past_due') && cfg.billing) {
+    const d = ORG.plan.trialEnds ? Math.max(0, Math.ceil((ORG.plan.trialEnds - Date.now()) / 864e5)) : 0;
+    banner = `<span>${ORG.plan.status === 'past_due' ? 'The last payment failed. Update the card to keep your plan.' : ORG.plan.key === 'trial' ? `Team trial: ${d} day${d === 1 ? '' : 's'} left.` : `Free plan: up to ${ORG.plan.seats} people and ${ORG.plan.campaigns} active campaigns.`}</span><button class="btn sm" data-act="gotoPlans">${ORG.plan.status === 'past_due' ? 'Update payment' : 'See plans'}</button>`;
+  } else if (S.example && campaignPage) banner = `<span><b>Example campaign.</b> The chamber, bill and members are invented. Edit anything to make it yours${signedIn() ? '' : ', or load a real roster'}.</span><button class="btn sm" data-act="setup">Load a roster</button>`;
   b.hidden = !banner; b.innerHTML = banner;
-  const w = $('#warn'), ro = S.cloud && ROLE === 'viewer'; w.hidden = !(ro || (S.preset && S.preset.stale));
+  const w = $('#warn'), ro = campaignPage && S.cloud && ROLE === 'viewer'; w.hidden = !(ro || (campaignPage && S.preset && S.preset.stale));
   if (ro) w.textContent = 'You have view-only access to this campaign. Ask its owner to make you an editor to change it.';
   else if (!w.hidden) w.textContent = `This ${S.preset.label} roster predates the November 3, 2026 election. Florida legislators take office on election day, so check each member against the official site before relying on it.`;
-  $('#pgCount').setAttribute('aria-pressed', page === 'count'); $('#pgBrief').setAttribute('aria-pressed', page === 'brief');
-  $('#countPage').hidden = page !== 'count'; $('#briefPage').hidden = page !== 'brief';
+  ['portfolio', 'count', 'brief', 'workspace'].forEach((k) => { $('#' + k + 'Page').hidden = page !== k; });
   if (page === 'brief') renderBrief();
+  else if (page === 'portfolio') renderPortfolio();
+  else if (page === 'workspace') renderWorkspace();
   else {
+    const nd = needs(S), base = passage(S.members, baseProbs(S), nd);
     $('#vFloor').setAttribute('aria-pressed', view === 'floor'); $('#vCmte').setAttribute('aria-pressed', view === 'cmte');
     renderHemi(nd); renderOdds(nd, base); renderCalls(nd, base); renderMeets(); renderTasks(); renderRows();
   }
   renderAcct(); setSaveState();
 }
-
 // ---------- panels ----------
 let tab = 'act', schedOpen = false;
 function outBox(m) {
@@ -1237,23 +1511,33 @@ function memberDrawer(id) {
 function teamSection() {
   if (S.example) return '';
   if (!S.cloud) {
-    if (signedIn()) return `<details class="sect" open><summary>Team</summary><p class="note">This campaign is saved only in this browser. Move it to your account to keep it safe and invite teammates.</p><div><button class="btn sm" data-act="moveLocal">Move to my account</button></div></details>`;
-    return CLOUD.canSignIn() ? `<details class="sect"><summary>Team</summary><p class="note">Sign in with ${CLOUD.config.providers.map(CLOUD.providerName).join(' or ')} to save this campaign to your account and invite teammates.</p><div><button class="btn sm" data-act="signin">Sign in</button></div></details>` : '';
+    if (signedIn() && ORG) return `<details class="sect" open><summary>Team</summary><p class="note">This campaign is saved only in this browser. Move it to ${esc(ORG.name)} to keep it safe and work on it with your team.</p><div><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button></div></details>`;
+    if (signedIn()) return '<details class="sect" open><summary>Team</summary><p class="note">Create a workspace to save campaigns to your account and work on them with your team.</p><div><button class="btn sm" data-page="workspace">Set up a workspace</button></div></details>';
+    return CLOUD.canSignIn() ? `<details class="sect"><summary>Team</summary><p class="note">Sign in with ${CLOUD.config.providers.map(CLOUD.providerName).join(' or ')} to save this campaign to your firm's workspace and work on it together.</p><div><button class="btn sm" data-act="signin">Sign in</button></div></details>` : '';
   }
-  return `<details class="sect" open id="teamSect"><summary>Team</summary><div id="teamBody" class="note">Loading the team</div></details>`;
+  return `<details class="sect" open id="teamSect"><summary>Who can see it</summary><div id="teamBody" class="note">Loading</div></details>`;
 }
 async function loadTeam() {
-  const box = $('#teamBody'); if (!box) return;
-  await loadPeople(true);
-  const people = Object.values(PEOPLE), owner = ROLE === 'owner';
   if (!$('#teamBody')) return;
-  $('#teamBody').classList.remove('note');
-  $('#teamBody').innerHTML = `<ul class="people">${people.map((p) => `<li><span><b>${esc(p.name || p.email || 'Someone')}</b>${p.you ? ' (you)' : ''}<br><span class="note">${esc(p.email || '')}</span></span>
-      <span class="btnrow">${owner && p.role !== 'owner' ? `<select data-role="${esc(p.id)}" aria-label="Role for ${esc(p.name)}"><option value="editor" ${p.role === 'editor' ? 'selected' : ''}>Editor</option><option value="viewer" ${p.role === 'viewer' ? 'selected' : ''}>Viewer</option></select><button class="btn sm warn" data-act="rmPerson" data-uid="${esc(p.id)}">Remove</button>` : `<span class="status">${p.role === 'owner' ? 'Owner' : p.role === 'editor' ? 'Editor' : 'Viewer'}</span>`}</span></li>`).join('')}</ul>
-    ${ROLE !== 'viewer' ? `<div class="btnrow" style="margin-top:10px"><span class="note">Invite link for</span><select id="inv_role" aria-label="Invite as"><option value="editor">an editor</option><option value="viewer">a viewer</option></select><button class="btn sm" data-act="mkInvite">Create link</button></div>
+  let info;
+  try { info = await CLOUD.api('GET', `/api/campaigns/${encodeURIComponent(S.id)}/people`); } catch (e) { return fail(e); }
+  if (ORG && ORG.role !== 'guest' && WS.members === null) { try { WS.members = (await CLOUD.api('GET', `/api/workspaces/${ORG.id}/members`)).members; } catch (_) { WS.members = []; } }
+  PEOPLE = Object.fromEntries(info.people.map((p) => [p.id, p]));
+  const box = $('#teamBody'); if (!box) return;
+  const owner = ROLE === 'owner', listed = new Set(info.people.map((p) => p.id));
+  const camp = ACCOUNT.list.find((c) => c.id === S.id) || {};
+  const addable = (WS.members || []).filter((m) => !listed.has(m.id) && m.role !== 'owner' && m.role !== 'admin');
+  box.classList.remove('note');
+  box.innerHTML = `${owner ? `<label class="note" style="display:flex;flex-direction:column;gap:4px">Who can see and edit it<select id="camp_vis"><option value="org" ${info.visibility === 'org' ? 'selected' : ''}>Everyone in ${esc(info.workspace)}</option><option value="team" ${info.visibility === 'team' ? 'selected' : ''}>Only the people listed below</option></select></label>`
+      : `<p class="note">${info.visibility === 'org' ? `Everyone in ${esc(info.workspace)} can see and edit this campaign.` : 'Only the people listed below can see this campaign.'}</p>`}
+    <p class="note">Workspace owners and admins can always open it.</p>
+    <ul class="people">${info.people.map((p) => `<li><span><b>${esc(p.name || p.email || 'Someone')}</b>${p.you ? ' (you)' : ''}${p.guest ? ' <span class="status">Guest</span>' : ''}<br><span class="note">${esc(p.email || '')}</span></span>
+      <span class="btnrow">${owner && !p.you && p.role !== 'owner' ? `<select data-role="${esc(p.id)}" aria-label="Role for ${esc(p.name)}"><option value="editor" ${p.role === 'editor' ? 'selected' : ''}>Editor</option><option value="viewer" ${p.role === 'viewer' ? 'selected' : ''}>Viewer</option></select><button class="btn sm warn" data-act="rmPerson" data-uid="${esc(p.id)}">Remove</button>` : `<span class="status">${p.role === 'owner' ? 'Owner' : p.role === 'editor' ? 'Editor' : 'Viewer'}</span>`}</span></li>`).join('')}</ul>
+    ${owner && addable.length ? `<div class="btnrow" style="margin-top:10px"><select id="add_person" aria-label="Colleague">${addable.map((m) => `<option value="${esc(m.id)}">${esc(m.name || m.email)}</option>`).join('')}</select><select id="add_role" aria-label="Role"><option value="editor">Editor</option><option value="viewer">Viewer</option></select><button class="btn sm" data-act="addPerson">Add</button></div>` : ''}
+    ${ROLE !== 'viewer' ? `<div class="btnrow" style="margin-top:10px"><span class="note">Link for someone outside ${esc(info.workspace)}, as</span><select id="inv_role" aria-label="Invite as"><option value="viewer">a viewer</option><option value="editor">an editor</option></select><button class="btn sm" data-act="mkInvite">Create link</button></div>
     <div id="invOut"></div>
-    <p class="note">Anyone with the link can join after signing in, for 14 days. Editors can change the count, log contacts and send meeting requests; viewers can only look.</p>
-    ${owner ? '<div><button class="btn sm" data-act="revokeInvites">Turn off all invite links</button></div>' : ''}` : ''}`;
+    <p class="note">People outside the workspace, such as clients or coalition partners, join as guests and see only the campaigns they are added to. Links work for 14 days.</p>
+    ${owner ? '<div class="btnrow"><button class="btn sm" data-act="revokeInvites">Turn off all links</button>' + `<button class="btn sm" data-act="campArchive">${camp.archived ? 'Restore this campaign' : 'Archive this campaign'}</button></div>` : ''}` : ''}`;
 }
 function setupDrawer() {
   const c = S.campaign, ro = !canEditNow();
@@ -1268,7 +1552,7 @@ function setupDrawer() {
     <label>Committee vote<input type="date" id="s_cd" name="cmteDate" value="${esc(c.cmteDate)}"></label>
     <label>Floor vote<input type="date" id="s_fd" name="floorDate" value="${esc(c.floorDate)}"></label>
     <label class="wide">The ask, in one sentence<input id="s_ask" name="ask" value="${esc(c.ask)}" placeholder="Vote yes on SB 214 without the cap amendment"></label>
-    <label>Client or organization<input id="s_client" name="client" value="${esc(c.client)}"></label>
+    ${S.cloud ? `<label>Client<select id="s_clientId" name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived || k.id === c.clientId).map((k) => `<option value="${esc(k.id)}" ${k.id === c.clientId ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}<option value="__new">Add a client…</option></select></label>` : `<label>Client or organization<input id="s_client" name="client" value="${esc(c.client)}"></label>`}
     <label>Your name, as it appears in emails<input id="s_me" name="me" value="${esc(c.me || (CLOUD.user && CLOUD.user.name) || '')}"></label>
     ${ro ? '' : '<div class="wide"><button class="btn primary">Save</button></div>'}
   </form></details>
@@ -1286,12 +1570,15 @@ function setupDrawer() {
   if (S.cloud) loadTeam();
 }
 function newCampDrawer() {
+  const cloud = signedIn() && ORG && ORG.role !== 'guest';
   showDrawer(`<div class="row"><h2>New campaign</h2><button class="btn sm" data-act="close">Close</button></div>
   <form id="nForm" class="form">
     <label class="wide">Bill or vote<input id="n_bill" name="bill" required placeholder="HB 1021: Property insurance reform"></label>
     <label>Your goal<select id="n_side" name="side"><option value="pass">Pass it</option><option value="defeat">Defeat it</option></select></label>
     <label>Start from<select id="n_from" name="from">${S.members.length && !S.example ? '<option value="copy">The same roster and staff as this campaign</option>' : ''}<option value="blank">An empty roster</option></select></label>
-    <p class="wide note">${signedIn() ? 'It is saved to your account.' : 'It is saved in this browser only. Sign in to save campaigns to your account and share them.'} Copying keeps every member, their contact details, staff, interests and notes, and resets positions, committee seats and history.</p>
+    ${cloud ? `<label>Client<select id="n_client" name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('')}</select></label>
+    <label>Who can see it<select id="n_vis" name="vis"><option value="org">Everyone in ${esc(ORG.name)}</option><option value="team">Only people I add</option></select></label>` : ''}
+    <p class="wide note">${cloud ? `It is saved to ${esc(ORG.name)}.` : signedIn() ? 'It is saved in this browser only until you set up a workspace.' : 'It is saved in this browser only. Sign in to save campaigns to your firm\'s workspace and share them.'} Copying keeps every member, their contact details, staff, interests and notes, and resets positions, committee seats and history.</p>
     <div class="wide"><button class="btn primary">Create campaign</button></div>
   </form>`);
 }
@@ -1314,16 +1601,25 @@ function accountDrawer() {
   <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every campaign. Campaigns you own pass to their longest-standing editor, or are deleted if nobody else edits them. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
 }
 
+async function reloadClients() { CLIENTS = (await CLOUD.api('GET', `/api/workspaces/${ORG.id}/clients`)).clients; }
+function newOrgDrawer() {
+  showDrawer(`<div class="row"><h2>New workspace</h2><button class="btn sm" data-act="close">Close</button></div>
+  <form id="noForm" class="form"><label class="wide">Name<input id="no_name" name="name" required placeholder="Your firm or organization"></label>
+  <p class="wide note">A separate workspace has its own campaigns, clients, people and plan.</p>
+  <div class="wide"><button class="btn primary">Create workspace</button></div></form>`);
+}
+
 // ---------- events ----------
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-open],[data-act],[data-view],[data-copy],[data-rep],[data-tab],[data-page],[data-rqmode],#scrim');
+  const t = e.target.closest('[data-open],[data-act],[data-view],[data-copy],[data-rep],[data-tab],[data-page],[data-rqmode],[data-opencamp],#scrim');
   const menu = $('#moreMenu'); if (menu.open && !(e.target.closest('summary') && menu.contains(e.target))) menu.open = false;
   if (!t) return;
   if (t.dataset.tab) { tab = t.dataset.tab; staffEdit = null; return memberDrawer(openId); }
   if (t.id === 'scrim') return closeDrawer();
   if (t.dataset.copy) return copyText(t.dataset.copy);
   if (t.dataset.view) { view = t.dataset.view; return render(); }
-  if (t.dataset.page) { page = t.dataset.page; briefEdit = false; briefPanel = ''; return render(); }
+  if (t.dataset.page) { closeDrawer(); page = t.dataset.page; briefEdit = false; briefPanel = ''; window.scrollTo(0, 0); return render(); }
+  if (t.dataset.opencamp) { page = 'count'; window.scrollTo(0, 0); return cloudOpen(t.dataset.opencamp); }
   if (t.dataset.rep) { repKind = t.dataset.rep; return reportsDrawer(); }
   if (t.dataset.rqmode) { rqRead(); RQ.mode = t.dataset.rqmode; RQ.msg = ''; return memberDrawer(openId); }
   if (t.dataset.open) return memberDrawer(t.dataset.open);
@@ -1332,9 +1628,69 @@ document.addEventListener('click', async (e) => {
   // Calendar and email access needs a pop-up, so ask before any await.
   const needsMail = ['rqSend', 'rqInvite', 'rqFind', 'checkReplies', 'connect'].includes(a) || (a === 'cancelMeet' && (() => { const mt = S.meetings.find((x) => x.id === t.dataset.id); return mt && mt.eventId && mine(mt) && !ended(mt) && t.dataset.sure === '1'; })());
   const access = needsMail && signedIn() && !CLOUD.connected() ? CLOUD.connect() : null;
-  const ready = async () => { if (access) { try { await access; } catch (err) { if (RQ && $('#rqMsg')) rqMsg(err.message); else toast(err.message); return false; } } return true; };
+  const ready = async () => { if (access) { try { await access; } catch (err) { if (RQ && $('#rqMsg')) rqMsg(err.message); else fail(err); return false; } } return true; };
   switch (a) {
     case 'close': return closeDrawer();
+    case 'gotoPlans': closeDrawer(); page = 'workspace'; render(); window.scrollTo(0, 0); return;
+    case 'joinDomain': {
+      try {
+        const r = await CLOUD.api('POST', `/api/workspaces/${t.dataset.id}/join`);
+        ORGS = (await CLOUD.api('GET', '/api/workspaces')).workspaces; DOMAIN_MATCHES = DOMAIN_MATCHES.filter((o) => o.id !== t.dataset.id);
+        await loadOrg(r.orgId); page = 'portfolio'; render(); toast(`Welcome to ${ORG.name}`);
+      } catch (err) { fail(err); }
+      return;
+    }
+    case 'billCheckout': case 'billPortal': {
+      t.disabled = true;
+      try {
+        const r = a === 'billPortal' ? await CLOUD.api('POST', `/api/workspaces/${ORG.id}/billing/portal`) : await CLOUD.api('POST', `/api/workspaces/${ORG.id}/billing/checkout`, { seats: +$('#bill_seats').value, plan: t.dataset.plan });
+        location.href = r.url;
+      } catch (err) { t.disabled = false; fail(err); }
+      return;
+    }
+    case 'billSeats': {
+      try { const r = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/billing/seats`, { seats: +$('#bill_seats').value }); await loadOrg(ORG.id); render(); toast(`The workspace now has ${r.seats} seats. Stripe adjusts the next invoice.`); } catch (err) { fail(err); }
+      return;
+    }
+    case 'orgRemove': if (sure('Confirm remove')) { try { await CLOUD.api('DELETE', `/api/workspaces/${ORG.id}/members/${encodeURIComponent(t.dataset.uid)}`); WS.members = null; await loadOrg(ORG.id, { quiet: true }); render(); toast('Removed from the workspace'); } catch (err) { fail(err); } } return;
+    case 'orgRevoke': try { await CLOUD.api('DELETE', `/api/workspaces/${ORG.id}/invites/${encodeURIComponent(t.dataset.code)}`); WS.invites = null; loadWs(); toast('Invitation revoked'); } catch (err) { fail(err); } return;
+    case 'clientRename': {
+      const k = CLIENTS.find((x) => x.id === t.dataset.id), name = k && window.prompt('Client name', k.name);
+      if (!name) return;
+      try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/clients/${k.id}`, { name }); await reloadClients(); render(); } catch (err) { fail(err); }
+      return;
+    }
+    case 'clientArchive': { const k = CLIENTS.find((x) => x.id === t.dataset.id); try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/clients/${k.id}`, { archived: !k.archived }); await reloadClients(); render(); } catch (err) { fail(err); } return; }
+    case 'clientDelete': if (sure('Delete client')) { try { await CLOUD.api('DELETE', `/api/workspaces/${ORG.id}/clients/${t.dataset.id}`); await reloadClients(); await refreshAccount(); render(); toast('Client deleted. Its campaigns are kept, without a client.'); } catch (err) { fail(err); } } return;
+    case 'dmVerify': try { await CLOUD.api('POST', `/api/workspaces/${ORG.id}/domain/verify`); await loadOrg(ORG.id); render(); toast('Domain verified'); } catch (err) { fail(err); } return;
+    case 'dmRemove': if (sure('Remove the domain')) { try { await CLOUD.api('DELETE', `/api/workspaces/${ORG.id}/domain`); await loadOrg(ORG.id); render(); } catch (err) { fail(err); } } return;
+    case 'rpCsv': {
+      const r = WS.report;
+      return csvDownload(`lobbying-activity-${r.from}-to-${r.to}.csv`, [['Date', 'Client', 'Issue', 'Chamber', 'Member', 'Party', 'District', 'Spoke with', 'Type', 'Logged by', 'Notes']].concat(r.rows.map((x) => [x.date, x.client, x.issue, x.chamber, x.member, x.party, x.district, x.withWhom, x.type, x.loggedBy, x.note])));
+    }
+    case 'auditCsv': return csvDownload(`activity-log-${today()}.csv`, [['When', 'Who', 'Action', 'Target']].concat(WS.audit.map((x) => [new Date(x.at).toISOString(), x.actor, ACTIONS[x.action] || x.action, x.target])));
+    case 'auditMore': {
+      try { const last = WS.audit[WS.audit.length - 1], r = await CLOUD.api('GET', `/api/workspaces/${ORG.id}/audit?limit=50&before=${last.id}`); WS.audit = WS.audit.concat(r.entries); WS.auditMore = r.entries.length === 50; renderWorkspace(true); } catch (err) { fail(err); }
+      return;
+    }
+    case 'orgExport': try { const r = await CLOUD.api('GET', `/api/workspaces/${ORG.id}/export`); download(`${ORG.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-export-${today()}.json`, JSON.stringify(r, null, 2), 'application/json'); } catch (err) { fail(err); } return;
+    case 'orgDelete': case 'orgLeave': {
+      if (!sure(a === 'orgDelete' ? `Delete ${ORG.name} for everyone` : `Leave ${ORG.name}`)) return;
+      try {
+        await CLOUD.api('DELETE', a === 'orgDelete' ? `/api/workspaces/${ORG.id}` : `/api/workspaces/${ORG.id}/members/${encodeURIComponent(ME)}`);
+        const gone = ORG.name; ORGS = (await CLOUD.api('GET', '/api/workspaces')).workspaces; ORG = null; ACCOUNT.list = []; lsDel(LASTORG); lsDel(LAST);
+        if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
+        if (ORGS.length) await loadOrg(ORGS[0].id, { quiet: true });
+        page = ORG ? 'portfolio' : 'workspace'; render(); toast(a === 'orgDelete' ? `${gone} was deleted` : `You left ${gone}`);
+      } catch (err) { fail(err); }
+      return;
+    }
+    case 'addPerson': try { await CLOUD.api('POST', `/api/campaigns/${encodeURIComponent(S.id)}/people`, { userId: $('#add_person').value, role: $('#add_role').value }); loadTeam(); toast('Added to the campaign'); } catch (err) { fail(err); } return;
+    case 'campArchive': {
+      const camp = ACCOUNT.list.find((x) => x.id === S.id) || {};
+      try { await CLOUD.api('PATCH', `/api/campaigns/${encodeURIComponent(S.id)}`, { archived: !camp.archived }); await refreshAccount(); closeDrawer(); toast(camp.archived ? 'Campaign restored' : 'Campaign archived. It stays readable and no longer counts toward your plan.'); render(); } catch (err) { fail(err); }
+      return;
+    }
     case 'setup': return setupDrawer();
     case 'reports': return reportsDrawer();
     case 'staffDir': return staffDirDrawer();
@@ -1343,12 +1699,12 @@ document.addEventListener('click', async (e) => {
     case 'account': return accountDrawer();
     case 'signinWith': {
       const dev = CLOUD.config.auth === 'dev' ? { name: $('#dev_name').value, email: $('#dev_email').value, id: $('#dev_email').value.split('@')[0] } : null;
-      try { await CLOUD.signIn(t.dataset.p, dev); closeDrawer(); } catch (err) { toast(err.message); }
+      try { await CLOUD.signIn(t.dataset.p, dev); closeDrawer(); } catch (err) { fail(err); }
       return;
     }
     case 'signout': await flushNow(); await CLOUD.signOut(); return toast('Signed out');
     case 'connect': if (await ready()) { toast(`${CLOUD.mailName(CLOUD.provider())} and ${CLOUD.calName(CLOUD.provider())} connected`); accountDrawer(); } return;
-    case 'delAccount': if (sure('Delete my account for good')) { try { await CLOUD.api('DELETE', '/api/me'); await CLOUD.signOut(); lsDel(LAST); toast('Your account was deleted'); } catch (err) { toast(err.message); } } return;
+    case 'delAccount': if (sure('Delete my account for good')) { try { await CLOUD.api('DELETE', '/api/me'); await CLOUD.signOut(); lsDel(LAST); toast('Your account was deleted'); } catch (err) { fail(err); } } return;
     case 'joinNow': return acceptJoin();
     case 'moveLocal': closeDrawer(); return moveLocalToAccount();
     case 'delCamp': if (sure(S.cloud && ROLE !== 'owner' ? 'Leave this campaign' : 'Delete this campaign, its roster and its history')) { closeDrawer(); await deleteCampaign(); toast(S.cloud && ROLE !== 'owner' ? 'You left the campaign' : 'Campaign deleted'); } return;
@@ -1357,11 +1713,11 @@ document.addEventListener('click', async (e) => {
         const r = await CLOUD.api('POST', `/api/campaigns/${encodeURIComponent(S.id)}/invites`, { role: $('#inv_role').value });
         const link = `${location.origin}/join/${r.code}`;
         $('#invOut').innerHTML = `<p class="note" id="inv_for">Link for ${r.role === 'editor' ? 'an editor' : 'a viewer'}, valid for 14 days:</p><div class="linkbox"><input id="inv_link" readonly value="${esc(link)}" aria-label="Invite link"><button class="btn sm" data-copy="${esc(link)}">Copy</button></div>`;
-      } catch (err) { toast(err.message); }
+      } catch (err) { fail(err); }
       return;
     }
-    case 'revokeInvites': if (sure('Turn off every link')) { try { await CLOUD.api('DELETE', `/api/campaigns/${encodeURIComponent(S.id)}/invites`); toast('Invite links turned off'); } catch (err) { toast(err.message); } } return;
-    case 'rmPerson': if (sure('Confirm remove')) { try { await CLOUD.api('DELETE', `/api/campaigns/${encodeURIComponent(S.id)}/people/${encodeURIComponent(t.dataset.uid)}`); toast('Removed from the campaign'); loadTeam(); } catch (err) { toast(err.message); } } return;
+    case 'revokeInvites': if (sure('Turn off every link')) { try { await CLOUD.api('DELETE', `/api/campaigns/${encodeURIComponent(S.id)}/invites`); toast('Invite links turned off'); } catch (err) { fail(err); } } return;
+    case 'rmPerson': if (sure('Confirm remove')) { try { await CLOUD.api('DELETE', `/api/campaigns/${encodeURIComponent(S.id)}/people/${encodeURIComponent(t.dataset.uid)}`); toast('Removed from the campaign'); loadTeam(); } catch (err) { fail(err); } } return;
     case 'addMember': { if (!canEditNow()) return toast('You have view-only access to this campaign.'); const n = { id: uid(), name: '', party: 'D', district: '', cmte: false, pos: 2, mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], draft: true }; S.members.push(n); memberDrawer(n.id); const f = $('#m_name'); if (f) f.focus(); return; }
     case 'askRemove': $('#rmAsk').hidden = false; return;
     case 'remove': { const id = openId; S.members = S.members.filter((x) => x.id !== id); S.members.forEach((x) => { if (x.follows === id) x.follows = ''; }); S.tasks = S.tasks.filter((x) => x.mid !== id); S.meetings = S.meetings.filter((x) => x.mid !== id); closeDrawer(); return commit('Member removed'); }
@@ -1419,7 +1775,7 @@ document.addEventListener('click', async (e) => {
       const mt = S.meetings.find((x) => x.id === t.dataset.id); if (!mt) return;
       const onCal = mt.status === 'invited' && mt.eventId && mine(mt) && !ended(mt);
       if (onCal && !sure(`Cancel it and tell ${mt.who || mt.to[0]}`)) return;
-      if (onCal) { if (!signedIn()) return toast('Sign in to cancel the calendar event.'); if (!(await ready())) return; try { await CLOUD.calendar.cancel(mt.eventId); } catch (err) { return toast(err.message); } }
+      if (onCal) { if (!signedIn()) return toast('Sign in to cancel the calendar event.'); if (!(await ready())) return; try { await CLOUD.calendar.cancel(mt.eventId); } catch (err) { return fail(err); } }
       mt.status = mt.status === 'requested' ? 'withdrawn' : ended(mt) ? 'held' : 'cancelled';
       save(); render(); if (openId && !$('#drawer').hidden) memberDrawer(openId);
       return toast(onCal ? 'Meeting cancelled and the invitation withdrawn' : mt.status === 'withdrawn' ? 'Request withdrawn' : 'Removed from the agenda');
@@ -1458,11 +1814,24 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer();
   if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('seat')) { e.preventDefault(); memberDrawer(e.target.dataset.open); }
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.opencamp && e.target.tagName === 'TR') { page = 'count'; cloudOpen(e.target.dataset.opencamp); }
 });
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'campSel') return switchTo(t.value);
-  if (t.dataset.role) { try { await CLOUD.api('PATCH', `/api/campaigns/${encodeURIComponent(S.id)}/people/${encodeURIComponent(t.dataset.role)}`, { role: t.value }); toast('Role changed'); } catch (err) { toast(err.message); loadTeam(); } return; }
+  if (t.id === 'orgSel') { if (t.value === '__new') { t.value = ORG ? ORG.id : ''; return newOrgDrawer(); } return switchOrg(t.value); }
+  if (t.dataset.orgrole) { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/members/${encodeURIComponent(t.dataset.orgrole)}`, { role: t.value }); toast('Role changed'); } catch (err) { fail(err); } WS.members = null; await loadOrg(ORG.id, { quiet: true }); return render(); }
+  if (t.id === 'pf_client') { WS.filter.client = t.value; return renderPortfolio(); }
+  if (t.id === 'pf_arch') { WS.filter.archived = t.checked; return renderPortfolio(); }
+  if (t.id === 'dm_join') { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/domain`, { join: t.checked }); await loadOrg(ORG.id); toast(t.checked ? 'Colleagues can now join from their work email' : 'Joining by email domain is off'); } catch (err) { fail(err); } return render(); }
+  if (t.id === 'camp_vis') { try { await CLOUD.api('PATCH', `/api/campaigns/${encodeURIComponent(S.id)}`, { visibility: t.value }); await refreshAccount(); toast(t.value === 'team' ? 'Only the people listed can see it now' : `Everyone in ${ORG.name} can see it now`); render(); } catch (err) { fail(err); } return; }
+  if (t.id === 's_clientId' && t.value === '__new') {
+    const name = window.prompt('Client name');
+    if (!name) { t.value = S.campaign.clientId || ''; return; }
+    try { const k = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/clients`, { name }); await reloadClients(); t.insertAdjacentHTML('afterbegin', ''); const o = document.createElement('option'); o.value = k.id; o.textContent = k.name; t.insertBefore(o, t.lastElementChild); t.value = k.id; } catch (err) { t.value = S.campaign.clientId || ''; fail(err); }
+    return;
+  }
+  if (t.dataset.role) { try { await CLOUD.api('PATCH', `/api/campaigns/${encodeURIComponent(S.id)}/people/${encodeURIComponent(t.dataset.role)}`, { role: t.value }); toast('Role changed'); } catch (err) { fail(err); loadTeam(); } return; }
   if (t.id && t.id.startsWith('rq_') && RQ) {
     const m = S.members.find((x) => x.id === openId);
     if (t.id === 'rq_to') { rqRead(); rqRefreshText(m); return memberDrawer(openId); }
@@ -1486,6 +1855,7 @@ document.addEventListener('change', async (e) => {
 document.addEventListener('input', (e) => {
   const id = e.target.id;
   if (id === 'q') renderRows();
+  else if (id === 'pf_q') { WS.filter.q = e.target.value; renderPortfolio(); const el = $('#pf_q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   else if (id === 'sd_q') staffDirList();
   else if ((id === 'rq_body' || id === 'rq_subject') && RQ) { RQ.edited = true; rqRead(); }
 });
@@ -1493,6 +1863,12 @@ document.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target), id = e.target.id, cut = (k, n) => String(fd.get(k) || '').trim().slice(0, n);
   const m = S.members.find((x) => x.id === openId);
+  if (id === 'oiForm') return sendOrgInvite(e.target);
+  if (id === 'woForm' || id === 'noForm') { closeDrawer(); return createOrg(cut('name', 80)); }
+  if (id === 'rpForm') return runReport(e.target);
+  if (id === 'ckForm') { try { await CLOUD.api('POST', `/api/workspaces/${ORG.id}/clients`, { name: cut('name', 120) }); await reloadClients(); renderWorkspace(true); toast('Client added'); } catch (err) { fail(err); } return; }
+  if (id === 'dmForm') { try { await CLOUD.api('POST', `/api/workspaces/${ORG.id}/domain`, { domain: cut('domain', 253) }); await loadOrg(ORG.id); renderWorkspace(true); } catch (err) { fail(err); } return; }
+  if (id === 'wnForm') { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}`, { name: cut('name', 80) }); ORGS = (await CLOUD.api('GET', '/api/workspaces')).workspaces; await loadOrg(ORG.id); render(); toast('Workspace renamed'); } catch (err) { fail(err); } return; }
   if (id === 'lkForm') return lookupBill(e.target);
   if (id === 'dfForm') return draftAnalysis(e.target);
   if (id === 'bfForm') return saveBriefForm(e.target);
@@ -1503,8 +1879,10 @@ document.addEventListener('submit', async (e) => {
   }
   if (id === 'nForm') {
     const st = blankState(cut('bill', 140)); st.campaign.side = fd.get('side');
+    if (fd.get('clientId')) { st.campaign.clientId = fd.get('clientId'); st.campaign.client = (CLIENTS.find((k) => k.id === st.campaign.clientId) || {}).name || ''; }
+    if (fd.get('vis')) st.visibility = fd.get('vis');
     if (fd.get('from') === 'copy') {
-      Object.assign(st.campaign, { chamber: S.campaign.chamber, rule: S.campaign.rule, client: S.campaign.client, me: S.campaign.me });
+      Object.assign(st.campaign, { chamber: S.campaign.chamber, rule: S.campaign.rule, me: S.campaign.me }, st.campaign.clientId ? {} : { client: S.campaign.client, clientId: S.campaign.clientId || '' });
       if (S.preset) st.preset = plain(S.preset);
       st.members = plain(S.members).filter((x) => !x.draft).map((x) => Object.assign(x, { pos: 2, cmte: false, role: '', history: [] }));
     }
@@ -1514,7 +1892,8 @@ document.addEventListener('submit', async (e) => {
   }
   if (id === 'sForm') {
     const was = S.campaign.side;
-    Object.assign(S.campaign, { bill: cut('bill', 140), chamber: cut('chamber', 80), committee: cut('committee', 80), rule: fd.get('rule'), side: fd.get('side'), ask: cut('ask', 240), client: cut('client', 80), me: cut('me', 80), cmteDate: fd.get('cmteDate') || '', floorDate: fd.get('floorDate') || '' });
+    Object.assign(S.campaign, { bill: cut('bill', 140), chamber: cut('chamber', 80), committee: cut('committee', 80), rule: fd.get('rule'), side: fd.get('side'), ask: cut('ask', 240), me: cut('me', 80), cmteDate: fd.get('cmteDate') || '', floorDate: fd.get('floorDate') || '' });
+    if (S.cloud) { const k = fd.get('clientId'); S.campaign.clientId = k && k !== '__new' ? k : ''; S.campaign.client = clientOf(); } else S.campaign.client = cut('client', 80);
     if (was !== S.campaign.side) { S.trend.forEach((x) => { x.p = 1 - x.p; }); S.plan = []; }
     closeDrawer(); return commit('Setup saved');
   }
@@ -1544,9 +1923,15 @@ document.addEventListener('submit', async (e) => {
 // ---------- start ----------
 (async function boot() {
   if (!loadLocal()) goExample();
-  const jm = /^\/join\/([A-Za-z0-9_-]{8,64})$/.exec(location.pathname); if (jm) JOIN = { code: jm[1] };
+  const jm = /^\/(join|invite)\/([A-Za-z0-9_-]{8,64})$/.exec(location.pathname); if (jm) JOIN = { code: jm[2], kind: jm[1] === 'invite' ? 'org' : 'campaign' };
+  const billing = new URLSearchParams(location.search).get('billing');
   render(); loadRosters();
   await CLOUD.init(); CLOUD.onChange(onAuthChange);
-  if (JOIN) { try { JOIN.info = await CLOUD.publicGet(`/api/invites/${JOIN.code}`); } catch (e) { JOIN.error = e.message; } }
+  if (JOIN) { try { JOIN.info = await CLOUD.publicGet(JOIN.kind === 'org' ? `/api/workspace-invites/${JOIN.code}` : `/api/invites/${JOIN.code}`); } catch (e) { JOIN.error = e.message; } }
   if (CLOUD.user) await onSignedIn(); else render();
+  if (billing) {
+    history.replaceState(null, '', '/');
+    if (billing === 'done') { toast('Thank you. Your plan will update in a few seconds.'); page = 'workspace'; render(); setTimeout(() => { if (ORG) loadOrg(ORG.id, { quiet: true }).then(render); }, 4000); }
+    else if (billing === 'back' && ORG) { page = 'workspace'; await loadOrg(ORG.id, { quiet: true }); render(); }
+  }
 })();

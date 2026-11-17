@@ -15,14 +15,16 @@
 <div class="wrap">
   <header class="mast">
     <div>
-      <div class="brand">Headcount</div>
+      <div class="brandrow"><span class="brand">Headcount</span><select id="orgSel" aria-label="Workspace" hidden></select></div>
       <div class="camp"><select id="campSel" aria-label="Campaign"></select></div>
       <h1 id="hBill"></h1>
       <div class="sub" id="hSub"></div>
       <div class="sub" id="hDates"></div>
       <div class="seg pagetabs" role="group" aria-label="View">
+        <button id="pgPortfolio" data-page="portfolio" aria-pressed="false" hidden>Portfolio</button>
         <button id="pgCount" data-page="count" aria-pressed="true">Vote count</button>
         <button id="pgBrief" data-page="brief" aria-pressed="false">Bill brief</button>
+        <button id="pgWorkspace" data-page="workspace" aria-pressed="false" hidden>Workspace</button>
       </div>
     </div>
     <div class="tools">
@@ -104,6 +106,8 @@
   </div>
 
   <div id="briefPage" hidden></div>
+  <div id="portfolioPage" class="stack" hidden></div>
+  <div id="workspacePage" hidden></div>
 
   <footer class="note noprint" style="text-align:center;padding-top:8px"><a href="/privacy">Privacy</a></footer>
 </div>

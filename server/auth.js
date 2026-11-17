@@ -42,7 +42,7 @@ export async function verifyFirebaseToken(token, { projectId, jwksUrl }) {
   if (!(payload.exp > t - skew) || !(payload.iat <= t + skew) || (payload.auth_time && payload.auth_time > t + skew)) throw new HttpError(401, 'Your sign-in has expired. Sign in again.');
   if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 128) throw new HttpError(401, 'Sign-in token has no user.');
   const provider = (payload.firebase && payload.firebase.sign_in_provider) || '';
-  return { id: 'fb:' + payload.sub, email: payload.email || '', name: payload.name || payload.email || 'Signed-in user', provider: provider === 'microsoft.com' ? 'microsoft' : provider === 'google.com' ? 'google' : provider };
+  return { id: 'fb:' + payload.sub, email: payload.email || '', emailVerified: payload.email_verified === true, name: payload.name || payload.email || 'Signed-in user', provider: provider === 'microsoft.com' ? 'microsoft' : provider === 'google.com' ? 'google' : provider };
 }
 
 // Local testing only: "dev.<base64url JSON {id,name,email,provider}>".
@@ -52,7 +52,7 @@ export function verifyDevToken(token) {
   let p;
   try { p = b64json(m[1]); } catch (_) { throw new HttpError(401, 'Not signed in.'); }
   if (typeof p.id !== 'string' || !/^[a-z0-9_-]{1,40}$/i.test(p.id)) throw new HttpError(401, 'Not signed in.');
-  return { id: 'dev:' + p.id, email: String(p.email || '').slice(0, 120), name: String(p.name || p.id).slice(0, 80), provider: p.provider === 'microsoft' ? 'microsoft' : 'google' };
+  return { id: 'dev:' + p.id, email: String(p.email || '').slice(0, 120).toLowerCase(), emailVerified: p.emailVerified !== false, name: String(p.name || p.id).slice(0, 80), provider: p.provider === 'microsoft' ? 'microsoft' : 'google' };
 }
 
 export function makeAuthenticator(config) {

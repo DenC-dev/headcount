@@ -160,3 +160,18 @@ body { margin: 0; -webkit-text-size-adjust: 100%; }
   .brief { border: 0; padding: 0; max-width: none; }
   .brief .position { background: none; }
 }
+
+/* workspaces */
+.brandrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#orgSel { max-width: min(100%, 280px); font-weight: 600; }
+.empty { text-align: center; padding: 28px 18px; }
+.wsgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 18px; align-items: start; }
+.wsgrid > .panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ptable td { vertical-align: top; }
+.ptable .prow { cursor: pointer; }
+.ptable .prow:hover td, .ptable .prow:focus-visible td { background: var(--soft); }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.num, th.num { text-align: right; }
+.mast > div:first-child { min-width: 0; max-width: 100%; }
+.pagetabs { flex-wrap: wrap; max-width: 100%; }
+@media (max-width: 480px) { .pagetabs button { padding: 5px 9px; font-size: 13px; } }

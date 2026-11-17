@@ -32,4 +32,18 @@ export const config = {
   aiEnabled: Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) && env.AI_DRAFTING !== 'off',
   aiDailyLimit: Number(env.AI_DAILY_LIMIT) || 200,
   supportEmail: env.SUPPORT_EMAIL || '',
+  // Billing turns on when Stripe is configured. Without it every workspace is unlimited,
+  // which suits a firm running its own copy.
+  stripeKey: env.STRIPE_SECRET_KEY || '',
+  stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
+  stripePriceTeam: env.STRIPE_PRICE_TEAM || '',
+  stripePriceFirm: env.STRIPE_PRICE_FIRM || '',
+  stripeBase: (env.STRIPE_API_BASE || 'https://api.stripe.com').replace(/\/+$/, ''),
+  priceLabelTeam: env.PRICE_LABEL_TEAM || '',
+  priceLabelFirm: env.PRICE_LABEL_FIRM || '',
+  salesEmail: env.SALES_EMAIL || '',
+  trialDays: Number(env.TRIAL_DAYS) || 14,
+  trialSeats: Number(env.TRIAL_SEATS) || 10,
 };
+config.billing = Boolean(config.stripeKey && config.stripeWebhookSecret && config.stripePriceTeam);
+if (config.billing && !config.publicUrl) throw new Error('Billing needs PUBLIC_URL so Stripe can send people back to the app.');
