@@ -44,7 +44,7 @@ const mock = http.createServer((req, res) => {
       { id: 'ocd-person/aaaa-1111', name: 'Corey Simon', party: 'Republican', current_role: { district: '3', org_classification: 'upper' }, email: 'simon.corey@flsenate.gov', openstates_url: 'https://openstates.org/person/corey-simon/', offices: [{ classification: 'capitol', address: '404 S. Monroe St., Tallahassee, FL 32399', voice: '850-487-5003' }, { classification: 'district', address: '1 Main St, Tallahassee, FL', voice: '850-555-0100' }] },
       { id: 'ocd-person/bbbb-2222', name: 'Ana Ruiz', party: 'Democratic', current_role: { district: '12', org_classification: 'upper' }, email: '', offices: [] },
     ] });
-    if (u.pathname === '/fr/documents.json') return j(200, { results: [{ document_number: '2026-12345', title: 'Broadband Equity Program Requirements', type: 'PRORULE', abstract: 'Proposes requirements for broadband grant recipients.', html_url: 'https://www.federalregister.gov/d/2026-12345', publication_date: '2026-11-12', agencies: [{ name: 'National Telecommunications and Information Administration' }], comments_close_on: '2027-01-12', docket_ids: ['NTIA-2026-0001'] }] });
+    if (u.pathname === '/fr/documents.json') return j(200, { results: [{ document_number: '2026-12345', title: 'Broadband Equity Program Requirements', type: 'Proposed Rule', abstract: 'Proposes requirements for broadband grant recipients.', html_url: 'https://www.federalregister.gov/d/2026-12345', publication_date: '2026-11-12', agencies: [{ name: 'National Telecommunications and Information Administration' }], comments_close_on: '2027-01-12', docket_ids: ['NTIA-2026-0001'] }] });
     if (u.pathname === '/sam/opportunities/v2/search') {
       if (u.searchParams.get('api_key') !== 'sam-key') return j(403, {});
       return j(200, { opportunitiesData: [{ noticeId: 'abc123', title: 'Rural Broadband Network Services', solicitationNumber: 'RUS-26-001', fullParentPathName: 'AGRICULTURE, DEPARTMENT OF.RURAL UTILITIES SERVICE', type: 'Solicitation', postedDate: '2026-11-14', responseDeadLine: '2026-12-15T17:00:00-05:00', naicsCode: '517111', typeOfSetAsideDescription: 'Total Small Business', uiLink: 'https://sam.gov/opp/abc123/view', active: 'Yes' }] });
@@ -519,6 +519,11 @@ test('who is lobbying on a bill, and who wins contracts like this one', async ()
   assert.ok(re.test('S.56 and more')); assert.ok(re.test('S 56')); assert.ok(!re.test('S. 560'));
   const inc = ok(await api('mona', 'GET', '/api/intel/incumbents?agency=Department%20of%20Agriculture&naics=517111'));
   assert.equal(inc.recipients[0].name, 'ACME NETWORKS'); assert.equal(inc.recipients[0].share, 0.75);
+  const { usaAgencyName } = await import('../server/sources.js');
+  assert.equal(usaAgencyName('Agriculture, Department of'), 'Department of Agriculture');
+  assert.equal(usaAgencyName('Dept of Defense'), 'Department of Defense');
+  assert.equal(usaAgencyName('Interior, Department of the'), 'Department of the Interior');
+  assert.equal(usaAgencyName('General Services Administration'), 'General Services Administration');
 });
 
 test('rosters for any state chamber load from Open States with offices', async () => {

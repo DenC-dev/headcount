@@ -342,6 +342,24 @@ try {
   await alice.page.keyboard.press('Escape');
   log('ok  Monitor: a watch over Congress and Florida found and scored bills; who is lobbying on H.R. 1234');
 
+  // ===== Custom dropdowns =====
+  assert.equal(await alice.page.evaluate(() => [...document.querySelectorAll('select')].filter((x) => !x.closest('.cs')).length), 0, 'every select is custom');
+  assert.equal(await alice.page.evaluate(() => [...document.querySelectorAll('.cs')].filter((w) => w.querySelectorAll(':scope > .cs-trigger').length !== 1 || w.querySelector('.cs .cs')).length), 0, 'one button per dropdown, never nested');
+  assert.equal(await alice.page.evaluate(() => getComputedStyle(document.querySelector('#mon_kind')).opacity), '0');
+  const kindBtn = alice.page.locator('#mon_kind-cs');
+  assert.equal(await kindBtn.getAttribute('role'), 'combobox'); assert.equal(await kindBtn.getAttribute('aria-expanded'), 'false');
+  await kindBtn.click();
+  await alice.page.waitForSelector('.cs-list[role=listbox]:not([hidden])');
+  assert.equal(await kindBtn.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(await alice.page.locator('.cs-list [role=option]').allInnerTexts(), ['Bills, rules and contracts', 'Bills', 'Regulations', 'Contracts']);
+  await alice.page.click('.cs-list [role=option]:text-is("Bills")');
+  await alice.page.waitForFunction(() => MON.kind === 'bill' && document.querySelector('#mon_kind-cs .cs-value').textContent === 'Bills');
+  await alice.page.focus('#mon_kind-cs'); await alice.page.keyboard.press('Home');
+  assert.match(await alice.page.locator('#mon_kind-cs').getAttribute('aria-activedescendant'), /-o0$/);
+  await alice.page.keyboard.press('Enter');
+  await alice.page.waitForFunction(() => MON.kind === '' && document.querySelector('.cs-list').hidden);
+  log('ok  custom dropdowns: combobox and listbox roles, mouse, Home and Enter, and the page sees the change');
+
   // A campaign from a bill, with the Florida Senate loaded live, and an action page
   await alice.page.locator('.item:has-text("HB 77") [data-x=itemCampaign]').click();
   await alice.page.waitForFunction(() => S.cloud && /^HB 77/.test(S.campaign.bill) && page === 'count');
@@ -378,6 +396,23 @@ try {
   await alice.page.keyboard.press('Escape'); await alice.page.click('[data-page=count]');
   await alice.page.waitForFunction(() => /1 constituent letter/.test(document.querySelector('#rows').textContent));
   log('ok  campaign started from a Monitor bill; Florida Senate loaded live; a supporter found their senator and the letter went out');
+
+  // Keyboard on a whip row: open, type to jump, Enter; Escape closes the list but not the drawer around it
+  const rowBtn = alice.page.locator('#rows .cs-trigger').first();
+  await rowBtn.focus(); await alice.page.keyboard.press('ArrowDown');
+  assert.equal(await rowBtn.getAttribute('aria-expanded'), 'true');
+  await alice.page.keyboard.press('y'); await alice.page.keyboard.press('Enter');
+  await alice.page.waitForFunction(() => S.members.some((m) => m.pos === 4));
+  await settle(alice.page);
+  await alice.page.click('.tools [data-act=setup]');
+  await alice.page.focus('#s_rule-cs'); await alice.page.keyboard.press('ArrowDown');
+  await alice.page.waitForSelector('.cs-list:not([hidden])');
+  await alice.page.keyboard.press('Escape');
+  assert.equal(await alice.page.evaluate(() => document.querySelector('.cs-list').hidden && !document.querySelector('#drawer').hidden), true);
+  await alice.page.keyboard.press('Escape');
+  assert.equal(await alice.page.evaluate(() => document.querySelector('#drawer').hidden), true);
+  assert.equal(await alice.page.locator('#tForm .cs-trigger').count(), 1, 'the follow-up dropdown is redrawn in place, not stacked');
+  log('ok  custom dropdowns by keyboard: type-to-find on a whip row; Escape closes the list before the drawer');
 
   // ===== Contacts and bulk outreach =====
   await alice.page.click('[data-page=contacts]');
@@ -424,7 +459,7 @@ try {
   assert.match(await visitor.page.locator('h1').innerText(), /Know the count/);
   await shot(visitor.page, 'site-home', true);
   await visitor.page.fill('form.lead [name=name]', 'Pat Lee'); await visitor.page.fill('form.lead [name=email]', 'pat@leepartners.example');
-  await visitor.page.fill('form.lead [name=firm]', 'Lee Partners'); await visitor.page.click('form.lead button');
+  await visitor.page.fill('form.lead [name=firm]', 'Lee Partners'); await visitor.page.click('form.lead button[type=submit]');
   await visitor.page.waitForFunction(() => /Thank you/.test(document.querySelector('form.lead .status').textContent));
   assert.ok((await outbox()).some((x) => x.kind === 'lead' && x.to_addr === 'sales@headcount.test'));
   await visitor.page.goto(`${BASE}/pricing`); await shot(visitor.page, 'site-pricing', true);
@@ -443,7 +478,13 @@ try {
     await alice.page.click(`[data-page=${pg}]`);
     assert.equal(await alice.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `no sideways scroll on ${pg}`);
   }
-  await alice.page.click('[data-page=count]'); await shot(alice.page, 'phone');
+  await alice.page.click('[data-page=count]');
+  await alice.page.locator('#rows .cs-trigger').last().click();
+  const box = await alice.page.locator('.cs-list').boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= 390 && box.y >= 0 && box.y + box.height <= 844, `dropdown list fits the phone screen: ${JSON.stringify(box)}`);
+  await shot(alice.page, 'phone-dropdown');
+  await alice.page.keyboard.press('Escape');
+  await shot(alice.page, 'phone');
   await alice.page.setViewportSize({ width: 1280, height: 950 });
   await alice.page.emulateMedia({ colorScheme: 'dark' }); await shot(alice.page, 'dark');
   log('ok  phone width and dark mode');

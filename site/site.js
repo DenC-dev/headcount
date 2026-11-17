@@ -4,7 +4,7 @@ document.addEventListener('submit', async (e) => {
   const form = e.target.closest('form.lead');
   if (!form) return;
   e.preventDefault();
-  const status = form.querySelector('.status'), button = form.querySelector('button');
+  const status = form.querySelector('.status'), button = form.querySelector('button[type=submit]');
   const body = Object.fromEntries(new FormData(form).entries());
   button.disabled = true; status.textContent = 'Sending';
   try {

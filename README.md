@@ -52,6 +52,12 @@ npm run e2e
 Drives the website and the whole app in Chromium with several people (Google, Microsoft, a guest and a single sign-on user) and stand-ins for Gmail, Google Calendar, Outlook, Microsoft Graph and Stripe. Needs Playwright with Chromium installed.
 
 ```bash
+npm run test:live
+```
+
+Checks the real public services through the same code the server uses: Congress.gov, Open States, the Federal Register, SAM.gov, LDA.gov, USAspending.gov and the Census geocoder. It confirms each one answers in the shape Headcount expects. It reads keys from the environment or `.env`; a source without its key is skipped, and Congress.gov falls back to the public `DEMO_KEY` (a few calls an hour). `LIVE_AI=1` also scores three real items with Claude, which is billed. Behind an outbound proxy it sets `NODE_USE_ENV_PROXY=1` for you (Node 22.21 or later). Run it before a release and whenever a source changes; it makes a few dozen requests.
+
+```bash
 npm run screenshots
 ```
 
@@ -169,6 +175,7 @@ Before launch, finish `site/privacy.html` and `site/terms.html`: they are templa
 
 ### 11. Hosting
 
+- If the server reaches the internet through an outbound proxy (`HTTPS_PROXY`), start it with `NODE_USE_ENV_PROXY=1`, or Node's fetch will not use the proxy and every data source will look unreachable.
 - Run `npm start` (or the Dockerfile) behind HTTPS. Set `PUBLIC_URL`, and `TRUST_PROXY=1` when a proxy or load balancer sits in front.
 - Data lives in one SQLite file under `DATA_DIR`, so the host needs a persistent disk: a small VM, or a platform with attached volumes. Cloud Run's own filesystem is not persistent. Back up the file regularly.
 
@@ -186,7 +193,8 @@ docker run -p 3000:3000 -v headcount-data:/data --env-file .env headcount
 - The Monitor is `server/monitor.js`; the public data sources it and the intelligence panels use are in `server/sources.js`; the action center is `server/act.js` with its public page in `public/act.html`; stakeholder contacts are `server/crm.js`. In the browser, `public/intel.js` holds the Monitor, contacts, action center and roster screens.
 - Email is in `server/mail.js` (queue, SMTP sending, signed unsubscribe links) and `server/notify.js` (what each notification and digest says, and when it goes out).
 - `site/` is the website; `public/` is the app.
-- `public/` is plain HTML, CSS and JavaScript with no build step. `cloud.js` handles sign-in, the server API, and the Google and Microsoft calendar and email calls; `app.js` is the app.
+- `public/` is plain HTML, CSS and JavaScript with no build step.
+- Every dropdown, in the app and on the website, is a custom one from `public/select.js` and `select.css`: an accessible select-only combobox (keyboard, type-to-find, screen reader roles) drawn over the real `<select>`, which stays in the page holding the value and firing change events. Selects added later are picked up automatically; add `data-native` to keep one native. `cloud.js` handles sign-in, the server API, and the Google and Microsoft calendar and email calls; `app.js` is the app.
 - Workspaces, roles, clients, invitations, the activity log and plan limits are in `server/db.js` and `server/plans.js`; Stripe calls and webhook checks are in `server/billing.js`.
 - Each campaign is stored as small records (one per member, task and meeting, plus the brief and settings), so teammates editing different members never overwrite each other. If two people change the same member within a few seconds, the later change wins.
 

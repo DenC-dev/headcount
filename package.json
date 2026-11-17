@@ -10,7 +10,8 @@
     "dev": "AUTH_MODE=dev node --env-file-if-exists=.env --disable-warning=ExperimentalWarning server/index.js",
     "test": "node --disable-warning=ExperimentalWarning --test --test-timeout=30000 test/*.test.js",
     "e2e": "node test/e2e.mjs",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "test:live": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning test/live.mjs"
   },
   "engines": {
     "node": ">=22.13"

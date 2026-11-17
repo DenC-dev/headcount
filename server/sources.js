@@ -16,17 +16,26 @@ import { fedBill, STATES } from './bills.js';
 const day = (d) => d.toISOString().slice(0, 10);
 const clip = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
 
-async function getJson(url, { headers, method = 'GET', body, name } = {}) {
-  let res;
-  try {
-    res = await fetch(url, { method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
-  } catch (_) { throw new HttpError(502, `${name} could not be reached. Try again shortly.`); }
-  if (res.status === 401 || res.status === 403) throw new HttpError(502, `${name} rejected this server's API key.`);
-  if (res.status === 429) throw new HttpError(429, `${name} is rate limiting this server. Try again later.`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new HttpError(502, `${name} returned an error (${res.status}).`);
-  return res.json();
+// Public services have bad moments (timeouts, 5xx, an HTML error page instead
+// of JSON), so each call is tried twice before it fails with a plain message.
+async function getJson(url, { headers, method = 'GET', body, name, notFound = null } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const again = attempt < 1;
+    let res;
+    try {
+      res = await fetch(url, { method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
+    } catch (_) { if (again) { await pause(); continue; } throw new HttpError(502, `${name} could not be reached. Try again shortly.`); }
+    if (res.status === 401 || res.status === 403) throw new HttpError(502, `${name} rejected this server's API key.`);
+    if (res.status === 429) throw new HttpError(429, `${name} is rate limiting this server. Try again later.`);
+    if (res.status === 404) { if (notFound) throw new HttpError(502, notFound); return null; }
+    if (res.status >= 500 && again) { await pause(); continue; }
+    if (!res.ok) throw new HttpError(502, `${name} returned an error (${res.status}).`);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch (_) { if (again) { await pause(); continue; } throw new HttpError(502, `${name} sent an unexpected response. Try again shortly.`); }
+  }
 }
+const pause = () => new Promise((r) => setTimeout(r, 700));
 
 // Watch queries are comma-separated phrases: "rural broadband, digital equity".
 export const phrases = (q) => String(q || '').split(/[,\n;]+/).map((s) => s.trim().replace(/^"|"$/g, '')).filter((s) => s.length >= 2).slice(0, 6);
@@ -76,7 +85,8 @@ export async function stateBills(cfg, { states, q, since }) {
 }
 
 // ---------- regulations ----------
-const FR_TYPES = { PRORULE: 'Proposed rule', RULE: 'Final rule', NOTICE: 'Notice', PRESDOCU: 'Presidential document' };
+// The API takes type codes in searches but returns display names ("Proposed Rule").
+const FR_TYPES = { PRORULE: 'Proposed rule', RULE: 'Final rule', NOTICE: 'Notice', PRESDOCU: 'Presidential document', 'PROPOSED RULE': 'Proposed rule', 'PRESIDENTIAL DOCUMENT': 'Presidential document' };
 export async function federalRegister(cfg, { q, since, agency }) {
   const p = new URLSearchParams({ order: 'newest', per_page: '50', 'conditions[publication_date][gte]': day(since) });
   const terms = phrases(q).map((x) => (x.includes(' ') ? `"${x}"` : x)).join(' | ');
@@ -87,7 +97,7 @@ export async function federalRegister(cfg, { q, since, agency }) {
   const body = await getJson(`${cfg.fedRegBase}/documents.json?${p}`, { name: 'The Federal Register' });
   return ((body && body.results) || []).map((d) => ({
     kind: 'reg', extId: `fr-${d.document_number}`, number: (d.docket_ids || [])[0] || d.document_number, title: clip(d.title, 500), juris: 'US',
-    agency: clip((d.agencies || []).map((a) => a.name || a.raw_name).filter(Boolean).join('; '), 200), docType: FR_TYPES[d.type] || d.type || '',
+    agency: clip((d.agencies || []).map((a) => a.name || a.raw_name).filter(Boolean).join('; '), 200), docType: FR_TYPES[String(d.type || '').toUpperCase()] || d.type || '',
     date: d.publication_date || '', deadline: d.comments_close_on || '', url: d.html_url || '', summary: clip(d.abstract, 1200), source: 'Federal Register',
   }));
 }
@@ -103,7 +113,8 @@ export async function samOpportunities(cfg, { q, since, naics }) {
     const p = new URLSearchParams({ api_key: cfg.samKey, postedFrom: mmddyyyy(since), postedTo: mmddyyyy(to), limit: '100', offset: '0', ptype: 'o,p,k,r,s' });
     if (title) p.set('title', title);
     if (naics) p.set('ncode', String(naics).replace(/\D/g, '').slice(0, 6));
-    const body = await getJson(`${cfg.samBase}/opportunities/v2/search?${p}`, { name: 'SAM.gov' });
+    // SAM.gov answers 404 with an empty body when it does not accept the key.
+    const body = await getJson(`${cfg.samBase}/opportunities/v2/search?${p}`, { name: 'SAM.gov', notFound: 'SAM.gov did not accept the request. Check SAM_API_KEY.' });
     for (const o of (body && body.opportunitiesData) || []) {
       if (o.active === 'No') continue;
       const path = String(o.fullParentPathName || '').split('.').map((x) => x.trim()).filter(Boolean);
@@ -119,8 +130,16 @@ export async function samOpportunities(cfg, { q, since, naics }) {
   return [...seen.values()];
 }
 
+// SAM.gov writes "Agriculture, Department of" or "Dept of Defense"; USAspending wants "Department of Agriculture".
+export function usaAgencyName(name) {
+  const n = String(name || '').trim().replace(/\bDept\.?\s+of\b/gi, 'Department of');
+  const m = /^(.+?),\s*Department of( the)?$/i.exec(n);
+  return m ? `Department of${m[2] || ''} ${m[1]}` : n;
+}
+
 // Who has won this kind of work at this agency over the last three years.
-export async function incumbents(cfg, { agency, naics }) {
+export async function incumbents(cfg, { agency: rawAgency, naics }) {
+  const agency = usaAgencyName(rawAgency);
   const end = new Date(), start = new Date(Date.UTC(end.getUTCFullYear() - 3, end.getUTCMonth(), end.getUTCDate()));
   const filters = { time_period: [{ start_date: day(start), end_date: day(end) }], award_type_codes: ['A', 'B', 'C', 'D'] };
   if (naics) filters.naics_codes = [String(naics)];
@@ -145,6 +164,13 @@ export function billPattern(number) {
   const letters = m[1].replace(/[^A-Za-z]/g, '').split('').map((c) => `${c}\\.?\\s?`).join('');
   return new RegExp(`\\b${letters}${m[2]}\\b`, 'i');
 }
+// Issue descriptions are often long lists of bills; show the passage that names this one.
+function excerpt(text, re, span = 140) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim(), m = re.exec(t);
+  if (!m || t.length <= span * 2) return t.slice(0, span * 2);
+  const from = Math.max(0, m.index - span / 2), to = Math.min(t.length, m.index + m[0].length + span);
+  return `${from ? '…' : ''}${t.slice(from, to).trim()}${to < t.length ? '…' : ''}`;
+}
 export async function lobbyingOn(cfg, { number, title }) {
   const re = billPattern(number);
   if (!re) throw new HttpError(400, 'Enter a federal bill number such as H.R. 1234.');
@@ -158,7 +184,7 @@ export async function lobbyingOn(cfg, { number, title }) {
       seen.set(f.filing_uuid, {
         client: clip(f.client && f.client.name, 160), registrant: clip(f.registrant && f.registrant.name, 160),
         period: clip(`${f.filing_period_display || ''} ${f.filing_year || ''}`, 40), amount: Number(f.income || f.expenses) || 0,
-        issue: clip(acts[0].description, 300), entities: [...new Set(acts.flatMap((a) => (a.government_entities || []).map((g) => g.name)).filter(Boolean))].slice(0, 6),
+        issue: excerpt(acts[0].description, re), entities: [...new Set(acts.flatMap((a) => (a.government_entities || []).map((g) => g.name)).filter(Boolean))].slice(0, 6),
         url: f.filing_document_url || '', posted: String(f.dt_posted || '').slice(0, 10),
       });
     }
