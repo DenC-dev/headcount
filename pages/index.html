@@ -24,8 +24,8 @@
       <p class="eyebrow">Open source · Apache 2.0</p>
       <h1>Know the count. <em>Run it yourself.</em></h1>
       <p class="lede">Headcount is a web app for lobbyists, advocates and government affairs teams. It shows where every member stands, the odds a bill passes and whose mind to change next, then books the meeting, writes the brief and watches every capitol. The code is public: host it for your team, or build on it.</p>
-      <div class="ctas"><a class="button" href="{{repo}}">Get the code <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="#run">Run it in two minutes</a></div>
-      <p class="fine" id="srcLine"><a href="./status.html">Data source status</a></p>
+      <div class="ctas"><a class="button" href="./app/">Try it free <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="{{repo}}">Get the code</a></div>
+      <p class="fine">Runs in your browser. No account, no card. <span id="srcLine"><a href="./status.html">Data source status</a></span></p>
     </div>
     <figure class="stage" aria-label="An example vote count: a 41-seat chamber colored by each member's position, with the odds of passage and the member to see next">
       <div class="stage-top"><span class="live"><i></i>Live example</span><span>SB 214 · State Senate</span></div>
@@ -54,11 +54,11 @@
 <section class="band showcase" id="product"><div class="wrap">
   <div class="section-head reveal"><p class="eyebrow">The tour</p><h2>One place for the count, the calendar and the capitol</h2></div>
   <div class="tabs" role="tablist" aria-label="Product tour">
-    <button class="tab" role="tab" id="t-count" aria-controls="p-count" aria-selected="true"><svg aria-hidden="true"><use href="#i-count"/></svg>Vote count</button>
-    <button class="tab" role="tab" id="t-request" aria-controls="p-request" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#i-mail"/></svg>Meeting requests</button>
-    <button class="tab" role="tab" id="t-brief" aria-controls="p-brief" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#i-brief"/></svg>Bill briefs</button>
-    <button class="tab" role="tab" id="t-monitor" aria-controls="p-monitor" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#i-radar"/></svg>Monitor</button>
-    <button class="tab" role="tab" id="t-portfolio" aria-controls="p-portfolio" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#i-grid"/></svg>Portfolio</button>
+    <button class="tab" role="tab" id="t-count" aria-controls="p-count" aria-selected="true"><svg width="17" height="17" aria-hidden="true"><use href="#i-count"/></svg>Vote count</button>
+    <button class="tab" role="tab" id="t-request" aria-controls="p-request" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-mail"/></svg>Meeting requests</button>
+    <button class="tab" role="tab" id="t-brief" aria-controls="p-brief" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-brief"/></svg>Bill briefs</button>
+    <button class="tab" role="tab" id="t-monitor" aria-controls="p-monitor" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-radar"/></svg>Monitor</button>
+    <button class="tab" role="tab" id="t-portfolio" aria-controls="p-portfolio" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-grid"/></svg>Portfolio</button>
   </div>
   <div class="reveal">
     <div role="tabpanel" id="p-count" aria-labelledby="t-count">
@@ -102,13 +102,37 @@
 <section class="band" id="more"><div class="wrap">
   <div class="section-head reveal"><p class="eyebrow">And everything around it</p><h2>The rest of the job, in the same place</h2></div>
   <div class="grid3">
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-scales"/></svg></span><h3>Who else is lobbying</h3><p>Federal disclosure filings that name your bill: which clients, which firms, what they reported. For contracts, who has won the work before.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-contacts"/></svg></span><h3>Every relationship</h3><p>Agency staff, coalition partners and client contacts with owners and a shared history. Personal emails from your inbox, logged on each contact.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Ready for a firm</h3><p>Workspaces with roles and client guests, single sign-on with SAML or OIDC, an activity log, email digests, and per-seat billing through Stripe if you sell it.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-spark"/></svg></span><h3>Drafts, clearly marked</h3><p>Claude drafts summaries, talking points and objections from the bill itself, labelled for checking before anyone relies on them.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Plain to run</h3><p>A small Node.js server and one SQLite file. No web framework, no build step, no separate database. Every setting is an environment variable.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-phone"/></svg></span><h3>In the hallway</h3><p>Add it to a phone's home screen. It opens without a signal and catches up when you are back online.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-scales"/></svg></span><h3>Who else is lobbying</h3><p>Federal disclosure filings that name your bill: which clients, which firms, what they reported. For contracts, who has won the work before.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-contacts"/></svg></span><h3>Every relationship</h3><p>Agency staff, coalition partners and client contacts with owners and a shared history. Personal emails from your inbox, logged on each contact.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Ready for a firm</h3><p>Workspaces with roles and client guests, single sign-on with SAML or OIDC, an activity log, email digests, and per-seat billing through Stripe if you sell it.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-spark"/></svg></span><h3>Drafts, clearly marked</h3><p>Claude drafts summaries, talking points and objections from the bill itself, labelled for checking before anyone relies on them.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Plain to run</h3><p>A small Node.js server and one SQLite file. No web framework, no build step, no separate database. Every setting is an environment variable.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-phone"/></svg></span><h3>In the hallway</h3><p>Add it to a phone's home screen. It opens without a signal and catches up when you are back online.</p></div>
   </div>
+</div></section>
+
+<section class="band pricing" id="plans"><div class="wrap">
+  <div class="section-head reveal"><p class="eyebrow">Free and premium</p><h2>Start free in your browser. Sign in when the team joins.</h2></div>
+  <div class="plans4">
+    <div class="card reveal"><h3>Free</h3><p class="price">In your browser · no account</p><ul><li>Vote counts with live odds</li><li>Who to see next</li><li>U.S. House, Senate and Florida rosters</li><li>Bill briefs, written by hand</li><li>Meeting requests through your email app</li><li>Saved in this browser only</li></ul><a class="button ghost" href="./app/">Try it free</a></div>
+    <div class="card reveal"><h3>Free account</h3><p class="price">Sign in · no card</p><ul><li>Everything in Free</li><li>Saved to your account, on any device</li><li>Up to 2 people and 3 campaigns</li><li>2 Monitor watches</li><li>Any state legislature</li><li>Contacts and email digests</li></ul><a class="button ghost" href="{{signin}}">Sign in</a></div>
+    <div class="card featured reveal"><h3>Team <span class="tier">Premium</span></h3><p class="price">Per seat · {{trialDays}}-day trial</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 Monitor watches with Claude ranking</li><li>Action center for constituent letters</li><li>Who else is lobbying, contract history</li><li>Activity report, activity log, guests</li></ul><a class="button" href="{{signin}}">Start a trial</a></div>
+    <div class="card reveal"><h3>Firm <span class="tier">Premium</span></h3><p class="price">Per seat · for larger firms</p><ul><li>Everything in Team</li><li>Single sign-on with SAML or OIDC</li><li>Require single sign-on for staff</li><li>Unlimited watches and guests</li><li>Invoicing on request</li></ul><a class="button ghost" href="{{repo}}/issues/new?title=Firm%20plan">Talk to us</a></div>
+  </div>
+</div></section>
+
+<section class="band night-band" id="accounts"><div class="wrap spotlight">
+  <div class="reveal">
+    <p class="eyebrow">Sign in with your team</p>
+    <h2>Accounts live on a Headcount server. Get one in a few clicks.</h2>
+    <p class="intro">Team workspaces, the Monitor, contacts, email alerts and premium plans run on a Headcount server. Deploy one to Render with the button below: no command line. Create your account on it, and it walks you through email and data sources in the browser.</p>
+    <div class="ctas"><a class="button" href="https://render.com/deploy?repo={{repo}}">Deploy to Render <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="#run">Or run it on any computer</a></div>
+  </div>
+  <ol class="points reveal steps-dark">
+    <li><span class="num">1</span><div><b>Deploy</b><span>Render asks you to sign in, then builds Headcount with a disk for your data.</span></div></li>
+    <li><span class="num">2</span><div><b>Create your account</b><span>The first account runs the server. Choose who else can sign up.</span></div></li>
+    <li><span class="num">3</span><div><b>Finish setting up</b><span>Connect email and data sources from server settings, each with a test button.</span></div></li>
+  </ol>
 </div></section>
 
 <section class="band night-band" id="run"><div class="wrap">
@@ -138,9 +162,9 @@
     </tbody>
   </table></div>
   <div class="grid3">
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-log"/></svg></span><h3>Every push</h3><p>Server tests for permissions, billing, email and every data source, against local stand-ins.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-people"/></svg></span><h3>Every push</h3><p>An end-to-end test drives the whole app in a real browser with several people, from sign-in to single sign-on.</p></div>
-    <div class="card reveal"><span class="icon"><svg aria-hidden="true"><use href="#i-radar"/></svg></span><h3>Every morning</h3><p>Live checks against the real services above. A failure opens an issue on GitHub; recovery closes it.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-log"/></svg></span><h3>Every push</h3><p>Server tests for permissions, billing, email and every data source, against local stand-ins.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-people"/></svg></span><h3>Every push</h3><p>An end-to-end test drives the whole app in a real browser with several people, from sign-in to single sign-on.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-radar"/></svg></span><h3>Every morning</h3><p>Live checks against the real services above. A failure opens an issue on GitHub; recovery closes it.</p></div>
   </div>
 </div></section>
 

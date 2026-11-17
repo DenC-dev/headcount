@@ -17,7 +17,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3, p { margin: 0; }
 .wrap { max-width: 1180px; margin: 0 auto; padding-block: 20px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 18px; }
 .mast { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; justify-content: space-between; }
-.brand { font: 800 13px/1 var(--display); font-stretch: 125%; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+.brand { display: inline-flex; align-items: center; gap: 9px; font: 600 22px/1 "Newsreader", Georgia, serif; letter-spacing: -.015em; color: var(--fg); }
+.brand .mark { width: 36px; height: 23px; flex: none; color: var(--muted); }
 .mast h1 { font: 700 30px/1.1 var(--display); font-stretch: 85%; text-wrap: balance; margin-top: 6px; }
 .mast .sub { color: var(--muted); margin-top: 4px; }
 .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -204,3 +205,9 @@ a.brand { text-decoration: none; }
 .form fieldset legend { padding: 0 4px; }
 @media (max-width: 900px) { .mgrid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 560px) { .form fieldset { grid-template-columns: minmax(0, 1fr); } }
+
+/* premium features */
+.tier { display: inline-block; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--und) 22%, transparent); color: var(--fg); font: 600 10.5px/1.4 var(--display); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.panel.locked { border-style: dashed; }
+.srcrow { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.srcrow .btnrow label { flex: 1 1 220px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }

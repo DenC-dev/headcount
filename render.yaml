@@ -1,0 +1,25 @@
+# One-click hosting on Render (https://render.com). The "Deploy to Render"
+# button in the README and on the website points here. A small paid instance
+# is needed for the persistent disk that holds the database and its backups.
+services:
+  - type: web
+    name: headcount
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: headcount-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
+      - key: APP_SECRET
+        generateValue: true

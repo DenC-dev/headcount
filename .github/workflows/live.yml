@@ -17,8 +17,8 @@ on:
     branches: [main]
     paths:
       - 'pages/**'
-      - 'site/img/**'
-      - 'site/site.css'
+      - 'public/**'
+      - 'site/**'
       - 'scripts/build-pages.mjs'
       - 'scripts/live-report.mjs'
       - 'server/sources.js'
@@ -100,6 +100,7 @@ jobs:
         env:
           SITE_URL: ${{ steps.pages.outputs.base_url }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          APP_URL: ${{ vars.APP_URL }} # your Headcount server, for Sign in; set it after deploying
           LIVE_JSON: ${{ runner.temp }}/live.json
         run: node scripts/build-pages.mjs
 

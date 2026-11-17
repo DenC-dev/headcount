@@ -18,7 +18,8 @@ if (authMode === 'dev' && env.NODE_ENV === 'production') throw new Error('AUTH_M
 
 export const config = {
   port: Number(env.PORT) || 3000,
-  publicUrl: (env.PUBLIC_URL || '').replace(/\/+$/, ''),
+  // Hosts such as Render announce the address themselves.
+  publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
   dataDir: env.DATA_DIR || './data',
   trustProxy: env.TRUST_PROXY === '1',
   production: env.NODE_ENV === 'production',

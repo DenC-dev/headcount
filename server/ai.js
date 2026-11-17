@@ -23,8 +23,9 @@ Work only from the bill material provided. Do not add facts, figures, dates, vot
 
 The summary, provisions, affected parties and fiscal impact must be neutral and accurate. Talking points and responses to objections argue for the advocate's stated position, using only what the material supports. Write plainly and concisely, the way an experienced government affairs professional writes a leave-behind.`;
 
-let client = null;
-const getClient = () => (client ||= new Anthropic());
+let client = null, clientKey = null;
+// The key can change while the server runs (server settings), so the client follows it.
+const getClient = () => { const k = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || ''; if (!client || k !== clientKey) { client = new Anthropic(); clientKey = k; } return client; };
 
 const clip = (s, n) => String(s || '').slice(0, n);
 

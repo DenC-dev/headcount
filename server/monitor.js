@@ -11,7 +11,7 @@ import * as src from './sources.js';
 const KINDS = { bill: 'Bills', reg: 'Regulations', contract: 'Contracts' };
 const ALERT_AT = 70;
 
-export function makeMonitor(cfg, store, { score = null } = {}) {
+export function makeMonitor(cfg, store, { score = null, aiOn = () => Boolean(score) } = {}) {
   const db = store.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS watches (
@@ -81,7 +81,7 @@ export function makeMonitor(cfg, store, { score = null } = {}) {
   function list(oid, uid) {
     store.needOrg(oid, uid, 'member');
     const stats = new Map(q.stats.all(oid).map((r) => [r.watch_id, r]));
-    return { watches: q.watches.all(oid).map((w) => watchOut(w, stats)), sources: { federal: Boolean(cfg.congressKey), states: Boolean(cfg.openStatesKey), regs: true, contracts: Boolean(cfg.samKey), ai: Boolean(score) } };
+    return { watches: q.watches.all(oid).map((w) => watchOut(w, stats)), sources: { federal: Boolean(cfg.congressKey), states: Boolean(cfg.openStatesKey), regs: true, contracts: Boolean(cfg.samKey), ai: Boolean(score) && aiOn() } };
   }
   async function create(oid, uid, b) {
     store.needOrg(oid, uid, 'member');
@@ -173,7 +173,7 @@ export function makeMonitor(cfg, store, { score = null } = {}) {
     const todo = q.unscored.all(w.id);
     if (todo.length) {
       let scored = new Map();
-      if (score && store.meterGlobal('screen', (cfg.aiDailyLimit || 200) * 5)) {
+      if (score && aiOn() && store.meterGlobal('screen', (cfg.aiDailyLimit || 200) * 5)) {
         const client = store.clientName(w.client_id);
         for (let i = 0; i < todo.length; i += 25) {
           try {

@@ -88,6 +88,7 @@ function drawMonitor() {
     <div class="panel">
       <div class="row"><span class="label">Watches</span><button class="btn sm primary" data-x="newWatch">New watch</button></div>
       ${MON.watches.length ? `<ul class="wlist">${MON.watch ? '<li><button class="linkbtn" data-x="pickWatch" data-id="">Show every watch</button></li>' : ''}${watches}</ul>` : `<p class="note" style="margin-top:12px">A watch searches new and updated bills in Congress and every state legislature, proposed and final rules in the Federal Register, and federal contract opportunities on SAM.gov. Headcount checks each watch every few hours, scores what it finds against your priorities${src.ai ? ' with Claude' : ''}, and tells you about what matters.</p><div class="btnrow"><button class="btn primary" data-x="newWatch">Create your first watch</button></div>`}
+      ${ORG.plan && ORG.plan.watches ? `<p class="note" style="margin-top:12px">${MON.watches.length} of ${ORG.plan.watches} watches on the ${esc(ORG.plan.label)} plan.${MON.watches.length >= ORG.plan.watches ? ` <span class="tier">Team</span> ${isAdmin() && CLOUD.config.billing ? '<button class="btn sm" data-act="gotoPlans">Get more</button>' : ''}` : ''}</p>` : ''}
       ${off.length ? `<p class="note" style="margin-top:12px">Not set up on this server: ${esc(off.join(', '))}.</p>` : ''}
     </div>
     <div class="panel">
@@ -220,6 +221,7 @@ function defaultLetter() {
 async function actionDrawer() {
   if (!signedIn()) return showDrawer('<div class="row"><h2>Action center</h2><button class="btn sm" data-act="close">Close</button></div><p>Sign in to give this campaign a public action page where supporters write to their own legislators.</p>');
   if (!S.cloud) return showDrawer('<div class="row"><h2>Action center</h2><button class="btn sm" data-act="close">Close</button></div><p>Save this campaign to your workspace first: change anything in it and it is saved.</p>');
+  if (ORG && ORG.plan && !ORG.plan.features.actionCenter) return showDrawer(`<div class="row"><h2>Action center</h2><button class="btn sm" data-act="close">Close</button></div>${upsell('Action center', 'Team', 'A public page for this campaign where supporters find their own legislators by address and send letters or call. Every letter shows beside that member in your count.')}`);
   showDrawer('<div class="row"><h2>Action center</h2><button class="btn sm" data-act="close">Close</button></div><p class="note">Loading</p>');
   ACT.cid = S.id; await loadAction(false);
   const d = ACT.data || {}, a = d.action, stats = d.stats || { responses: 0, byMember: {} }, ro = !canEditNow(), j = (a && a.juris) || guessJuris();

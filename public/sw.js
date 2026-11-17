@@ -1,8 +1,8 @@
 // Keeps the app shell available offline and on flaky capitol Wi-Fi. Pages and
 // scripts come from the network when it answers, so updates apply at once;
 // the API and other sites are never cached.
-const CACHE = 'headcount-shell-v2';
-const SHELL = ['/app', '/styles.css', '/select.css', '/select.js', '/app.js', '/cloud.js', '/intel.js', '/rosters.json', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'headcount-shell-v3';
+const SHELL = ['/app', '/styles.css', '/select.css', '/select.js', '/app.js', '/cloud.js', '/intel.js', '/admin.js', '/rosters.json', '/icon.svg', '/manifest.webmanifest'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {

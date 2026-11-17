@@ -8,8 +8,10 @@ import nodemailer from 'nodemailer';
 // (local testing) messages are kept in the queue and not sent.
 
 export function makeMailer(cfg, store) {
-  const transport = cfg.smtpTransport || (cfg.smtpUrl ? nodemailer.createTransport(cfg.smtpUrl) : null);
-  const enabled = Boolean(transport) || cfg.emailMode === 'outbox';
+  let transport = null;
+  const build = () => { transport = cfg.smtpTransport || (cfg.smtpUrl ? nodemailer.createTransport(cfg.smtpUrl) : cfg.smtp ? nodemailer.createTransport({ ...cfg.smtp, connectionTimeout: 15000, greetingTimeout: 15000 }) : null); };
+  build();
+  const isEnabled = () => cfg.emailMode !== 'off' && (Boolean(transport) || cfg.emailMode === 'outbox');
 
   // Signed links for one-click unsubscribe; they never expire but only work for one person and one kind of email.
   const sign = (uid, kind) => crypto.createHmac('sha256', store.secret()).update(`${uid}|${kind}`).digest('base64url').slice(0, 32);
@@ -23,7 +25,7 @@ export function makeMailer(cfg, store) {
   }
 
   function queue({ to, subject, text, html, kind, userId, replyTo, unsubscribeKind, dedupe }) {
-    if (!enabled || !to) return false;
+    if (!isEnabled() || !to) return false;
     const unsub = userId && unsubscribeKind ? `${cfg.publicUrl}/api/unsubscribe?t=${unsubToken(userId, unsubscribeKind)}` : null;
     store.enqueueEmail({ to, subject, text, html, kind, userId, replyTo, unsubscribe: unsub, dedupe });
     return true;
@@ -51,7 +53,12 @@ export function makeMailer(cfg, store) {
     return sent;
   }
 
-  return { enabled, queue, work, unsubToken, readToken, outbox: (n = 50) => store.q.outbox.all(n) };
+  // Sends one message right away, for "send a test email" in server settings.
+  async function sendNow({ to, subject, text }) {
+    if (!transport) throw new Error('Email is not set up yet.');
+    await transport.sendMail({ from: cfg.emailFrom, to, subject, text });
+  }
+  return { get enabled() { return isEnabled(); }, reconfigure: build, sendNow, queue, work, unsubToken, readToken, outbox: (n = 50) => store.q.outbox.all(n) };
 }
 
 // A plain, readable HTML version of a text email. Every value is escaped.

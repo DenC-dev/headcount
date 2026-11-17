@@ -1,6 +1,8 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { promises as dns } from 'node:dns';
@@ -15,6 +17,7 @@ import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
 import { makeAccounts } from './accounts.js';
+import { makeSettings } from './settings.js';
 import * as sources from './sources.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -82,11 +85,23 @@ const SITE = path.resolve(here, '..', 'site');
 const SITE_PAGES = { '/': 'index.html', '/pricing': 'pricing.html', '/security': 'security.html', '/terms': 'terms.html', '/privacy': 'privacy.html' };
 const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// Links to local stylesheets and scripts carry a content version (?v=…), so a
+// browser never mixes a cached old file with a new page after an update.
+const versions = new Map();
+function versionOf(rel) {
+  const file = rel.startsWith('/site/') ? path.join(SITE, rel.slice(6)) : path.join(PUBLIC, rel);
+  let st; try { st = fs.statSync(file); } catch (_) { return null; }
+  const hit = versions.get(file);
+  if (hit && hit.mtime === st.mtimeMs) return hit.v;
+  const v = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 10);
+  versions.set(file, { mtime: st.mtimeMs, v }); return v;
+}
+const versionAssets = (html) => html.replace(/(href|src)="(\/[\w./-]+\.(?:css|js))"/g, (m, attr, ref) => { const v = versionOf(ref); return v ? `${attr}="${ref}?v=${v}"` : m; });
 function sendFile(res, file, ext) {
   fs.readFile(file, (err, buf) => {
     if (err) return send(res, 404, { error: 'Not found' });
     res.writeHead(200, { ...SECURITY, 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300', ...(ext === '.html' ? { 'Content-Security-Policy': csp() } : {}) });
-    res.end(buf);
+    res.end(ext === '.html' ? versionAssets(buf.toString('utf8')) : buf);
   });
 }
 // Website pages are HTML with {{placeholders}} for shared parts and for the
@@ -98,7 +113,7 @@ function sitePage(res, name, vars) {
   const parts = { header: read('_header.html'), footer: read('_footer.html'), hemicycle: read('_hemicycle.svg') };
   html = html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => parts[k]).replace(/\{\{logo\}\}/g, read('_logo.svg')).replace(/\{\{icons\}\}/g, read('_icons.svg')).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
   res.writeHead(200, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', 'Content-Security-Policy': csp() });
-  res.end(html);
+  res.end(versionAssets(html));
 }
 function siteVars() {
   const inf = (v) => (v === Number.POSITIVE_INFINITY ? 'Unlimited' : v);
@@ -154,7 +169,9 @@ function unsubscribePage(res, ok, message) {
 }
 
 // ---------- app ----------
-export function createServer({ store = openDb(path.join(config.dataDir, 'headcount.db'), config), draft = null, score = undefined, resolveTxt = null } = {}) {
+export function createServer({ store = openDb(path.join(config.dataDir, 'headcount.db'), config), draft = null, score = undefined, resolveTxt = null, keyFile = path.join(config.dataDir, 'headcount.key'), backupDir = path.join(config.dataDir, 'backups') } = {}) {
+  let mail = null;
+  const settings = makeSettings(config, store, { keyFile, onChange: () => { if (mail) mail.reconfigure(); } });
   // In local test mode, domains ending in .test (reserved, never real) verify without DNS.
   resolveTxt ||= async (d) => {
     if (config.authMode === 'dev' && d.endsWith('.test')) { const o = store.db.prepare('SELECT domain_token FROM orgs WHERE domain = ? ORDER BY created_at DESC').get(d); return o ? [[`headcount-verification=${o.domain_token}`]] : []; }
@@ -163,15 +180,20 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   const accounts = makeAccounts(config, store);
   const authenticate = makeAuthenticator(config, accounts);
   const localAccounts = () => config.authMode === 'local' || config.authMode === 'dev';
-  const draftBrief = draft || (config.aiEnabled ? (input) => import('./ai.js').then((m) => m.draftBrief(input)) : null);
-  const billing = config.billing ? makeBilling(config, store) : null;
-  const scoreItems = score !== undefined ? score : config.aiEnabled ? (input) => import('./ai.js').then((m) => m.scoreItems(input)) : null;
-  const monitor = makeMonitor(config, store, { score: scoreItems }), crm = makeCrm(config, store);
-  const mail = makeMailer(config, store), notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
+  // Claude and Stripe can be turned on later in server settings, so these are looked up when used.
+  const aiOn = () => Boolean(draft) || config.aiEnabled;
+  const draftBrief = draft || ((input) => import('./ai.js').then((m) => m.draftBrief(input)));
+  let billingInst = null;
+  const getBilling = () => (config.billing ? (billingInst ||= makeBilling(config, store)) : null);
+  const scoreItems = score !== undefined ? score : (input) => import('./ai.js').then((m) => m.scoreItems(input));
+  const monitor = makeMonitor(config, store, { score: scoreItems, aiOn: () => (score !== undefined ? Boolean(score) : config.aiEnabled) }), crm = makeCrm(config, store);
+  mail = makeMailer(config, store);
+  const notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
-  const jobs = { mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now) };
+  const jobs = { backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now) };
   const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
   if (!config.monitorOff) timers.push(setInterval(() => jobs.monitor(Date.now()).catch((e) => console.error('Monitor job failed', e)), Math.min(config.monitorEvery, 15 * 60 * 1000)));
+  if (backupDir) { timers.push(setInterval(dailyBackup, 24 * 3600e3)); setTimeout(dailyBackup, 60e3).unref(); }
   timers.forEach((t) => t.unref());
   const UNSUB = { monitor: ['monitor', 'off', 'You will not get Monitor alerts by email anymore. New items still appear in the Monitor.'], digest: ['digest', 'off', 'You will not get digests from Headcount anymore.'], assigned: ['notifyAssigned', false, 'You will not get emails when someone assigns you a follow-up.'], added: ['notifyAdded', false, 'You will not get emails when someone adds you to a campaign.'] };
 
@@ -182,11 +204,11 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     providers: config.authMode === 'none' ? [] : config.providers,
     bills: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey) },
     states: STATES,
-    ai: Boolean(draftBrief),
+    ai: aiOn(),
     supportEmail: config.supportEmail,
     email: mail.enabled,
     sso: config.authMode === 'firebase' || config.authMode === 'dev',
-    monitor: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey), regs: true, contracts: Boolean(config.samKey), ai: Boolean(scoreItems) },
+    monitor: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey), regs: true, contracts: Boolean(config.samKey), ai: score !== undefined ? Boolean(score) : config.aiEnabled },
     rosters: Boolean(config.openStatesKey),
     billing: config.billing ? { trialDays: config.trialDays, team: { price: config.priceLabelTeam }, firm: config.stripePriceFirm ? { price: config.priceLabelFirm } : null, salesEmail: config.salesEmail } : null,
   });
@@ -202,7 +224,27 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     return mail.queue({ to: user.email, kind: kind === 'reset' ? 'reset' : 'verify', subject: kind === 'reset' ? 'Reset your Headcount password' : 'Confirm your email for Headcount', text,
       html: htmlEmail({ heading: kind === 'reset' ? 'Reset your password' : 'Confirm your email', blocks: [{ p: kind === 'reset' ? `Someone asked to reset the password for ${user.email}. The link works for one hour.` : `Welcome to Headcount, ${user.name}. Confirm your email so colleagues can find you and your workspace can recognize your firm's domain.` }, ...(kind === 'reset' ? [{ p: 'If it was not you, ignore this email. Your password has not changed.' }] : [])], action: { url: link, label: kind === 'reset' ? 'Choose a new password' : 'Confirm my email' }, footer: 'You get this email because of an action on your Headcount account.' }) });
   };
-  const needBilling = () => { if (!billing) throw new HttpError(501, 'Billing is not set up on this server.'); return billing; };
+  const needBilling = () => { const b = getBilling(); if (!b) throw new HttpError(501, 'Billing is not set up on this server.'); return b; };
+  const needOperator = (u) => { if (!isOperator(u)) throw new HttpError(403, 'Only the person who runs this Headcount server can change its settings.'); };
+  const SOURCE_TESTS = {
+    congress: async () => `${(await sources.congressUpdated(config, new Date(Date.now() - 2 * 864e5), 1)).length} bills updated in the last two days`,
+    openstates: async () => `${(await sources.stateBills(config, { states: ['DE'], q: 'budget', since: new Date(Date.now() - 365 * 864e5) })).length} Delaware budget bills this year`,
+    fedreg: async () => `${(await sources.federalRegister(config, { q: 'grant', since: new Date(Date.now() - 30 * 864e5) })).length} documents about grants this month`,
+    sam: async () => `${(await sources.samOpportunities(config, { q: 'services', since: new Date(Date.now() - 3 * 864e5) })).length} contract notices this week`,
+    lda: async () => `${(await sources.lobbyingOn(config, { number: 'H.R. 1' })).filings.length} filings name H.R. 1`,
+    usaspending: async () => `${(await sources.incumbents(config, { agency: 'Department of Agriculture', naics: '517111' })).recipients.length} companies found`,
+    census: async () => { const d = await sources.districtsFor(config, '1600 Pennsylvania Ave NW, Washington, DC 20500'); return `The White House is in ${d.state}, district ${d.cd}`; },
+  };
+  // A consistent copy of the database, for downloads and the daily backup.
+  const snapshot = (file) => { fs.rmSync(file, { force: true }); store.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`); return file; };
+  function dailyBackup() {
+    if (!backupDir) return;
+    try {
+      fs.mkdirSync(backupDir, { recursive: true });
+      snapshot(path.join(backupDir, `headcount-${new Date().toISOString().slice(0, 10)}.db`));
+      fs.readdirSync(backupDir).filter((f) => /^headcount-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0, -7).forEach((f) => fs.rmSync(path.join(backupDir, f), { force: true }));
+    } catch (e) { console.error('Backup failed:', e.message); }
+  }
 
   // [method, path pattern, handler(match, ctx)]; ctx has user, url, req, body().
   const W = '([A-Za-z0-9_-]{4,40})', C = '([A-Za-z0-9_.:-]{1,64})', U = '([A-Za-z0-9_.:-]{1,140})', K = '([A-Za-z0-9_-]{8,64})';
@@ -210,11 +252,28 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id) }; }],
     ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
+    // Server settings, for the operator
+    ['GET', '/api/settings', (m, x) => { needOperator(x.user); return { ...settings.view(), status: { email: mail.enabled, ai: aiOn(), billing: Boolean(config.billing), auth: config.authMode, webhook: config.publicUrl ? `${config.publicUrl}/api/stripe/webhook` : '', backups: backupDir ? fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort().slice(-1)[0] || null : null : null } }; }],
+    ['PUT', '/api/settings', async (m, x) => { needOperator(x.user); const r = settings.save(await x.body()); return r; }],
+    ['POST', '/api/settings/test-email', async (m, x) => {
+      needOperator(x.user); limit('testmail:' + x.user.id, 4);
+      const to = String((await x.body()).to || x.user.email || '').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new HttpError(400, 'Enter an address to send the test to.');
+      try { await mail.sendNow({ to, subject: 'Headcount can send email', text: `This test from your Headcount server arrived, so invitations, password resets, digests and alerts will reach people.\n\n${appUrl()}` }); }
+      catch (e) { throw new HttpError(502, `The email service refused: ${String(e.message || e).slice(0, 200)}`); }
+      return { sent: to };
+    }],
+    ['POST', '/api/settings/test-source', async (m, x) => {
+      needOperator(x.user); limit('testsrc:' + x.user.id, 10);
+      const t = SOURCE_TESTS[(await x.body()).source];
+      if (!t) throw new HttpError(400, 'Unknown source.');
+      try { return { ok: true, detail: await t() }; } catch (e) { return { ok: false, detail: e.message || String(e) }; }
+    }],
     ['POST', '/api/auth/logout', async (m, x) => accounts.logout(x.user.session, Boolean((await x.body()).everywhere), x.user.id)],
     ['POST', '/api/auth/password', async (m, x) => { limit('pw:' + x.user.id, 5); return accounts.changePassword(x.user, await x.body()); }],
     ['POST', '/api/auth/verify-email', (m, x) => { limit('verify:' + x.user.id, 3); const r = accounts.newVerifyToken(x.user.id); return { sent: Boolean(r && accountMail('verify', r.account, r.token)) }; }],
     ['PATCH', '/api/me', async (m, x) => { if (!accounts.isLocal(x.user.id)) throw new HttpError(400, 'Your name comes from the account you sign in with.'); accounts.rename(x.user.id, (await x.body()).name); return { ok: true }; }],
-    ['DELETE', '/api/me', async (m, x) => { const r = store.deleteUser(x.user.id); accounts.remove(x.user.id); if (billing) for (const sub of r.cancel) await billing.cancel(sub); return { transferred: r.transferred, deleted: r.deleted }; }],
+    ['DELETE', '/api/me', async (m, x) => { const r = store.deleteUser(x.user.id); accounts.remove(x.user.id); const billing = getBilling(); if (billing) for (const sub of r.cancel) await billing.cancel(sub); return { transferred: r.transferred, deleted: r.deleted }; }],
     ['GET', '/api/workspaces', (m, x) => ({ workspaces: store.listOrgs(x.user.id) })],
     ['POST', '/api/workspaces', async (m, x) => store.createOrg(x.user.id, (await x.body()).name)],
     ['GET', `/api/workspaces/${W}`, (m, x) => forJsonInfo(store.orgInfo(m[1], x.user.id))],
@@ -306,6 +365,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
       if (p === '/api/auth/signup' && m === 'POST') {
         limit('signup:' + ip, 10);
         const r = await accounts.signup(await readJson(req, 10_000), ua);
+        const origin = String(req.headers.origin || '');
+        if (r.operator && !config.publicUrl && /^https?:\/\/[^\s/]+$/.test(origin)) settings.save({ publicUrl: origin });
         accountMail('verify', r.user, r.verifyToken);
         return send(res, 200, { token: r.token, user: r.user, operator: r.operator });
       }
@@ -366,6 +427,12 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     limit('u:' + user.id, 300);
     store.touchUser(user);
     const ctx = { user, url, req, body: (max) => readJson(req, max) };
+    if (p === '/api/settings/backup' && m === 'GET') {
+      needOperator(user);
+      const file = snapshot(path.join(os.tmpdir(), `headcount-backup-${crypto.randomBytes(6).toString('hex')}.db`));
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="headcount-backup-${new Date().toISOString().slice(0, 10)}.db"`, 'Cache-Control': 'no-store' });
+      return fs.createReadStream(file).on('close', () => fs.rmSync(file, { force: true })).pipe(res);
+    }
     for (const [method, re, fn] of routes) {
       if (method !== m) continue;
       const hit = re.exec(p);

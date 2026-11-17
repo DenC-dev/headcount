@@ -85,7 +85,7 @@ export function makeAccounts(cfg, store) {
     if (email && s.toLowerCase() === String(email).toLowerCase()) throw new HttpError(400, 'Use a password that is not your email address.');
     return s;
   }
-  const signupsOpen = () => (store.setting('signups') || 'open') === 'open';
+  const signupsOpen = () => (store.setting('cfg.signups') || store.setting('signups') || 'open') === 'open';
 
   async function signup({ name, email, password, invite }, agent) {
     const e = clean(email, 160).toLowerCase(), n = clean(name, 80);

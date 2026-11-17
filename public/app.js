@@ -480,7 +480,7 @@ function goExample() { S = exampleState(); BOOK.list = BOOK.list.filter((c) => c
 async function onAuthChange(user) {
   if (user && !ME) return onSignedIn();
   if (!user && ME) {
-    ME = null; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
+    ME = null; OPERATOR = false; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
     WS.members = WS.invites = WS.audit = WS.report = WS.lastInvite = null;
     if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
     if (page === 'portfolio' || page === 'workspace') page = 'count';
@@ -488,7 +488,7 @@ async function onAuthChange(user) {
   }
 }
 async function onSignedIn() {
-  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
+  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; OPERATOR = Boolean(r.operator); ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
   catch (e) { fail(e); return render(); }
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })();
   if (tz && PREFS && PREFS.tz !== tz) CLOUD.api('PATCH', '/api/me/prefs', { tz }).then((x) => { PREFS = x; }).catch(() => {});
@@ -1152,7 +1152,7 @@ function parseRoster(text) {
     cmte: /^(y|yes|1|true)$/i.test(r[3] || ''), pos: posOf(r[4] || ''), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], phone: (r[5] || '').slice(0, 40), email: (r[6] || '').slice(0, 120) }));
 }
 // ---------- workspaces ----------
-let ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null;
+let OPERATOR = false, ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null;
 const WS = { members: null, invites: null, audit: null, auditMore: true, report: null, lastInvite: null, loading: false, filter: { client: '', q: '', archived: false } };
 const LASTORG = 'headcount.lastOrg';
 const isAdmin = () => ORG && (ORG.role === 'owner' || ORG.role === 'admin');
@@ -1319,16 +1319,20 @@ function domainPanel() {
   if (!isAdmin()) return '';
   const d = ORG.domain, on = ORG.plan.features.domain;
   let body;
-  if (!on) body = '<p class="note">On the Team plan, colleagues with an email address at your firm\'s domain can join without an invitation.</p>';
+  if (!on) return upsell('Email domain', 'Team', 'Colleagues with an email address at your firm\'s domain join without an invitation.');
   else if (!d) body = `<p class="note">Let colleagues with an email address at your firm's domain join this workspace as members, without an invitation. You prove you own the domain with a DNS record.</p><form id="dmForm" class="taskadd"><input id="dm_name" name="domain" placeholder="yourfirm.com" aria-label="Domain" required><button class="btn">Add domain</button></form>`;
   else if (!d.verified) body = `<p class="note">Add this TXT record to <b>${esc(d.name)}</b> at your DNS provider, then press Verify. Changes can take up to an hour to appear.</p><div class="linkbox"><input readonly value="headcount-verification=${esc(d.token)}" aria-label="TXT record"><button class="btn sm" data-copy="headcount-verification=${esc(d.token)}">Copy</button></div><div class="btnrow" style="margin-top:8px"><button class="btn primary" data-act="dmVerify">Verify</button><button class="btn" data-act="dmRemove">Remove</button></div>`;
   else body = `<p><span class="status ok">Verified</span> ${esc(d.name)}</p><label class="check"><input type="checkbox" id="dm_join" ${d.join ? 'checked' : ''}> Anyone who signs in with a verified @${esc(d.name)} address can join as a member (each uses a seat)</label><div><button class="btn sm" data-act="dmRemove">Remove domain</button></div>`;
   return `<div class="panel"><span class="label">Email domain</span>${body}</div>`;
 }
+// Premium features show what they do, which plan has them, and a way to get it.
+function upsell(title, plan, what) {
+  return `<div class="panel locked"><div class="row"><span class="label">${esc(title)}</span><span class="tier">${esc(plan)}</span></div><p class="note">${esc(what)}</p>${isAdmin() && CLOUD.config.billing ? `<div><button class="btn sm primary" data-act="gotoPlans">Get ${esc(plan)}</button></div>` : `<p class="note">Part of the ${esc(plan)} plan. Ask a workspace admin.</p>`}</div>`;
+}
 function ssoPanel() {
-  if (!isAdmin()) return '';
+  if (!isAdmin() || !CLOUD.config.sso) return '';
   const sso = ORG.sso || {}, d = ORG.domain, support = CLOUD.config.supportEmail;
-  if (!ORG.plan.features.sso) return '<div class="panel"><span class="label">Single sign-on</span><p class="note">On the Firm plan, staff sign in through your identity provider (Okta, Microsoft Entra ID, or any SAML or OIDC provider), and you can require it.</p></div>';
+  if (!ORG.plan.features.sso) return upsell('Single sign-on', 'Firm', 'Staff sign in through your identity provider (Okta, Microsoft Entra ID, or any SAML or OIDC provider), and you can require it.');
   return `<div class="panel"><span class="label">Single sign-on</span>
     ${!d || !d.verified ? '<p class="note">Verify your email domain first: people reach your sign-in page by entering their work email.</p>' : ''}
     <form id="ssForm" class="form">
@@ -1340,7 +1344,7 @@ function ssoPanel() {
 }
 function reportPanel() {
   if (!isAdmin()) return '';
-  if (!ORG.plan.features.activityReport) return '<div class="panel"><span class="label">Lobbying activity report</span><p class="note">On the Team plan: every contact your team logged in a quarter, grouped by client and issue, ready to help prepare disclosure reports such as the LD-2. <button class="btn sm" data-act="gotoPlans">See plans</button></p></div>';
+  if (!ORG.plan.features.activityReport) return upsell('Lobbying activity report', 'Team', 'Every contact your team logged in a quarter, grouped by client and issue, ready to help prepare disclosure reports such as the LD-2.');
   const qs = quarters(), r = WS.report;
   return `<div class="panel"><span class="label">Lobbying activity report</span>
     <form id="rpForm" class="filters" style="margin-top:10px">
@@ -1354,7 +1358,8 @@ function reportPanel() {
     <p class="note">This lists contacts logged in Headcount. It is a worksheet, not a filing: disclosure laws define lobbying contacts and activities in their own terms, and some work happens outside the app. Check it against your records and with counsel.</p></div>`;
 }
 function auditPanel() {
-  if (!isAdmin() || !ORG.plan.features.audit) return '';
+  if (!isAdmin()) return '';
+  if (!ORG.plan.features.audit) return upsell('Activity log', 'Team', 'Who added, changed, invited or removed what, and when, for the whole workspace.');
   return `<div class="panel"><div class="row"><span class="label">Activity log</span>${WS.audit && WS.audit.length ? '<button class="btn sm" data-act="auditCsv">Download CSV</button>' : ''}</div>
     ${WS.audit ? `<ul class="hist">${WS.audit.map((a) => `<li><time>${esc(new Date(a.at).toLocaleString())}</time> · ${esc(a.actor || 'Billing')} ${esc(a.action === 'invite.created' && !a.target ? 'created an invitation link' : ACTIONS[a.action] || a.action)}${a.target ? ` <b>${esc(a.target)}</b>` : ''}${a.detail && a.detail.role ? ` as ${esc(ROLE_LABEL[a.detail.role] || a.detail.role)}` : ''}${a.detail && a.detail.to ? ` to ${esc(ROLE_LABEL[a.detail.to] || a.detail.to)}` : ''}${a.detail && a.detail.seats ? ` (${a.detail.seats} seats)` : ''}</li>`).join('') || '<li class="note">Nothing yet.</li>'}</ul>${WS.auditMore ? '<button class="btn sm" data-act="auditMore">Show older</button>' : ''}` : '<p class="note">Loading</p>'}</div>`;
 }
@@ -1445,7 +1450,7 @@ function renderSwitcher() {
 }
 function renderAcct() {
   const el = $('#acct'), cfg = CLOUD.config;
-  $('#menuAccount').hidden = !signedIn();
+  $('#menuAccount').hidden = !signedIn(); $('#menuServer').hidden = !(signedIn() && OPERATOR);
   if (!cfg || !CLOUD.ready) { el.innerHTML = ''; return; }
   if (signedIn()) el.innerHTML = `<button class="btn" data-act="account" title="${esc(CLOUD.user.email)}">${esc(CLOUD.user.name.split(/\s+/)[0] || 'Account')}</button>`;
   else if (CLOUD.canSignIn()) el.innerHTML = '<button class="btn primary" data-act="signin">Sign in</button>';
@@ -1481,6 +1486,7 @@ function render() {
   else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's identity provider to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
+  else if (signedIn() && OPERATOR && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add data source keys to look up bills and monitor legislatures.'}</span><button class="btn sm primary" data-x="serverSettings">Server settings</button>`;
   else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
   else if (ORG && isAdmin() && page === 'portfolio' && (ORG.plan.key === 'trial' || ORG.plan.key === 'free' || ORG.plan.status === 'past_due') && cfg.billing) {
     const d = ORG.plan.trialEnds ? Math.max(0, Math.ceil((ORG.plan.trialEnds - Date.now()) / 864e5)) : 0;
@@ -1702,6 +1708,7 @@ function accountDrawer(scrollToEmail) {
     <label class="check"><input type="checkbox" id="pf_assigned" ${pr.notifyAssigned ? 'checked' : ''}> Email me when someone assigns me a follow-up</label>
     <label class="check"><input type="checkbox" id="pf_added" ${pr.notifyAdded ? 'checked' : ''}> Email me when someone adds me to a campaign</label>
   </details>` : ''}
+  ${OPERATOR ? '<div class="btnrow"><button class="btn" data-x="serverSettings">Server settings</button></div>' : ''}
   <div class="btnrow"><button class="btn" data-act="signout">Sign out</button>${CLOUD.local() ? '<button class="btn" data-act="signoutAll">Sign out on every device</button>' : ''}</div>
   <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every workspace. A workspace you alone own passes to its longest-standing admin or member, or is deleted if nobody else is in it. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
   if (scrollToEmail && $('#emailSect')) $('#emailSect').scrollIntoView({ block: 'start' });

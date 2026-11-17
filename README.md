@@ -5,6 +5,29 @@
 
 Open source under the Apache License 2.0. Project website and data source status: https://denc-dev.github.io/headcount/
 
+**Try it free in your browser**, no account and nothing to install: https://denc-dev.github.io/headcount/app/ (your work stays in that browser).
+
+**Run your own, with sign-in and team workspaces, without the command line:**
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/DenC-dev/headcount)
+
+1. Press the button and sign in to Render. It builds Headcount with a small disk for your data (a paid Render instance, a few dollars a month).
+2. Open the address Render gives you. The first account you create runs the server.
+3. Follow the "Finish setting up" banner to Server settings: connect email (Gmail, Microsoft 365, SendGrid, Postmark or Amazon SES), paste free data source keys, and optionally add Claude and Stripe. Each has a test button. Nothing needs restarting.
+
+### Free and premium
+
+| | Free in your browser | Free account | Team (premium) | Firm (premium) |
+|---|---|---|---|---|
+| Vote counts, odds, who to see next | yes | yes | yes | yes |
+| Saved to an account, on any device | no | yes | yes | yes |
+| People | 1 | 2 | as many as you pay for | as many as you pay for |
+| Monitor watches | none | 2 | 25 | unlimited |
+| Action center, activity report and log, guests | no | no | yes | yes |
+| Single sign-on | no | no | no | yes |
+
+Plans and prices are charged through Stripe once you add your Stripe keys in Server settings. Without Stripe, a server gives every workspace every feature, which suits a firm running its own copy.
+
 Whip counts, meeting requests and bill briefs for lobbying firms, government affairs teams and advocacy groups, sold per seat.
 
 - **Vote count.** Seat-by-seat positions, live odds of passage (or defeat) through committee and the floor, and a ranked list of the members whose minds matter most. Preset rosters for the U.S. House, U.S. Senate, Florida House and Florida Senate, with office contact details.
@@ -87,9 +110,13 @@ Retakes the product screenshots on the website (`site/img`) from the running app
 
 ## Set it up for real users
 
-Copy `.env.example` to `.env` and fill it in as you go. `npm start` reads it.
+Everything below except Identity Platform can also be set in the app, under Server settings, by the operator; values there are stored encrypted with a key kept beside the database (`headcount.key`, or `APP_SECRET`). An environment variable always wins and shows as locked. To configure with files instead, copy `.env.example` to `.env`; `npm start` reads it.
 
-### 1. Sign-in: Google Cloud Identity Platform
+### 1. Sign-in
+
+Headcount has built-in accounts (email and password) and needs nothing set up for them: the first account on a server becomes its operator and manages Server settings, and the operator chooses whether anyone can sign up or only people with an invitation. Password reset and email confirmation work once email is connected. `OPERATOR_EMAIL` makes a verified account with that address an operator too.
+
+Sign-in with Google and Microsoft accounts, sending from Gmail and Outlook, and single sign-on need Google Cloud Identity Platform instead:
 
 1. In a Google Cloud project, turn on **Identity Platform** and open **Providers**.
 2. Add **Google**.
@@ -198,6 +225,8 @@ Before launch, finish `site/privacy.html` and `site/terms.html`: they are templa
 ### 11. Hosting
 
 - If the server reaches the internet through an outbound proxy (`HTTPS_PROXY`), start it with `NODE_USE_ENV_PROXY=1`, or Node's fetch will not use the proxy and every data source will look unreachable.
+- Headcount saves a copy of its database every day in `DATA_DIR/backups` and keeps the last seven. The operator can also download a backup from Server settings.
+- `render.yaml` describes the Render setup behind the Deploy button: Node 22, a 1 GB disk at `/var/data`, and a generated `APP_SECRET`. Render's address is picked up automatically as the public URL.
 - Run `npm start` (or the Dockerfile) behind HTTPS. Set `PUBLIC_URL`, and `TRUST_PROXY=1` when a proxy or load balancer sits in front.
 - Data lives in one SQLite file under `DATA_DIR`, so the host needs a persistent disk: a small VM, or a platform with attached volumes. Cloud Run's own filesystem is not persistent. Back up the file regularly.
 

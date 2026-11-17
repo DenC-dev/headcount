@@ -57,10 +57,10 @@ body.home main > section.band:not(.night-band) { background: var(--bg); }
 
 /* ---------- header ---------- */
 .site-head { position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--bg) 84%, transparent); backdrop-filter: saturate(150%) blur(14px); -webkit-backdrop-filter: saturate(150%) blur(14px); border-bottom: 1px solid var(--line); padding-top: env(safe-area-inset-top, 0px); }
-.home .site-head { background: color-mix(in srgb, var(--night) 78%, transparent); border-bottom-color: var(--night-line); color: var(--night-ink); }
+.home .site-head { background: color-mix(in srgb, var(--night) 95%, transparent); border-bottom-color: var(--night-line); color: var(--night-ink); }
 .site-head .wrap { display: flex; align-items: center; gap: 28px; min-height: 68px; }
-.logo { display: inline-flex; align-items: center; gap: 11px; color: inherit; text-decoration: none; font: 800 14px/1 var(--display); font-stretch: 125%; letter-spacing: .2em; text-transform: uppercase; }
-.logo svg { width: 34px; height: 19px; flex: none; overflow: visible; }
+.logo { display: inline-flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; font: 600 23px/1 var(--serif); letter-spacing: -.015em; font-optical-sizing: auto; }
+.logo svg { width: 40px; height: 26px; flex: none; overflow: visible; }
 .site-head nav { margin-left: auto; display: flex; align-items: center; gap: 26px; }
 .site-head nav a { color: inherit; text-decoration: none; font-size: 15px; opacity: .82; transition: opacity .15s; }
 .site-head nav a:hover { opacity: 1; }
@@ -193,12 +193,22 @@ section.band + section.band { border-top: 1px solid var(--line); }
 .card .button { align-self: flex-start; margin-top: auto; }
 .card .price { font: 500 15px var(--mono); color: var(--ink); }
 .card.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
-.card.featured::before { content: "For teams"; position: absolute; top: -11px; left: 22px; padding: 3px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 500 11px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.card.featured::before { content: "Premium"; position: absolute; top: -11px; left: 22px; padding: 3px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 500 11px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .pricing .card { padding: 30px 28px; }
 .pricing .card h3 { font-size: 30px; }
 .pricing .card ul { list-style: none; padding: 0; gap: 9px; margin: 6px 0 18px; }
 .pricing .card li { padding-left: 24px; position: relative; }
 .pricing .card li::before { content: ""; position: absolute; left: 2px; top: .5em; width: 10px; height: 6px; border-left: 2px solid var(--yes); border-bottom: 2px solid var(--yes); transform: rotate(-45deg); }
+
+.tier { display: inline-block; vertical-align: middle; margin-left: 6px; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--gold) 18%, transparent); color: var(--gold); font: 500 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.plans4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin-top: 44px; }
+.plans4 .card h3 { font-size: 26px; }
+.plans4 .card.featured::before { content: none; }
+.night-band .points span { color: var(--night-muted); }
+.night-band .points b { color: #fff; }
+.night-band .num { border-color: var(--night-line); color: var(--gilt); }
+@media (max-width: 1100px) { .plans4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .plans4 { grid-template-columns: minmax(0, 1fr); } }
 
 /* numbers */
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin-top: 52px; border-top: 1px solid var(--night-line); }
@@ -292,8 +302,8 @@ form.lead .button { justify-self: start; }
   .site-head nav .hide-sm { display: none; }
   .site-head nav a { white-space: nowrap; }
   .site-head nav a.button { padding: 8px 14px; }
-  .logo { font-size: 12.5px; letter-spacing: .15em; gap: 9px; }
-  .logo svg { width: 28px; height: 16px; }
+  .logo { font-size: 20px; gap: 8px; }
+  .logo svg { width: 34px; height: 22px; }
   .hero-grid { padding-block: 48px 36px; gap: 32px; }
   .stage { padding: 14px 14px 16px; border-radius: 18px; }
   .readout { grid-template-columns: auto auto; gap: 14px 22px; }

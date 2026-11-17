@@ -168,6 +168,13 @@
     if (!res.ok) { const err = new CloudError(res.status === 401 ? 'signin' : 'api', json.error || `Request failed (${res.status}).`, res.status); err.upgrade = Boolean(json.upgrade); err.sso = Boolean(json.sso); err.workspace = json.workspace; throw err; }
     return json;
   };
+  // Downloads a file from the server with the signed-in person's credentials.
+  C.download = async function (path, name) {
+    const res = await fetch(path, { headers: { Authorization: 'Bearer ' + (await idToken()) } });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new CloudError('api', j.error || `Download failed (${res.status}).`, res.status); }
+    const url = URL.createObjectURL(await res.blob()), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
   C.publicGet = async function (path) {
     const res = await fetch(path); const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new CloudError('api', json.error || `Request failed (${res.status}).`, res.status);

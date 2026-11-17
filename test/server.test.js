@@ -82,7 +82,7 @@ before(async () => {
   mods = { db: await import('../server/db.js'), auth: await import('../server/auth.js'), bills: await import('../server/bills.js'), ai: await import('../server/ai.js'), index: await import('../server/index.js'), config: (await import('../server/config.js')).config };
   store = mods.db.openDb(':memory:', mods.config);
   const score = async ({ items }) => { mocks.scored.push(...items); return items.map((i) => ({ id: i.id, score: /broadband/i.test(i.title) ? 92 : 15, reason: /broadband/i.test(i.title) ? 'Directly about rural broadband.' : 'Not about broadband.' })); };
-  server = mods.index.createServer({ store, draft: (x) => mods.ai.draftBrief(x), score, resolveTxt: async (d) => { if (!txt.has(d)) throw new Error('ENOTFOUND'); return txt.get(d); } });
+  server = mods.index.createServer({ store, keyFile: null, backupDir: null, draft: (x) => mods.ai.draftBrief(x), score, resolveTxt: async (d) => { if (!txt.has(d)) throw new Error('ENOTFOUND'); return txt.get(d); } });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -461,7 +461,7 @@ test('the website and the app have their own addresses', async () => {
   const pricing = await (await fetch(base + '/pricing')).text();
   assert.match(pricing, /<td>3<\/td>/); assert.match(pricing, /Single sign-on \(SAML, OIDC\)/); assert.doesNotMatch(pricing, /\{\{\w+\}\}/);
   for (const pth of ['/security', '/privacy', '/terms', '/site/site.css', '/site/site.js', '/app', '/app/', '/invite/abcdefgh12']) assert.equal((await fetch(base + pth)).status, 200, pth);
-  assert.match(await (await fetch(base + '/app')).text(), /<script src="\/app\.js" defer>/);
+  assert.match(await (await fetch(base + '/app')).text(), /<script src="\/app\.js\?v=[0-9a-f]{10}" defer>/, 'asset links carry a content version');
   for (const pth of ['/site/_header.html', '/site/_hemicycle.svg']) assert.equal((await fetch(base + pth)).status, 403, pth);
   assert.match(await (await fetch(base + '/security')).text(), /mailto:sales@headcount\.test/);
 });
@@ -646,4 +646,40 @@ test('built-in accounts: sign up, operator, sign in, confirm email, reset, sign 
   // Deleting the account removes the sign-in too
   assert.equal((await fetch(base + '/api/me', { method: 'DELETE', headers: { Authorization: 'Bearer ' + pat.body.token } })).status, 200);
   assert.equal((await post('/api/auth/login', { email: 'pat@firm.test', password: 'partner password 1' })).status, 401);
+});
+
+// ---------- server settings ----------
+test('server settings: operator only, secrets encrypted and hidden, applied live, environment wins, backups', async () => {
+  const post = (p, b, token, method = 'POST') => fetch(base + p, { method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(b || {}) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+  const op = (await post('/api/auth/login', { email: 'olivia@firm.test', password: 'the final password' }, '')).body.token;
+  const ivy = (await post('/api/auth/login', { email: 'ivy@firm.test', password: 'ivy long password' }, '')).body.token;
+  assert.equal((await fetch(base + '/api/settings', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403, 'only the operator');
+  const get = async () => (await fetch(base + '/api/settings', { headers: { Authorization: 'Bearer ' + op } })).json();
+  let s = await get();
+  assert.equal(s.fields.congressKey.env, true, 'set by the environment in this test run, so locked');
+  assert.equal(s.fields.ldaKey.env, false);
+  // A secret is stored encrypted, never returned, and applied at once
+  const saved = await post('/api/settings', { ldaKey: 'lda-secret-1234', supportEmail: 'help@firm.test', congressKey: 'ignored' }, op, 'PUT');
+  assert.equal(saved.status, 200); assert.equal(saved.body.fields.ldaKey.set, true); assert.equal(saved.body.fields.ldaKey.hint, '…1234'); assert.equal(JSON.stringify(saved.body).includes('lda-secret-1234'), false);
+  assert.match(store.setting('cfg.ldaKey'), /^enc:v1:/); assert.equal(store.setting('cfg.congressKey'), null, 'environment wins');
+  assert.equal(mods.config.ldaKey, 'lda-secret-1234'); assert.equal(mods.config.congressKey, 'cg-key');
+  assert.equal((await (await fetch(base + '/api/config')).json()).supportEmail, 'help@firm.test');
+  // Validation
+  assert.equal((await post('/api/settings', { smtpPort: 'abc' }, op, 'PUT')).status, 400);
+  assert.equal((await post('/api/settings', { supportEmail: 'not an address' }, op, 'PUT')).status, 400);
+  assert.equal((await get()).fields.publicUrl.env, true, 'PUBLIC_URL from the host is locked');
+  assert.equal((await post('/api/settings', { nope: 'x' }, op, 'PUT')).status, 400);
+  // Clearing a secret
+  await post('/api/settings', { ldaKey: '' }, op, 'PUT'); assert.equal(mods.config.ldaKey, ''); assert.equal((await get()).fields.ldaKey.set, false);
+  // Testing a source runs the real code path (here against the stand-in)
+  const t = await post('/api/settings/test-source', { source: 'lda' }, op);
+  assert.equal(t.body.ok, true); assert.match(t.body.detail, /filings name H\.R\. 1/);
+  // Sign-up policy
+  await post('/api/settings', { signups: 'invite' }, op, 'PUT');
+  assert.equal((await (await fetch(base + '/api/config')).json()).accounts.signups, 'invite');
+  await post('/api/settings', { signups: 'open' }, op, 'PUT');
+  // Backup download is a SQLite file, operator only
+  const b = await fetch(base + '/api/settings/backup', { headers: { Authorization: 'Bearer ' + op } });
+  assert.equal(b.status, 200); assert.equal(Buffer.from(await b.arrayBuffer()).subarray(0, 15).toString(), 'SQLite format 3');
+  assert.equal((await fetch(base + '/api/settings/backup', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403);
 });
