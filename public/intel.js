@@ -369,6 +369,13 @@ function importDrawer() {
 const fill = (tpl, c) => tpl.replace(/\{(first_name|name|organization|title)\}/g, (_, k) => (k === 'first_name' ? c.name.split(/\s+/)[0] : c[k] || ''));
 function bulkMailDrawer() {
   const list = CRM.contacts.filter((c) => CRM.sel.has(c.id)), withEmail = list.filter((c) => c.email);
+  if (!CLOUD.canConnect()) {
+    const addrs = withEmail.map((c) => c.email), mailto = `mailto:?bcc=${encodeURIComponent(addrs.join(','))}`;
+    return showDrawer(`<div class="row"><h2>Email ${plural2(withEmail.length, 'person')}</h2><button class="btn sm" data-act="close">Close</button></div>
+    <p class="note">Write to them from your own email app, with everyone in BCC so nobody sees the others' addresses. Then log it here so the team sees the outreach on each contact.</p>
+    <div class="btnrow">${mailto.length < 1900 ? `<a class="btn primary" href="${esc(mailto)}">Open my email app</a>` : ''}<button class="btn" data-copy="${esc(addrs.join(', '))}">Copy the ${addrs.length} addresses</button></div>
+    <h3 style="margin-top:14px">Log it</h3>${logForm(withEmail.map((c) => c.id)).replace('<option>Meeting</option><option>Call</option><option>Email</option>', '<option>Email</option><option>Meeting</option><option>Call</option>')}`);
+  }
   const prov = CLOUD.provider ? CLOUD.provider() : '';
   showDrawer(`<div class="row"><h2>Email ${plural2(withEmail.length, 'person')}</h2><button class="btn sm" data-act="close">Close</button></div>
   <p class="note">Each person gets their own copy from your ${prov === 'microsoft' ? 'Outlook' : prov === 'google' ? 'Gmail' : 'Gmail or Outlook'} account, so replies come to you. Use {first_name}, {name}, {organization} or {title} to personalize. Each send is logged on the contact.${list.length > withEmail.length ? ` ${list.length - withEmail.length} selected contact${list.length - withEmail.length === 1 ? ' has' : 's have'} no email address and will be skipped.` : ''}</p>

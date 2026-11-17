@@ -7,13 +7,14 @@ import { promises as dns } from 'node:dns';
 import { openDb, HttpError } from './db.js';
 import { makeBilling } from './billing.js';
 import { forJson, PLANS } from './plans.js';
-import { makeMailer } from './mail.js';
+import { makeMailer, htmlEmail } from './mail.js';
 import { makeNotifier } from './notify.js';
 import { makeAuthenticator } from './auth.js';
 import { lookupBill, STATES } from './bills.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
+import { makeAccounts } from './accounts.js';
 import * as sources from './sources.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -141,6 +142,11 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(root + path.sep) || path.basename(file).startsWith('_')) return send(res, 403, { error: 'Forbidden' });
   sendFile(res, file, path.extname(file));
 }
+function simplePage(res, ok, title, message, href, label) {
+  res.writeHead(ok ? 200 : 400, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': csp() });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escHtml(title)} · Headcount</title><link rel="stylesheet" href="/site/site.css"></head>
+<body><main class="narrow"><p class="eyebrow">Headcount</p><h1>${escHtml(title)}</h1><p>${escHtml(message)}</p><p><a class="button" href="${escHtml(href)}">${escHtml(label)}</a></p></main></body></html>`);
+}
 function unsubscribePage(res, ok, message) {
   res.writeHead(ok ? 200 : 400, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': csp() });
   res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email settings · Headcount</title><link rel="stylesheet" href="/site/site.css"></head>
@@ -154,7 +160,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     if (config.authMode === 'dev' && d.endsWith('.test')) { const o = store.db.prepare('SELECT domain_token FROM orgs WHERE domain = ? ORDER BY created_at DESC').get(d); return o ? [[`headcount-verification=${o.domain_token}`]] : []; }
     return dns.resolveTxt(d);
   };
-  const authenticate = makeAuthenticator(config);
+  const accounts = makeAccounts(config, store);
+  const authenticate = makeAuthenticator(config, accounts);
+  const localAccounts = () => config.authMode === 'local' || config.authMode === 'dev';
   const draftBrief = draft || (config.aiEnabled ? (input) => import('./ai.js').then((m) => m.draftBrief(input)) : null);
   const billing = config.billing ? makeBilling(config, store) : null;
   const scoreItems = score !== undefined ? score : config.aiEnabled ? (input) => import('./ai.js').then((m) => m.scoreItems(input)) : null;
@@ -167,8 +175,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   timers.forEach((t) => t.unref());
   const UNSUB = { monitor: ['monitor', 'off', 'You will not get Monitor alerts by email anymore. New items still appear in the Monitor.'], digest: ['digest', 'off', 'You will not get digests from Headcount anymore.'], assigned: ['notifyAssigned', false, 'You will not get emails when someone assigns you a follow-up.'], added: ['notifyAdded', false, 'You will not get emails when someone adds you to a campaign.'] };
 
-  const publicConfig = {
+  const publicConfig = () => ({
     auth: config.authMode,
+    accounts: localAccounts() ? { signups: accounts.signupsOpen() ? 'open' : 'invite', setup: !accounts.hasAccounts() } : null,
     firebase: config.authMode === 'firebase' ? { ...config.firebase, sdkVersion: FIREBASE_VERSION } : null,
     providers: config.authMode === 'none' ? [] : config.providers,
     bills: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey) },
@@ -176,20 +185,36 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ai: Boolean(draftBrief),
     supportEmail: config.supportEmail,
     email: mail.enabled,
-    sso: config.authMode !== 'none',
+    sso: config.authMode === 'firebase' || config.authMode === 'dev',
     monitor: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey), regs: true, contracts: Boolean(config.samKey), ai: Boolean(scoreItems) },
     rosters: Boolean(config.openStatesKey),
     billing: config.billing ? { trialDays: config.trialDays, team: { price: config.priceLabelTeam }, firm: config.stripePriceFirm ? { price: config.priceLabelFirm } : null, salesEmail: config.salesEmail } : null,
+  });
+  // The server operator manages server settings: the first built-in account, or OPERATOR_EMAIL.
+  const isOperator = (u) => Boolean(u && (store.setting('operator') === u.id || (config.operatorEmail && u.emailVerified && String(u.email).toLowerCase() === config.operatorEmail)));
+  const appUrl = () => `${config.publicUrl || `http://localhost:${config.port}`}/app`;
+  const accountMail = (kind, user, token) => {
+    if (!mail.enabled || !token) return false;
+    const link = kind === 'reset' ? `${appUrl()}#reset=${token}` : `${(config.publicUrl || `http://localhost:${config.port}`)}/api/auth/confirm?t=${token}`;
+    const text = kind === 'reset'
+      ? `Someone asked to reset the password for your Headcount account (${user.email}). Choose a new password here; the link works for one hour:\n\n${link}\n\nIf it was not you, ignore this email. Your password has not changed.`
+      : `Welcome to Headcount, ${user.name}. Confirm your email address so colleagues can find you and your workspace can recognize your firm's domain:\n\n${link}\n\nThe link works for 7 days.`;
+    return mail.queue({ to: user.email, kind: kind === 'reset' ? 'reset' : 'verify', subject: kind === 'reset' ? 'Reset your Headcount password' : 'Confirm your email for Headcount', text,
+      html: htmlEmail({ heading: kind === 'reset' ? 'Reset your password' : 'Confirm your email', blocks: [{ p: kind === 'reset' ? `Someone asked to reset the password for ${user.email}. The link works for one hour.` : `Welcome to Headcount, ${user.name}. Confirm your email so colleagues can find you and your workspace can recognize your firm's domain.` }, ...(kind === 'reset' ? [{ p: 'If it was not you, ignore this email. Your password has not changed.' }] : [])], action: { url: link, label: kind === 'reset' ? 'Choose a new password' : 'Confirm my email' }, footer: 'You get this email because of an action on your Headcount account.' }) });
   };
   const needBilling = () => { if (!billing) throw new HttpError(501, 'Billing is not set up on this server.'); return billing; };
 
   // [method, path pattern, handler(match, ctx)]; ctx has user, url, req, body().
   const W = '([A-Za-z0-9_-]{4,40})', C = '([A-Za-z0-9_.:-]{1,64})', U = '([A-Za-z0-9_.:-]{1,140})', K = '([A-Za-z0-9_-]{8,64})';
   const routes = [
-    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); return { user: x.user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id) }; }],
+    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id) }; }],
     ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
-    ['DELETE', '/api/me', async (m, x) => { const r = store.deleteUser(x.user.id); if (billing) for (const sub of r.cancel) await billing.cancel(sub); return { transferred: r.transferred, deleted: r.deleted }; }],
+    ['POST', '/api/auth/logout', async (m, x) => accounts.logout(x.user.session, Boolean((await x.body()).everywhere), x.user.id)],
+    ['POST', '/api/auth/password', async (m, x) => { limit('pw:' + x.user.id, 5); return accounts.changePassword(x.user, await x.body()); }],
+    ['POST', '/api/auth/verify-email', (m, x) => { limit('verify:' + x.user.id, 3); const r = accounts.newVerifyToken(x.user.id); return { sent: Boolean(r && accountMail('verify', r.account, r.token)) }; }],
+    ['PATCH', '/api/me', async (m, x) => { if (!accounts.isLocal(x.user.id)) throw new HttpError(400, 'Your name comes from the account you sign in with.'); accounts.rename(x.user.id, (await x.body()).name); return { ok: true }; }],
+    ['DELETE', '/api/me', async (m, x) => { const r = store.deleteUser(x.user.id); accounts.remove(x.user.id); if (billing) for (const sub of r.cancel) await billing.cancel(sub); return { transferred: r.transferred, deleted: r.deleted }; }],
     ['GET', '/api/workspaces', (m, x) => ({ workspaces: store.listOrgs(x.user.id) })],
     ['POST', '/api/workspaces', async (m, x) => store.createOrg(x.user.id, (await x.body()).name)],
     ['GET', `/api/workspaces/${W}`, (m, x) => forJsonInfo(store.orgInfo(m[1], x.user.id))],
@@ -274,7 +299,34 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
 
   async function route(req, res, url) {
     const p = url.pathname, m = req.method; let pm;
-    if (p === '/api/config' && m === 'GET') return send(res, 200, publicConfig);
+    if (p === '/api/config' && m === 'GET') return send(res, 200, publicConfig());
+    // Built-in accounts
+    if (p.startsWith('/api/auth/') && localAccounts()) {
+      const ua = String(req.headers['user-agent'] || ''), ip = clientIp(req);
+      if (p === '/api/auth/signup' && m === 'POST') {
+        limit('signup:' + ip, 10);
+        const r = await accounts.signup(await readJson(req, 10_000), ua);
+        accountMail('verify', r.user, r.verifyToken);
+        return send(res, 200, { token: r.token, user: r.user, operator: r.operator });
+      }
+      if (p === '/api/auth/login' && m === 'POST') {
+        const b = await readJson(req, 10_000);
+        limit('login:' + ip, 10); limit('login:' + String(b.email || '').toLowerCase().slice(0, 160), 6);
+        return send(res, 200, await accounts.login(b, ua));
+      }
+      if (p === '/api/auth/reset-request' && m === 'POST') {
+        limit('resetreq:' + ip, 3);
+        const r = accounts.resetRequest((await readJson(req, 10_000)).email);
+        if (r) accountMail('reset', r.account, r.token);
+        return send(res, 200, { ok: true, email: mail.enabled });
+      }
+      if (p === '/api/auth/reset' && m === 'POST') { limit('reset:' + ip, 5); return send(res, 200, await accounts.reset(await readJson(req, 10_000), ua)); }
+      if (p === '/api/auth/confirm' && m === 'GET') {
+        limit('preview:' + ip, 20);
+        const u = accounts.confirm(url.searchParams.get('t'));
+        return simplePage(res, Boolean(u), u ? 'Your email is confirmed' : 'This link does not work', u ? `Thank you, ${u.name}. ${u.email} is confirmed.` : 'It has expired or was already used. Sign in and ask for a new confirmation email from your account settings.', '/app', 'Open Headcount');
+      }
+    }
     if (p === '/api/health' && m === 'GET') return send(res, 200, { ok: true });
     if (p === '/api/unsubscribe' && (m === 'GET' || m === 'POST')) {
       limit('preview:' + clientIp(req), 30);

@@ -55,11 +55,13 @@ export function verifyDevToken(token) {
   return { id: 'dev:' + p.id, email: String(p.email || '').slice(0, 120).toLowerCase(), emailVerified: p.emailVerified !== false, name: String(p.name || p.id).slice(0, 80), provider: /^(saml|oidc)\.[A-Za-z0-9._-]{1,60}$/.test(p.provider || '') ? p.provider : p.provider === 'microsoft' ? 'microsoft' : 'google' };
 }
 
-export function makeAuthenticator(config) {
+export function makeAuthenticator(config, accounts = null) {
   return async (req) => {
     const h = req.headers.authorization || '';
     const m = /^Bearer\s+(.+)$/i.exec(h);
     if (!m) throw new HttpError(401, 'Sign in to do that.');
+    // Built-in account sessions ("s.<id>.<secret>")
+    if (accounts && m[1].startsWith('s.') && (config.authMode === 'local' || config.authMode === 'dev')) return accounts.verify(m[1]);
     if (config.authMode === 'firebase') return verifyFirebaseToken(m[1], { projectId: config.firebase.projectId, jwksUrl: config.firebaseJwksUrl });
     if (config.authMode === 'dev') return verifyDevToken(m[1]);
     throw new HttpError(401, 'Accounts are not set up on this server.');

@@ -8,8 +8,9 @@ const firebase = {
   projectId: env.FIREBASE_PROJECT_ID || '',
 };
 
-let authMode = (env.AUTH_MODE || (firebase.projectId ? 'firebase' : 'none')).toLowerCase();
-if (!['firebase', 'dev', 'none'].includes(authMode)) throw new Error(`AUTH_MODE must be firebase, dev or none, not "${authMode}"`);
+// Built-in email and password accounts unless Google Cloud Identity Platform is configured.
+let authMode = (env.AUTH_MODE || (firebase.projectId ? 'firebase' : 'local')).toLowerCase();
+if (!['firebase', 'local', 'dev', 'none'].includes(authMode)) throw new Error(`AUTH_MODE must be firebase, local, dev or none, not "${authMode}"`);
 if (authMode === 'firebase' && (!firebase.apiKey || !firebase.authDomain || !firebase.projectId)) {
   throw new Error('AUTH_MODE=firebase needs FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN and FIREBASE_PROJECT_ID');
 }
@@ -32,6 +33,7 @@ export const config = {
   aiEnabled: Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) && env.AI_DRAFTING !== 'off',
   aiDailyLimit: Number(env.AI_DAILY_LIMIT) || 200,
   supportEmail: env.SUPPORT_EMAIL || '',
+  operatorEmail: String(env.OPERATOR_EMAIL || '').trim().toLowerCase(),
   // Billing turns on when Stripe is configured. Without it every workspace is unlimited,
   // which suits a firm running its own copy.
   stripeKey: env.STRIPE_SECRET_KEY || '',

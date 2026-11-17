@@ -11,6 +11,9 @@
   const MS_SCOPES = ['Calendars.ReadWrite', 'Mail.Send'];
   const TOKEN_KEY = 'headcount.mailcal';
   const DEV_KEY = 'headcount.devuser';
+  const SESSION_KEY = 'headcount.session';
+  const lsRead = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) { return null; } };
+  const lsWrite = (k, v) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* private mode */ } };
 
   const C = {
     config: null, user: null, ready: false, listeners: [],
@@ -55,6 +58,10 @@
     } else if (cfg.auth === 'dev') {
       try { C.user = JSON.parse(localStorage.getItem(DEV_KEY) || 'null'); } catch (_) { C.user = null; }
     }
+    if (cfg.auth === 'local' || (cfg.auth === 'dev' && !C.user)) {
+      const s = lsRead(SESSION_KEY);
+      if (s && s.token && s.user) { C.user = s.user; C.session = s.token; }
+    }
     C.ready = true;
     return C.user;
   };
@@ -63,7 +70,27 @@
   C.mailName = (p) => (p === 'microsoft' ? 'Outlook' : 'Gmail');
   C.calName = (p) => (p === 'microsoft' ? 'Outlook Calendar' : 'Google Calendar');
   C.videoName = (p) => (p === 'microsoft' ? 'Microsoft Teams' : 'Google Meet');
-  C.canSignIn = () => C.config && (C.config.auth === 'firebase' || C.config.auth === 'dev') && C.config.providers.length > 0;
+  C.canSignIn = () => Boolean(C.config && (C.config.auth === 'local' || ((C.config.auth === 'firebase' || C.config.auth === 'dev') && C.config.providers.length > 0)));
+  // Sending from Gmail or Outlook needs Google or Microsoft sign-in (Identity Platform).
+  C.canConnect = () => Boolean(C.config && (C.config.auth === 'firebase' || C.config.auth === 'dev') && !C.session);
+  C.local = () => Boolean(C.session);
+
+  // ---------- built-in accounts ----------
+  async function authPost(path, body) {
+    let res;
+    try { res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(C.session ? { Authorization: 'Bearer ' + C.session } : {}) }, body: JSON.stringify(body || {}) }); }
+    catch (_) { throw new CloudError('offline', 'The Headcount server could not be reached. Check your connection.', 0); }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new CloudError('auth', json.error || `Request failed (${res.status}).`, res.status);
+    return json;
+  }
+  function startSession(r) { C.session = r.token; C.user = r.user; lsWrite(SESSION_KEY, { token: r.token, user: r.user }); C.emit(); return r; }
+  C.signInLocal = async (email, password) => startSession(await authPost('/api/auth/login', { email, password }));
+  C.signUpLocal = async (fields) => startSession(await authPost('/api/auth/signup', fields));
+  C.resetRequest = (email) => authPost('/api/auth/reset-request', { email });
+  C.resetPassword = async (token, password) => startSession(await authPost('/api/auth/reset', { token, password }));
+  C.changePassword = (current, next) => authPost('/api/auth/password', { current, next });
+  C.signOutEverywhere = async () => { try { await authPost('/api/auth/logout', { everywhere: true }); } catch (_) { /* already ended */ } C.session = null; C.user = null; lsWrite(SESSION_KEY, null); C.emit(); };
 
   function providerFor(name, withScopes, hint) {
     if (name === 'microsoft') {
@@ -115,6 +142,7 @@
   C.isSSO = () => Boolean(C.user && /^(saml|oidc)\./.test(C.user.provider || ''));
   C.signOut = async function () {
     clearToken();
+    if (C.session) { try { await authPost('/api/auth/logout', {}); } catch (_) { /* already ended */ } C.session = null; C.user = null; lsWrite(SESSION_KEY, null); C.emit(); return; }
     if (C.config.auth === 'dev') { localStorage.removeItem(DEV_KEY); C.user = null; C.emit(); return; }
     if (auth) await fb.signOut(auth);
   };
@@ -122,6 +150,7 @@
   // ---------- server API ----------
   async function idToken() {
     if (!C.user) throw new CloudError('signin', 'Sign in to do that.', 401);
+    if (C.session) return C.session;
     if (C.config.auth === 'dev') {
       const b = new TextEncoder().encode(JSON.stringify({ id: C.user.id, name: C.user.name, email: C.user.email, provider: C.user.provider }));
       return 'dev.' + btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -135,6 +164,7 @@
     try { res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (_) { throw new CloudError('offline', 'The Headcount server could not be reached. Check your connection.', 0); }
     const json = await res.json().catch(() => ({}));
+    if (res.status === 401 && C.session) { C.session = null; C.user = null; lsWrite(SESSION_KEY, null); setTimeout(() => C.emit(), 0); }
     if (!res.ok) { const err = new CloudError(res.status === 401 ? 'signin' : 'api', json.error || `Request failed (${res.status}).`, res.status); err.upgrade = Boolean(json.upgrade); err.sso = Boolean(json.sso); err.workspace = json.workspace; throw err; }
     return json;
   };

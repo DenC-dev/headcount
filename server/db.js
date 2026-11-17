@@ -207,6 +207,8 @@ class Store {
       // email
       setting: p('SELECT value FROM settings WHERE key = ?'),
       putSetting: p('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING'),
+      upsertSetting: p('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'),
+      delSetting: p('DELETE FROM settings WHERE key = ?'),
       prefs: p('SELECT * FROM user_prefs WHERE user_id = ?'),
       putPrefs: p(`INSERT INTO user_prefs (user_id, digest, notify_assigned, notify_added, tz, digest_hour, monitor) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET digest = excluded.digest, notify_assigned = excluded.notify_assigned, notify_added = excluded.notify_added, tz = excluded.tz, digest_hour = excluded.digest_hour, monitor = excluded.monitor`),
@@ -760,6 +762,12 @@ class Store {
     if (this.cfg.appSecret) return this.cfg.appSecret;
     this.q.putSetting.run('app_secret', crypto.randomBytes(32).toString('hex'));
     return this.q.setting.get('app_secret').value;
+  }
+  setting(k) { const r = this.q.setting.get(k); return r ? r.value : null; }
+  putSetting(k, v) { if (v === null || v === undefined || v === '') this.q.delSetting.run(k); else this.q.upsertSetting.run(k, String(v)); }
+  inviteExists(code) {
+    const c = String(code || '').slice(0, 64), i = this.q.orgInvite.get(c) || this.q.invite.get(c);
+    return Boolean(i && i.expires_at > now() && i.uses < i.max_uses);
   }
   getPrefs(uid) {
     const p = this.q.prefs.get(uid) || {};

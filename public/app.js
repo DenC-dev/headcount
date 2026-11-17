@@ -954,7 +954,7 @@ function rqStart(m, opts = {}) {
 function ct0(m) { return contact(m).office || ''; }
 function rqRefreshText(m) { if (RQ.edited) return; const t = requestText(m); RQ.subject = t.subject; RQ.body = t.body; }
 function rqHtml(m) {
-  const list = recipients(m), signed = signedIn(), prov = CLOUD.provider(), canSign = CLOUD.canSignIn();
+  const list = recipients(m), signed = signedIn() && CLOUD.canConnect(), prov = CLOUD.provider(), canSign = CLOUD.canSignIn() && CLOUD.canConnect();
   const toSel = `<select id="rq_to" aria-label="Send to">${list.map((r) => `<option value="${esc(r.email)}" ${!RQ.other && r.email === RQ.to ? 'selected' : ''}>${esc(r.label)}: ${esc(r.email)}</option>`).join('')}<option value="__other" ${RQ.other ? 'selected' : ''}>Someone else</option></select>`;
   const tabs = `<div class="seg wide" role="group" aria-label="How"><button type="button" data-rqmode="email" aria-pressed="${RQ.mode === 'email'}">Ask for a meeting by email</button><button type="button" data-rqmode="invite" aria-pressed="${RQ.mode === 'invite'}">Send a calendar invitation</button></div>`;
   const common = `<label class="wide">To ${toSel}</label>
@@ -1407,11 +1407,12 @@ async function runReport(form) {
 async function sendOrgInvite(form) {
   const fd = new FormData(form), email = String(fd.get('email') || '').trim(), role = fd.get('role');
   const sendIt = email && $('#oi_send') && $('#oi_send').checked, server = Boolean(CLOUD.config.email);
-  const access = sendIt && !server && !CLOUD.connected() ? CLOUD.connect() : null;
+  const access = sendIt && !server && CLOUD.canConnect() && !CLOUD.connected() ? CLOUD.connect() : null;
   try {
     const r = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/invites`, { role, email: email || undefined, send: Boolean(sendIt && server) });
     WS.lastInvite = `${location.origin}/invite/${r.code}`; WS.invites = null;
     if (sendIt && server) toast(r.emailed ? `Invitation emailed to ${email}` : 'Invitation link created. Copy it and send it to your colleague.');
+    else if (sendIt && !CLOUD.canConnect()) { location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`Join ${ORG.name} on Headcount`)}&body=${encodeURIComponent(`${CLOUD.user.name} invited you to join ${ORG.name} on Headcount:\n\n${WS.lastInvite}`)}`; toast('Invitation link created and opened in your email app'); }
     else if (sendIt) {
       if (access) await access;
       await CLOUD.mail.send({ to: [email], subject: `Join ${ORG.name} on Headcount`, body: `Hi,\n\n${CLOUD.user.name} invited you to join ${ORG.name} on Headcount as ${role === 'guest' ? 'a guest' : role === 'admin' ? 'an admin' : 'a member'}. Headcount is where we track vote counts, meetings and bill briefs.\n\nJoin here (the link works for 14 days and only for ${email}):\n${WS.lastInvite}\n\n${CLOUD.user.name}` });
@@ -1639,8 +1640,39 @@ function newCampDrawer() {
     <div class="wide"><button class="btn primary">Create campaign</button></div>
   </form>`);
 }
+let LOC = { mode: 'signin', reset: null };
+function localSignInDrawer(mode) {
+  const cfg = CLOUD.config, first = cfg.accounts && cfg.accounts.setup, inviteOnly = cfg.accounts && cfg.accounts.signups === 'invite';
+  LOC.mode = first ? 'signup' : mode || 'signin';
+  const m = LOC.mode, title = first ? 'Set up Headcount' : { signin: 'Sign in', signup: 'Create your account', forgot: 'Reset your password', reset: 'Choose a new password' }[m];
+  const field = (id, label, type, ac, extra = '') => `<label class="wide">${label}<input id="${id}" type="${type}" autocomplete="${ac}" required ${extra}></label>`;
+  showDrawer(`<div class="row"><h2>${title}</h2><button class="btn sm" data-act="close">Close</button></div>
+  ${first ? '<p class="note">You are the first person on this Headcount server, so your account will also manage its settings: email, data sources and who can sign up.</p>' : ''}
+  ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts on this server need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
+  <form id="locForm" class="form" data-mode="${m}">
+    ${m === 'signup' ? field('loc_name', 'Your name', 'text', 'name') : ''}
+    ${m !== 'reset' ? field('loc_email', m === 'signup' ? 'Work email' : 'Email', 'email', 'email') : ''}
+    ${m === 'signin' || m === 'signup' || m === 'reset' ? field('loc_pw', m === 'signin' ? 'Password' : 'New password (at least 10 characters)', 'password', m === 'signin' ? 'current-password' : 'new-password', 'minlength="10"') : ''}
+    <div class="wide"><button class="btn primary">${{ signin: 'Sign in', signup: first ? 'Create account and continue' : 'Create account', forgot: 'Email me a reset link', reset: 'Save and sign in' }[m]}</button></div>
+    <p class="note wide" id="locMsg" role="status"></p>
+  </form>
+  ${first || m === 'reset' ? '' : `<p class="note">${m === 'signin' ? `New here? <button class="linkbtn" data-act="locMode" data-m="signup">Create an account</button> · <button class="linkbtn" data-act="locMode" data-m="forgot">Forgot your password?</button>` : `Already have an account? <button class="linkbtn" data-act="locMode" data-m="signin">Sign in</button>`}</p>`}`);
+}
+async function submitLocal(form) {
+  const m = form.dataset.mode, msg = $('#locMsg'), btn = $('button.primary', form), v = (id) => ($('#' + id) ? $('#' + id).value : '');
+  btn.disabled = true; msg.textContent = '';
+  try {
+    if (m === 'signin') await CLOUD.signInLocal(v('loc_email'), v('loc_pw'));
+    else if (m === 'signup') await CLOUD.signUpLocal({ name: v('loc_name'), email: v('loc_email'), password: v('loc_pw'), invite: JOIN ? JOIN.code : undefined });
+    else if (m === 'forgot') { const r = await CLOUD.resetRequest(v('loc_email')); msg.textContent = r.email ? 'If that address has an account, a reset link is on its way. It works for one hour.' : 'This server cannot send email yet, so ask whoever runs your Headcount to reset your password.'; btn.disabled = false; return; }
+    else if (m === 'reset') { await CLOUD.resetPassword(LOC.reset, v('loc_pw')); LOC.reset = null; history.replaceState(null, '', '/app'); toast('Password changed. You are signed in.'); }
+    if (CLOUD.config.accounts) CLOUD.config.accounts.setup = false;
+    closeDrawer();
+  } catch (e) { msg.textContent = e.message; btn.disabled = false; }
+}
 function signInDrawer(mode) {
   const cfg = CLOUD.config;
+  if (cfg.auth === 'local') return localSignInDrawer(mode === 'sso' ? 'signin' : mode);
   showDrawer(`<div class="row"><h2>Sign in</h2><button class="btn sm" data-act="close">Close</button></div>
   <div class="signin">
     ${cfg.auth === 'dev' ? '<p class="note"><b>Local test mode.</b> No real account is used.</p><label class="note">Name<input id="dev_name" value="Test User"></label><label class="note">Email<input id="dev_email" value="tester@example.org"></label>' : ''}
@@ -1653,12 +1685,14 @@ function signInDrawer(mode) {
 }
 function accountDrawer(scrollToEmail) {
   const u = CLOUD.user, p = CLOUD.provider(), cfg = CLOUD.config || {}, pr = PREFS || { digest: 'weekly', digestHour: 8, notifyAssigned: true, notifyAdded: true };
-  const how = CLOUD.isSSO() ? 'Single sign-on' : CLOUD.providerName(u.provider);
+  const how = CLOUD.local() ? 'Email and password' : CLOUD.isSSO() ? 'Single sign-on' : CLOUD.providerName(u.provider);
   const choices = p ? [p] : ['google', 'microsoft'];
   showDrawer(`<div class="row"><h2>Account</h2><button class="btn sm" data-act="close">Close</button></div>
   <dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Signed in with</dt><dd>${esc(how)}</dd>
-  <dt>Calendar and email</dt><dd>${CLOUD.connected() ? `<span class="status ok">${esc(CLOUD.mailName(p))} connected in this tab</span>` : '<span class="status">Not connected</span>'}</dd></dl>
-  ${CLOUD.connected() ? '' : `<p class="note">Connect ${choices.map((x) => `${CLOUD.mailName(x)} and ${CLOUD.calName(x)}`).join(', or ')} to send meeting requests and invitations from your own account. Headcount reads your calendar only to find open times, never reads your email, and keeps the connection in this browser tab.</p>
+  ${CLOUD.local() ? `<dt>Email confirmed</dt><dd>${u.emailVerified ? '<span class="status ok">Yes</span>' : `<span class="status wait">Not yet</span> <button class="btn sm" data-act="resendVerify">Send the link again</button>`}</dd>` : ''}
+  ${CLOUD.canConnect() ? `<dt>Calendar and email</dt><dd>${CLOUD.connected() ? `<span class="status ok">${esc(CLOUD.mailName(p))} connected in this tab</span>` : '<span class="status">Not connected</span>'}</dd>` : ''}</dl>
+  ${CLOUD.local() ? `<details class="sect"><summary>Change password</summary><form id="pwForm" class="form"><label class="wide">Current password<input id="pw_cur" type="password" autocomplete="current-password" required></label><label class="wide">New password (at least 10 characters)<input id="pw_new" type="password" autocomplete="new-password" minlength="10" required></label><div class="wide"><button class="btn">Change password</button></div><p class="note wide" id="pwMsg" role="status"></p></form></details>` : ''}
+  ${CLOUD.connected() || !CLOUD.canConnect() ? '' : `<p class="note">Connect ${choices.map((x) => `${CLOUD.mailName(x)} and ${CLOUD.calName(x)}`).join(', or ')} to send meeting requests and invitations from your own account. Headcount reads your calendar only to find open times, never reads your email, and keeps the connection in this browser tab.</p>
   <div class="btnrow">${choices.map((x) => `<button class="btn" data-act="connect" data-mp="${x}">Connect ${CLOUD.mailName(x)}</button>`).join('')}</div>`}
   ${cfg.email ? `<details class="sect" id="emailSect" open><summary>Email from Headcount</summary>
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Digest<select id="pf_digest"><option value="daily" ${pr.digest === 'daily' ? 'selected' : ''}>Every morning</option><option value="weekly" ${pr.digest === 'weekly' ? 'selected' : ''}>Monday mornings</option><option value="off" ${pr.digest === 'off' ? 'selected' : ''}>No digest</option></select></label>
@@ -1668,7 +1702,7 @@ function accountDrawer(scrollToEmail) {
     <label class="check"><input type="checkbox" id="pf_assigned" ${pr.notifyAssigned ? 'checked' : ''}> Email me when someone assigns me a follow-up</label>
     <label class="check"><input type="checkbox" id="pf_added" ${pr.notifyAdded ? 'checked' : ''}> Email me when someone adds me to a campaign</label>
   </details>` : ''}
-  <div class="btnrow"><button class="btn" data-act="signout">Sign out</button></div>
+  <div class="btnrow"><button class="btn" data-act="signout">Sign out</button>${CLOUD.local() ? '<button class="btn" data-act="signoutAll">Sign out on every device</button>' : ''}</div>
   <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every workspace. A workspace you alone own passes to its longest-standing admin or member, or is deleted if nobody else is in it. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
   if (scrollToEmail && $('#emailSect')) $('#emailSect').scrollIntoView({ block: 'start' });
 }
@@ -1698,7 +1732,7 @@ document.addEventListener('click', async (e) => {
   const sure = (label) => { if (t.dataset.sure === '1') return true; t.dataset.sure = '1'; t.textContent = label; t.classList.add('warn'); return false; };
   // Calendar and email access needs a pop-up, so ask before any await.
   const needsMail = ['rqSend', 'rqInvite', 'rqFind', 'checkReplies', 'connect'].includes(a) || (a === 'cancelMeet' && (() => { const mt = S.meetings.find((x) => x.id === t.dataset.id); return mt && mt.eventId && mine(mt) && !ended(mt) && t.dataset.sure === '1'; })());
-  const access = needsMail && signedIn() && (!CLOUD.connected() || (t.dataset.mp && CLOUD.provider() !== t.dataset.mp)) ? CLOUD.connect(t.dataset.mp) : null;
+  const access = needsMail && signedIn() && CLOUD.canConnect() && (!CLOUD.connected() || (t.dataset.mp && CLOUD.provider() !== t.dataset.mp)) ? CLOUD.connect(t.dataset.mp) : null;
   const ready = async () => { if (access) { try { await access; } catch (err) { if (RQ && $('#rqMsg')) rqMsg(err.message); else fail(err); return false; } } return true; };
   switch (a) {
     case 'close': return closeDrawer();
@@ -1767,6 +1801,9 @@ document.addEventListener('click', async (e) => {
     case 'staffDir': return staffDirDrawer();
     case 'newCamp': return newCampDrawer();
     case 'signin': return signInDrawer();
+    case 'locMode': return localSignInDrawer(t.dataset.m);
+    case 'signoutAll': await flushNow(); await CLOUD.signOutEverywhere(); return toast('Signed out on every device');
+    case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'This server cannot send email yet'); } catch (err) { fail(err); } return;
     case 'ssoSwitch': await flushNow(); await CLOUD.signOut(); SSO_NEEDED = null; return signInDrawer('sso');
     case 'ssoGo': try { await CLOUD.signInSSO(SSO_STEP.provider, SSO_STEP.email); SSO_STEP = null; closeDrawer(); } catch (err) { fail(err); } return;
     case 'account': return accountDrawer();
@@ -1942,6 +1979,11 @@ document.addEventListener('submit', async (e) => {
   const fd = new FormData(e.target), id = e.target.id, cut = (k, n) => String(fd.get(k) || '').trim().slice(0, n);
   const m = S.members.find((x) => x.id === openId);
   if (id === 'oiForm') return sendOrgInvite(e.target);
+  if (id === 'locForm') return submitLocal(e.target);
+  if (id === 'pwForm') {
+    try { await CLOUD.changePassword($('#pw_cur').value, $('#pw_new').value); toast('Password changed. Other devices are signed out.'); accountDrawer(); } catch (err) { $('#pwMsg').textContent = err.message; }
+    return;
+  }
   if (id === 'ssoForm') {
     const email = cut('email', 160);
     try { const r = await CLOUD.publicGet(`/api/sso/lookup?email=${encodeURIComponent(email)}`); SSO_STEP = { email, provider: r.provider, workspace: r.workspace }; signInDrawer('sso'); }
@@ -2017,6 +2059,9 @@ document.addEventListener('submit', async (e) => {
   await CLOUD.init(); CLOUD.onChange(onAuthChange);
   if (JOIN) { try { JOIN.info = await CLOUD.publicGet(JOIN.kind === 'org' ? `/api/workspace-invites/${JOIN.code}` : `/api/invites/${JOIN.code}`); } catch (e) { JOIN.error = e.message; } }
   if (CLOUD.user) await onSignedIn(); else render();
+  const rm = /^#reset=([A-Za-z0-9_-]{20,80})$/.exec(location.hash);
+  if (rm && CLOUD.config.auth === 'local') { LOC.reset = rm[1]; localSignInDrawer('reset'); }
+  else if (!CLOUD.user && CLOUD.config.auth === 'local' && CLOUD.config.accounts && CLOUD.config.accounts.setup) localSignInDrawer('signup');
   if (billing) {
     history.replaceState(null, '', '/app');
     if (billing === 'done') { toast('Thank you. Your plan will update in a few seconds.'); page = 'workspace'; render(); setTimeout(() => { if (ORG) loadOrg(ORG.id, { quiet: true }).then(render); }, 4000); }

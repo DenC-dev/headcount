@@ -593,3 +593,57 @@ test('stakeholder contacts: add, import, log interactions in bulk, export', asyn
   const ex = ok(await api('mona', 'GET', `/api/workspaces/${MW}/export`));
   assert.equal(ex.contacts.length, 2); assert.equal(ex.interactions.length, 2); assert.equal(ex.watches.length, 3); assert.equal(ex.actionResponses[0].name, 'Pat Voter');
 });
+
+// ---------- built-in accounts ----------
+test('built-in accounts: sign up, operator, sign in, confirm email, reset, sign out, invite-only, delete', async () => {
+  const post = (p, b, token) => fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(b || {}) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const me = (token) => fetch(base + '/api/me', { headers: { Authorization: 'Bearer ' + token } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  assert.equal((await (await fetch(base + '/api/config')).json()).accounts.setup, true, 'no accounts yet');
+  assert.equal((await post('/api/auth/signup', { name: 'Olivia Operator', email: 'olivia@firm.test', password: 'short' })).status, 400);
+  const first = await post('/api/auth/signup', { name: 'Olivia Operator', email: 'Olivia@Firm.test', password: 'correct horse battery' });
+  assert.equal(first.status, 200); assert.equal(first.body.operator, true); assert.match(first.body.token, /^s\./);
+  const m1 = await me(first.body.token);
+  assert.equal(m1.body.operator, true); assert.equal(m1.body.local, true); assert.equal(m1.body.user.email, 'olivia@firm.test'); assert.equal(m1.body.user.emailVerified, false); assert.equal(m1.body.user.session, undefined);
+  assert.equal((await post('/api/auth/signup', { name: 'Dup', email: 'olivia@firm.test', password: 'another long one' })).status, 409);
+  // A second person is not the operator
+  const pat = await post('/api/auth/signup', { name: 'Pat Partner', email: 'pat@firm.test', password: 'partner password 1' });
+  assert.equal(pat.body.operator, false); assert.equal((await me(pat.body.token)).body.operator, false);
+  // Sign in
+  assert.equal((await post('/api/auth/login', { email: 'olivia@firm.test', password: 'wrong password!!' })).status, 401);
+  const login = await post('/api/auth/login', { email: 'OLIVIA@firm.test', password: 'correct horse battery' });
+  assert.equal(login.status, 200);
+  // Confirm email from the link in the welcome email
+  const welcome = store.db.prepare("SELECT * FROM email_queue WHERE kind = 'verify' AND to_addr = 'olivia@firm.test'").get();
+  const vt = /confirm\?t=([A-Za-z0-9_-]+)/.exec(welcome.text_body)[1];
+  const page = await fetch(`${base}/api/auth/confirm?t=${vt}`); assert.equal(page.status, 200); assert.match(await page.text(), /is confirmed/);
+  assert.equal((await me(login.body.token)).body.user.emailVerified, true);
+  assert.equal((await fetch(`${base}/api/auth/confirm?t=${vt}`)).status, 400, 'links work once');
+  // Reset the password: old sessions end
+  assert.equal((await post('/api/auth/reset-request', { email: 'nobody@firm.test' })).status, 200, 'no hint whether an account exists');
+  await post('/api/auth/reset-request', { email: 'olivia@firm.test' });
+  const resetMail = store.db.prepare("SELECT * FROM email_queue WHERE kind = 'reset' AND to_addr = 'olivia@firm.test'").get();
+  const rt = /#reset=([A-Za-z0-9_-]+)/.exec(resetMail.text_body)[1];
+  const reset = await post('/api/auth/reset', { token: rt, password: 'a brand new password' });
+  assert.equal(reset.status, 200);
+  assert.equal((await me(login.body.token)).status, 401, 'old sessions end after a reset');
+  assert.equal((await post('/api/auth/login', { email: 'olivia@firm.test', password: 'correct horse battery' })).status, 401);
+  assert.equal((await post('/api/auth/reset', { token: rt, password: 'yet another password' })).status, 400, 'reset links work once');
+  // Change password and sign out
+  assert.equal((await post('/api/auth/password', { current: 'nope nope nope', next: 'whatever whatever' }, reset.body.token)).status, 400);
+  assert.equal((await post('/api/auth/password', { current: 'a brand new password', next: 'the final password' }, reset.body.token)).status, 200);
+  assert.equal((await post('/api/auth/logout', {}, reset.body.token)).status, 200);
+  assert.equal((await me(reset.body.token)).status, 401);
+  // Built-in accounts work with workspaces like any other
+  const o = await post('/api/auth/login', { email: 'olivia@firm.test', password: 'the final password' });
+  const ws = await post('/api/workspaces', { name: 'Olivia Firm' }, o.body.token); assert.equal(ws.status, 200);
+  // Invite-only sign-up
+  store.putSetting('signups', 'invite');
+  assert.equal((await post('/api/auth/signup', { name: 'Stranger', email: 'stranger@else.test', password: 'stranger password' })).status, 403);
+  const inv = await post(`/api/workspaces/${ws.body.id}/invites`, { role: 'member' }, o.body.token);
+  const invited = await post('/api/auth/signup', { name: 'Invited Ivy', email: 'ivy@firm.test', password: 'ivy long password', invite: inv.body.code });
+  assert.equal(invited.status, 200);
+  store.putSetting('signups', 'open');
+  // Deleting the account removes the sign-in too
+  assert.equal((await fetch(base + '/api/me', { method: 'DELETE', headers: { Authorization: 'Bearer ' + pat.body.token } })).status, 200);
+  assert.equal((await post('/api/auth/login', { email: 'pat@firm.test', password: 'partner password 1' })).status, 401);
+});
