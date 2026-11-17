@@ -95,7 +95,7 @@ function sitePage(res, name, vars) {
   let html;
   try { html = read(name); } catch (_) { return send(res, 404, { error: 'Not found' }); }
   const parts = { header: read('_header.html'), footer: read('_footer.html'), hemicycle: read('_hemicycle.svg') };
-  html = html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => parts[k]).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+  html = html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => parts[k]).replace(/\{\{logo\}\}/g, read('_logo.svg')).replace(/\{\{icons\}\}/g, read('_icons.svg')).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
   res.writeHead(200, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', 'Content-Security-Policy': csp() });
   res.end(html);
 }

@@ -26,8 +26,8 @@ history = history.filter((h) => h && h.ranAt).sort((a, b) => a.ranAt.localeCompa
 fs.writeFileSync(path.join(OUT, 'status.json'), JSON.stringify(latest || { ranAt: null, checks: [] }, null, 2));
 fs.writeFileSync(path.join(OUT, 'history.json'), JSON.stringify(history));
 
-const vars = { repo: REPO_URL, year: String(new Date().getFullYear()), hemicycle: read('site/_hemicycle.svg'), header: read('pages/_header.html'), footer: read('pages/_footer.html') };
-const fill = (html) => html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => vars[k]).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+const vars = { repo: REPO_URL, year: String(new Date().getFullYear()), hemicycle: read('site/_hemicycle.svg'), header: read('pages/_header.html'), footer: read('pages/_footer.html'), logo: read('site/_logo.svg'), icons: read('site/_icons.svg') };
+const fill = (html) => html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => vars[k]).replace(/\{\{logo\}\}/g, vars.logo).replace(/\{\{icons\}\}/g, vars.icons).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
 for (const f of fs.readdirSync(path.join(ROOT, 'pages'))) {
   if (f.startsWith('_')) continue;
   const src = path.join(ROOT, 'pages', f);
@@ -35,6 +35,7 @@ for (const f of fs.readdirSync(path.join(ROOT, 'pages'))) {
   else fs.copyFileSync(src, path.join(OUT, f));
 }
 fs.copyFileSync(path.join(ROOT, 'site', 'site.css'), path.join(OUT, 'site.css'));
+fs.copyFileSync(path.join(ROOT, 'site', 'site.js'), path.join(OUT, 'site.js'));
 fs.copyFileSync(path.join(ROOT, 'public', 'icon.svg'), path.join(OUT, 'icon.svg'));
 for (const f of fs.readdirSync(path.join(ROOT, 'site', 'img'))) fs.copyFileSync(path.join(ROOT, 'site', 'img', f), path.join(OUT, 'img', f));
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');

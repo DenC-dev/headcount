@@ -1,6 +1,6 @@
 .act { gap: 20px; }
-.act h1 { font-size: clamp(32px, 6vw, 48px); font-weight: 800; font-stretch: 85%; }
-.act h2 { font-size: 22px; font-stretch: 90%; }
+.act h1 { font-size: clamp(36px, 8vw, 56px); }
+.act h2 { font-family: var(--serif); font-weight: 450; font-size: 27px; letter-spacing: -.01em; }
 .act .lede { color: var(--muted); white-space: pre-line; }
 .act .fine { font-size: 14px; color: var(--muted); }
 .act .check { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
@@ -8,7 +8,7 @@
 .act .button { justify-self: start; }
 .act .button[disabled] { opacity: .6; cursor: progress; }
 .members { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
-.members li { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: space-between; align-items: baseline; }
+.members li { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: space-between; align-items: baseline; }
 .members b { font-size: 17px; }
 .members span { color: var(--muted); font-size: 14px; }
 .calls { display: grid; gap: 8px; margin-top: 10px; }

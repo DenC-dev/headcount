@@ -23,8 +23,13 @@
       const runs = (h || []).slice(-60), names = [...new Set(runs.flatMap((r) => r.checks.map((c) => c.name)).concat(checks.map((c) => c.name)))];
       hist.innerHTML = names.length ? names.map((n) => `<div class="hrow"><span class="hname">${esc(n)}</span><span class="hcells">${runs.map((r) => { const c = r.checks.find((x) => x.name === n), st = c ? c.status : 'none'; return `<i class="${cls(st)}" title="${esc(`${when(r.ranAt)}: ${word[st] || 'not run'}`)}"></i>`; }).join('')}</span></div>`).join('') : '<p class="note">History starts with the first daily check.</p>';
     }
-    // Home page: one result per source
-    document.querySelectorAll('[data-src]').forEach((td) => {
+    // Home page: one result per source, in the table and in the strip under the hero
+    document.querySelectorAll('.sources [data-src]').forEach((el) => {
+      const mine = checks.filter((c) => source(c.name) === el.dataset.src);
+      const st = !mine.length ? '' : mine.some((c) => c.status === 'fail') ? 'fail' : mine.some((c) => c.status === 'ok') ? 'ok' : '';
+      if (st) el.classList.add(st);
+    });
+    document.querySelectorAll('td[data-src]').forEach((td) => {
       const mine = checks.filter((c) => source(c.name) === td.dataset.src);
       const st = !mine.length ? '' : mine.some((c) => c.status === 'fail') ? 'fail' : mine.some((c) => c.status === 'ok') ? 'ok' : 'skip';
       td.innerHTML = st ? `<a class="chip ${cls(st)}" href="./status.html">${{ ok: 'Working', fail: 'Failing', skip: 'Not checked' }[st]}</a>` : '<span class="note">Not checked yet</span>';
