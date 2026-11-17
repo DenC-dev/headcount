@@ -57,3 +57,15 @@ if ((config.smtpUrl || config.emailMode === 'outbox') && !config.publicUrl) conf
 config.siteOff = env.SITE === 'off';
 config.billing = Boolean(config.stripeKey && config.stripeWebhookSecret && config.stripePriceTeam);
 if (config.billing && !config.publicUrl) throw new Error('Billing needs PUBLIC_URL so Stripe can send people back to the app.');
+// Public data sources for the Monitor, intelligence and the action center.
+// None needs a key except SAM.gov (contract opportunities); Congress.gov and
+// Open States keys are set above. The *_BASE settings exist for testing.
+config.samKey = env.SAM_API_KEY || '';
+config.samBase = (env.SAM_API_BASE || 'https://api.sam.gov').replace(/\/+$/, '');
+config.fedRegBase = (env.FEDREG_API_BASE || 'https://www.federalregister.gov/api/v1').replace(/\/+$/, '');
+config.ldaKey = env.LDA_API_KEY || '';
+config.ldaBase = (env.LDA_API_BASE || 'https://lda.gov/api/v1').replace(/\/+$/, '');
+config.usaSpendingBase = (env.USASPENDING_API_BASE || 'https://api.usaspending.gov/api/v2').replace(/\/+$/, '');
+config.geocoderBase = (env.GEOCODER_BASE || 'https://geocoding.geo.census.gov/geocoder').replace(/\/+$/, '');
+config.monitorEvery = Number(env.MONITOR_INTERVAL_MS) || 6 * 3600 * 1000;
+config.monitorOff = env.MONITOR === 'off';

@@ -70,3 +70,36 @@ export async function draftBrief(input) {
   if (res.stop_reason === 'max_tokens' || !res.parsed_output) throw new HttpError(502, 'The draft came back incomplete. Try again, or shorten the material.');
   return { ...res.parsed_output, model: res.model, draftedAt: new Date().toISOString() };
 }
+
+// ---------- Monitor: screening new bills, rules and contract notices ----------
+const Scores = z.object({
+  scores: z.array(z.object({
+    id: z.string().describe('The item id exactly as given.'),
+    score: z.number().describe('0 to 100: how much this item matters to the team, given its priorities.'),
+    reason: z.string().describe('One short sentence on why it matters, or why it does not.'),
+  })),
+});
+const SCREEN = `You screen new and updated legislation, regulations and federal contract notices for a government affairs team.
+
+For each item, score how much it matters to the team on a scale of 0 to 100, using the team's stated priorities and the client it works for:
+- 80 to 100: directly about the priorities; someone should read it today.
+- 50 to 79: related and worth a look this week.
+- 20 to 49: touches the topic only in passing.
+- 0 to 19: a keyword match that is not about the priorities.
+
+Judge only from the item text given. Do not guess at contents that are not shown. Keep each reason to one plain sentence that a busy lobbyist can scan.`;
+
+export async function scoreItems({ watch, client, items }) {
+  const lines = items.map((it) => `<item id="${it.id}">${clip([it.number, it.title].filter(Boolean).join(': '), 600)}${it.agency ? `\nAgency: ${clip(it.agency, 200)}` : ''}${it.juris ? `\nJurisdiction: ${it.juris}` : ''}${it.docType ? `\nType: ${clip(it.docType, 60)}` : ''}${it.status ? `\nLatest action: ${clip(it.status, 300)}` : ''}${it.summary ? `\nSummary: ${clip(it.summary, 1200)}` : ''}</item>`).join('\n');
+  const res = await getClient().beta.messages.parse({
+    model: 'claude-opus-5-5',
+    max_tokens: 8000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: betaZodOutputFormat(Scores) },
+    system: SCREEN,
+    messages: [{ role: 'user', content: `Watch: ${clip(watch.name, 120)} (search terms: ${clip(watch.query, 300)})\nPriorities: ${clip(watch.priorities || watch.query, 2000)}${client ? `\nClient: ${clip(client, 120)}` : ''}\n\n${lines}\n\nScore every item.` }],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) return [];
+  return res.parsed_output.scores.map((s) => ({ id: String(s.id), score: Math.max(0, Math.min(100, Math.round(Number(s.score) || 0))), reason: clip(s.reason, 300) }));
+}

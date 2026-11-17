@@ -1,5 +1,6 @@
 import { htmlEmail, esc } from './mail.js';
 import { CONTACT_TYPES } from './db.js';
+import { describeItem } from './monitor.js';
 
 // What Headcount emails people about, and the daily or weekly digest.
 
@@ -16,7 +17,7 @@ export function localParts(now, tz) {
   return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour), weekday: p.weekday };
 }
 
-export function makeNotifier(cfg, store, mail) {
+export function makeNotifier(cfg, store, mail, monitor = null) {
   const app = `${cfg.publicUrl}/app`;
   const user = (id) => store.q.user.get(id);
   const footer = (uid, kind, what) => {
@@ -62,6 +63,26 @@ export function makeNotifier(cfg, store, mail) {
         text: `The latest payment for ${org.name} did not go through. Update the card in Workspace, then Plan, to keep your plan.\n\n${app}`,
         html: htmlEmail({ heading: 'A payment did not go through', blocks: [{ p: `The latest payment for ${org.name} did not go through. Update the card to keep your plan.` }], action: { url: app, label: 'Update payment' }, footer: footer(null, null, `you manage ${org.name}`) }) });
     }
+  }
+
+  // Instant Monitor alerts, for people who asked for them.
+  function monitorAlert({ org, items }) {
+    if (!org || !items.length) return 0;
+    let n = 0;
+    for (const m of store.q.members.all(org.id)) {
+      if (m.role === 'guest' || !m.email || store.getPrefs(m.id).monitor !== 'instant' || store.ssoBlocked(org, m.id, m.role)) continue;
+      const fresh = items.filter((i) => i.state !== 'tracked'), moved = items.filter((i) => i.state === 'tracked');
+      const lines = (list) => list.map((i) => `${describeItem(i)}${i.reason && i.state !== 'tracked' ? `. ${i.reason}` : ''}`);
+      const blocks = [];
+      if (fresh.length) blocks.push({ title: `New and relevant (${fresh.length})` }, { list: lines(fresh) });
+      if (moved.length) blocks.push({ title: `Tracked items that moved (${moved.length})` }, { list: lines(moved) });
+      const subject = fresh.length ? `${org.name} Monitor: ${fresh.length === 1 ? describeItem(fresh[0]).slice(0, 90) : `${fresh.length} new items worth a look`}` : `${org.name} Monitor: ${moved.length === 1 ? describeItem(moved[0]).slice(0, 90) : `${moved.length} tracked items moved`}`;
+      mail.queue({ to: m.email, userId: m.id, kind: 'monitor', unsubscribeKind: 'monitor', dedupe: `monitor:${org.id}:${m.id}:${items.map((i) => `${i.id}.${i.changedAt || 0}`).join(',').slice(0, 150)}`,
+        subject, text: `${blocks.map((b) => (b.title ? `\n${b.title}` : b.list.map((l) => `- ${l}`).join('\n'))).join('\n').trim()}\n\nOpen the Monitor: ${app}#monitor${textFooter(m.id, 'monitor')}`,
+        html: htmlEmail({ heading: `New in the ${org.name} Monitor`, blocks, action: { url: `${app}#monitor`, label: 'Open the Monitor' }, footer: footer(m.id, 'monitor', 'you asked for instant Monitor alerts') }) });
+      n++;
+    }
+    return n;
   }
 
   function orgInvite({ org, inviter, email, role, link }) {
@@ -123,8 +144,18 @@ export function makeNotifier(cfg, store, mail) {
         sections.push({ title: c.name, sub: [store.clientName(c.client_id), o.name].filter(Boolean).join(' · '), lines });
       }
     }
+    if (monitor && u.monitor !== 'off') {
+      const sinceMs = Date.parse(`${since}T00:00:00Z`);
+      for (const o of store.q.userOrgs.all(u.id)) {
+        if (o.my_role === 'guest' || store.ssoBlocked(o, u.id, o.my_role)) continue;
+        const found = monitor.forDigest(o.id, sinceMs);
+        if (!found.length) continue;
+        totals.monitor = (totals.monitor || 0) + found.length;
+        sections.push({ title: `Monitor: ${o.name}`, sub: 'New bills, rules and contract notices that match your watches', lines: found.map((i) => `${describeItem(i)}${i.state !== 'tracked' && i.reason ? `. ${i.reason}` : ''}`) });
+      }
+    }
     if (!sections.length) return null;
-    const bits = [totals.moves && plural(totals.moves, 'position change'), totals.votes && plural(totals.votes, 'vote') + ' coming up', totals.overdue && plural(totals.overdue, 'overdue follow-up'), totals.contacts && plural(totals.contacts, 'contact')].filter(Boolean);
+    const bits = [totals.moves && plural(totals.moves, 'position change'), totals.monitor && plural(totals.monitor, 'new Monitor item'), totals.votes && plural(totals.votes, 'vote') + ' coming up', totals.overdue && plural(totals.overdue, 'overdue follow-up'), totals.contacts && plural(totals.contacts, 'contact')].filter(Boolean);
     const heading = period === 'daily' ? `Headcount for ${fmtDay(today)}` : `Your week in Headcount`;
     return {
       subject: `${heading}: ${bits.slice(0, 2).join(', ') || plural(sections.length, 'campaign') + ' to look at'}`,
@@ -155,5 +186,5 @@ export function makeNotifier(cfg, store, mail) {
       text: `Name: ${lead.name}\nEmail: ${lead.email}\nOrganization: ${lead.firm}\nTeam size: ${lead.size}\n\n${lead.message}` });
   }
 
-  return { handle, orgInvite, trialNotices, digests, digestFor, contact };
+  return { handle, orgInvite, trialNotices, digests, digestFor, contact, monitorAlert };
 }

@@ -19,6 +19,13 @@ export function currentCongress(d = new Date()) {
   return Math.floor((started - 1789) / 2) + 1;
 }
 
+// The display label and Congress.gov address for a federal bill, from the API's type code ("HR", "SJRES").
+export function fedBill(type, number, congress) {
+  const t = FED_TYPES.find(([code]) => code === String(type || '').toLowerCase());
+  if (!t) return null;
+  return { label: `${t[1]} ${Number(number)}`, url: `https://www.congress.gov/bill/${ordinal(Number(congress))}-congress/${t[2]}/${Number(number)}` };
+}
+
 export function parseFederal(number) {
   const s = String(number || '').toLowerCase().replace(/[\s.]/g, '');
   for (const [code, label, slug] of FED_TYPES) {

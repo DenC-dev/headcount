@@ -26,13 +26,13 @@ export const CONTACT_TYPES = new Set(['Meeting', 'Call', 'Email', 'Event', 'Cons
 export class HttpError extends Error {
   constructor(status, message, extra) { super(message); this.status = status; this.extra = extra; }
 }
-const upgrade = (message) => new HttpError(402, message, { upgrade: true });
+export const upgrade = (message) => new HttpError(402, message, { upgrade: true });
 
 const now = () => Date.now();
 const idOk = (s) => typeof s === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(s);
-const newId = (p) => p + crypto.randomBytes(9).toString('base64url');
+export const newId = (p) => p + crypto.randomBytes(9).toString('base64url');
 const month = () => new Date().toISOString().slice(0, 7);
-const clean = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+export const clean = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 export function openDb(file, cfg = {}) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -107,6 +107,8 @@ export function openDb(file, cfg = {}) {
     CREATE INDEX IF NOT EXISTS email_due ON email_queue(sent_at, next_at);
     CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, name TEXT, email TEXT, firm TEXT, size TEXT, message TEXT);
   `);
+  const prefCols = new Set(db.prepare('PRAGMA table_info(user_prefs)').all().map((c) => c.name));
+  if (!prefCols.has('monitor')) db.exec("ALTER TABLE user_prefs ADD COLUMN monitor TEXT NOT NULL DEFAULT 'digest'");
   const orgCols = new Set(db.prepare('PRAGMA table_info(orgs)').all().map((c) => c.name));
   for (const [col, def] of Object.entries({ sso_provider: 'TEXT', sso_required: 'INTEGER NOT NULL DEFAULT 0', trial_notice: 'INTEGER NOT NULL DEFAULT 0' })) if (!orgCols.has(col)) db.exec(`ALTER TABLE orgs ADD COLUMN ${col} ${def}`);
   // Columns added in version 2; older databases get them here.
@@ -206,10 +208,10 @@ class Store {
       setting: p('SELECT value FROM settings WHERE key = ?'),
       putSetting: p('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING'),
       prefs: p('SELECT * FROM user_prefs WHERE user_id = ?'),
-      putPrefs: p(`INSERT INTO user_prefs (user_id, digest, notify_assigned, notify_added, tz, digest_hour) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET digest = excluded.digest, notify_assigned = excluded.notify_assigned, notify_added = excluded.notify_added, tz = excluded.tz, digest_hour = excluded.digest_hour`),
+      putPrefs: p(`INSERT INTO user_prefs (user_id, digest, notify_assigned, notify_added, tz, digest_hour, monitor) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET digest = excluded.digest, notify_assigned = excluded.notify_assigned, notify_added = excluded.notify_added, tz = excluded.tz, digest_hour = excluded.digest_hour, monitor = excluded.monitor`),
       setLastDigest: p('INSERT INTO user_prefs (user_id, last_digest) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET last_digest = excluded.last_digest'),
-      digestUsers: p(`SELECT u.id, u.email, u.name, COALESCE(p.digest, 'weekly') AS digest, COALESCE(p.tz, 'UTC') AS tz, COALESCE(p.digest_hour, 8) AS digest_hour, p.last_digest
+      digestUsers: p(`SELECT u.id, u.email, u.name, COALESCE(p.digest, 'weekly') AS digest, COALESCE(p.tz, 'UTC') AS tz, COALESCE(p.digest_hour, 8) AS digest_hour, p.last_digest, COALESCE(p.monitor, 'digest') AS monitor
         FROM users u LEFT JOIN user_prefs p ON p.user_id = u.id WHERE u.email != '' AND COALESCE(p.digest, 'weekly') != 'off'`),
       enqueue: p(`INSERT INTO email_queue (to_addr, subject, text_body, html_body, kind, user_id, reply_to, unsubscribe, dedupe, created_at, next_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(dedupe) DO NOTHING`),
@@ -761,16 +763,17 @@ class Store {
   }
   getPrefs(uid) {
     const p = this.q.prefs.get(uid) || {};
-    return { digest: p.digest || 'weekly', notifyAssigned: p.notify_assigned !== 0, notifyAdded: p.notify_added !== 0, tz: p.tz || '', digestHour: p.digest_hour === undefined || p.digest_hour === null ? 8 : p.digest_hour, lastDigest: p.last_digest || null };
+    return { digest: p.digest || 'weekly', notifyAssigned: p.notify_assigned !== 0, notifyAdded: p.notify_added !== 0, tz: p.tz || '', digestHour: p.digest_hour === undefined || p.digest_hour === null ? 8 : p.digest_hour, lastDigest: p.last_digest || null, monitor: p.monitor || 'digest' };
   }
   setPrefs(uid, patch) {
     const cur = this.getPrefs(uid), next = { ...cur };
     if (patch.digest !== undefined) { if (!['daily', 'weekly', 'off'].includes(patch.digest)) throw new HttpError(400, 'Digest must be daily, weekly or off.'); next.digest = patch.digest; }
     if (patch.notifyAssigned !== undefined) next.notifyAssigned = Boolean(patch.notifyAssigned);
     if (patch.notifyAdded !== undefined) next.notifyAdded = Boolean(patch.notifyAdded);
+    if (patch.monitor !== undefined) { if (!['instant', 'digest', 'off'].includes(patch.monitor)) throw new HttpError(400, 'Monitor alerts must be instant, digest or off.'); next.monitor = patch.monitor; }
     if (patch.digestHour !== undefined) { const h = Number(patch.digestHour); if (!Number.isInteger(h) || h < 0 || h > 23) throw new HttpError(400, 'Choose an hour from 0 to 23.'); next.digestHour = h; }
     if (patch.tz !== undefined) { try { new Intl.DateTimeFormat('en', { timeZone: String(patch.tz) }); next.tz = String(patch.tz).slice(0, 64); } catch (_) { throw new HttpError(400, 'Unknown time zone.'); } }
-    this.q.putPrefs.run(uid, next.digest, next.notifyAssigned ? 1 : 0, next.notifyAdded ? 1 : 0, next.tz || null, next.digestHour);
+    this.q.putPrefs.run(uid, next.digest, next.notifyAssigned ? 1 : 0, next.notifyAdded ? 1 : 0, next.tz || null, next.digestHour, next.monitor);
     return next;
   }
   enqueueEmail(m) {

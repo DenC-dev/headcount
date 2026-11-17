@@ -11,6 +11,10 @@ import { makeMailer } from './mail.js';
 import { makeNotifier } from './notify.js';
 import { makeAuthenticator } from './auth.js';
 import { lookupBill, STATES } from './bills.js';
+import { makeMonitor } from './monitor.js';
+import { makeActionCenter } from './act.js';
+import { makeCrm } from './crm.js';
+import * as sources from './sources.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.resolve(here, '..', 'public');
@@ -126,6 +130,7 @@ function serveStatic(req, res, pathname) {
     return sitePage(res, SITE_PAGES[rel], siteVars());
   }
   if (rel === '/app' || rel.startsWith('/join/') || rel.startsWith('/invite/')) return sendFile(res, path.join(PUBLIC, 'index.html'), '.html');
+  if (/^\/act\/[A-Za-z0-9_-]{6,20}$/.test(rel)) return sendFile(res, path.join(PUBLIC, 'act.html'), '.html');
   const root = rel.startsWith('/site/') ? SITE : PUBLIC;
   if (root === SITE) rel = rel.slice(5);
   const file = path.normalize(path.join(root, rel));
@@ -139,7 +144,7 @@ function unsubscribePage(res, ok, message) {
 }
 
 // ---------- app ----------
-export function createServer({ store = openDb(path.join(config.dataDir, 'headcount.db'), config), draft = null, resolveTxt = null } = {}) {
+export function createServer({ store = openDb(path.join(config.dataDir, 'headcount.db'), config), draft = null, score = undefined, resolveTxt = null } = {}) {
   // In local test mode, domains ending in .test (reserved, never real) verify without DNS.
   resolveTxt ||= async (d) => {
     if (config.authMode === 'dev' && d.endsWith('.test')) { const o = store.db.prepare('SELECT domain_token FROM orgs WHERE domain = ? ORDER BY created_at DESC').get(d); return o ? [[`headcount-verification=${o.domain_token}`]] : []; }
@@ -148,12 +153,15 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   const authenticate = makeAuthenticator(config);
   const draftBrief = draft || (config.aiEnabled ? (input) => import('./ai.js').then((m) => m.draftBrief(input)) : null);
   const billing = config.billing ? makeBilling(config, store) : null;
-  const mail = makeMailer(config, store), notifier = makeNotifier(config, store, mail);
-  store.notify = notifier.handle;
-  const jobs = { mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now) };
+  const scoreItems = score !== undefined ? score : config.aiEnabled ? (input) => import('./ai.js').then((m) => m.scoreItems(input)) : null;
+  const monitor = makeMonitor(config, store, { score: scoreItems }), crm = makeCrm(config, store);
+  const mail = makeMailer(config, store), notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
+  store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
+  const jobs = { mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now) };
   const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
+  if (!config.monitorOff) timers.push(setInterval(() => jobs.monitor(Date.now()).catch((e) => console.error('Monitor job failed', e)), Math.min(config.monitorEvery, 15 * 60 * 1000)));
   timers.forEach((t) => t.unref());
-  const UNSUB = { digest: ['digest', 'off', 'You will not get digests from Headcount anymore.'], assigned: ['notifyAssigned', false, 'You will not get emails when someone assigns you a follow-up.'], added: ['notifyAdded', false, 'You will not get emails when someone adds you to a campaign.'] };
+  const UNSUB = { monitor: ['monitor', 'off', 'You will not get Monitor alerts by email anymore. New items still appear in the Monitor.'], digest: ['digest', 'off', 'You will not get digests from Headcount anymore.'], assigned: ['notifyAssigned', false, 'You will not get emails when someone assigns you a follow-up.'], added: ['notifyAdded', false, 'You will not get emails when someone adds you to a campaign.'] };
 
   const publicConfig = {
     auth: config.authMode,
@@ -165,6 +173,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     supportEmail: config.supportEmail,
     email: mail.enabled,
     sso: config.authMode !== 'none',
+    monitor: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey), regs: true, contracts: Boolean(config.samKey), ai: Boolean(scoreItems) },
+    rosters: Boolean(config.openStatesKey),
     billing: config.billing ? { trialDays: config.trialDays, team: { price: config.priceLabelTeam }, firm: config.stripePriceFirm ? { price: config.priceLabelFirm } : null, salesEmail: config.salesEmail } : null,
   };
   const needBilling = () => { if (!billing) throw new HttpError(501, 'Billing is not set up on this server.'); return billing; };
@@ -198,7 +208,28 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['DELETE', `/api/workspaces/${W}/clients/${C}`, (m, x) => store.deleteClient(m[1], x.user.id, m[2])],
     ['GET', `/api/workspaces/${W}/audit`, (m, x) => ({ entries: store.auditLog(m[1], x.user.id, Number(x.url.searchParams.get('before')) || 0, Number(x.url.searchParams.get('limit')) || 50) })],
     ['GET', `/api/workspaces/${W}/activity`, (m, x) => store.activity(m[1], x.user.id, x.url.searchParams.get('from') || '', x.url.searchParams.get('to') || '', x.url.searchParams.get('client') || '')],
-    ['GET', `/api/workspaces/${W}/export`, (m, x) => store.exportOrg(m[1], x.user.id)],
+    ['GET', `/api/workspaces/${W}/export`, (m, x) => { const d = store.exportOrg(m[1], x.user.id); return { ...d, ...crm.exportOrg(m[1]), watches: monitor.list(m[1], x.user.id).watches, actionResponses: actions.exportOrg(m[1]) }; }],
+    // Monitor
+    ['GET', `/api/workspaces/${W}/watches`, (m, x) => monitor.list(m[1], x.user.id)],
+    ['POST', `/api/workspaces/${W}/watches`, async (m, x) => { limit('watch:' + x.user.id, 10); return monitor.create(m[1], x.user.id, await x.body()); }],
+    ['PATCH', `/api/workspaces/${W}/watches/${C}`, async (m, x) => monitor.update(m[1], x.user.id, m[2], await x.body())],
+    ['DELETE', `/api/workspaces/${W}/watches/${C}`, (m, x) => monitor.remove(m[1], x.user.id, m[2])],
+    ['POST', `/api/workspaces/${W}/watches/${C}/run`, (m, x) => { limit('run:' + x.user.id, 6); return monitor.runNow(m[1], x.user.id, m[2]); }],
+    ['GET', `/api/workspaces/${W}/items`, (m, x) => monitor.items(m[1], x.user.id, Object.fromEntries(x.url.searchParams))],
+    ['PATCH', `/api/workspaces/${W}/items/(\\d{1,12})`, async (m, x) => monitor.setItem(m[1], x.user.id, m[2], await x.body())],
+    // Stakeholders
+    ['GET', `/api/workspaces/${W}/contacts`, (m, x) => crm.list(m[1], x.user.id)],
+    ['POST', `/api/workspaces/${W}/contacts`, async (m, x) => crm.create(m[1], x.user.id, await x.body())],
+    ['POST', `/api/workspaces/${W}/contacts/import`, async (m, x) => { limit('import:' + x.user.id, 5); return crm.importRows(m[1], x.user.id, (await x.body(5_000_000)).rows); }],
+    ['PATCH', `/api/workspaces/${W}/contacts/${C}`, async (m, x) => crm.update(m[1], x.user.id, m[2], await x.body())],
+    ['DELETE', `/api/workspaces/${W}/contacts/${C}`, (m, x) => crm.remove(m[1], x.user.id, m[2])],
+    ['GET', `/api/workspaces/${W}/contacts/${C}/interactions`, (m, x) => crm.timeline(m[1], x.user.id, m[2])],
+    ['POST', `/api/workspaces/${W}/interactions`, async (m, x) => crm.log(m[1], x.user.id, await x.body(500_000))],
+    ['DELETE', `/api/workspaces/${W}/interactions/${C}`, (m, x) => crm.unlog(m[1], x.user.id, m[2])],
+    // Intelligence and rosters from public data
+    ['GET', '/api/intel/lobbying', (m, x) => { limit('intel:' + x.user.id, 10); return sources.lobbyingOn(config, { number: x.url.searchParams.get('number'), title: x.url.searchParams.get('title') }); }],
+    ['GET', '/api/intel/incumbents', (m, x) => { limit('intel:' + x.user.id, 10); return sources.incumbents(config, { agency: String(x.url.searchParams.get('agency') || '').slice(0, 120), naics: String(x.url.searchParams.get('naics') || '').replace(/\D/g, '').slice(0, 6) }); }],
+    ['GET', '/api/rosters/state', (m, x) => { limit('roster:' + x.user.id, 6); return sources.stateRoster(config, x.url.searchParams.get('state'), x.url.searchParams.get('chamber')); }],
     ['POST', `/api/workspaces/${W}/domain`, async (m, x) => store.setDomain(m[1], x.user.id, (await x.body()).domain)],
     ['POST', `/api/workspaces/${W}/domain/verify`, (m, x) => store.verifyDomain(m[1], x.user.id, resolveTxt)],
     ['PATCH', `/api/workspaces/${W}/domain`, async (m, x) => store.setDomainJoin(m[1], x.user.id, Boolean((await x.body()).join))],
@@ -218,6 +249,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['POST', `/api/campaigns/${C}/people`, async (m, x) => { const b = await x.body(); return store.addPerson(m[1], x.user.id, String(b.userId || ''), b.role); }],
     ['PATCH', `/api/campaigns/${C}/people/${U}`, async (m, x) => store.setRole(m[1], x.user.id, m[2], (await x.body()).role)],
     ['DELETE', `/api/campaigns/${C}/people/${U}`, (m, x) => store.removePerson(m[1], x.user.id, m[2])],
+    ['GET', `/api/campaigns/${C}/action`, (m, x) => actions.get(m[1], x.user.id)],
+    ['PUT', `/api/campaigns/${C}/action`, async (m, x) => actions.save(m[1], x.user.id, await x.body(200_000))],
+    ['GET', `/api/campaigns/${C}/action/responses`, (m, x) => actions.responses(m[1], x.user.id)],
     ['POST', `/api/campaigns/${C}/invites`, async (m, x) => store.createInvite(m[1], x.user.id, (await x.body()).role)],
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
@@ -235,7 +269,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   const forJsonInfo = (info) => ({ ...info, plan: forJson(info.plan) });
 
   async function route(req, res, url) {
-    const p = url.pathname, m = req.method;
+    const p = url.pathname, m = req.method; let pm;
     if (p === '/api/config' && m === 'GET') return send(res, 200, publicConfig);
     if (p === '/api/health' && m === 'GET') return send(res, 200, { ok: true });
     if (p === '/api/unsubscribe' && (m === 'GET' || m === 'POST')) {
@@ -254,10 +288,19 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
       store.addLead(lead); notifier.contact(lead);
       return send(res, 200, { ok: true });
     }
+    if ((pm = /^\/api\/act\/([A-Za-z0-9_-]{6,20})(\/lookup|\/send)?$/.exec(p))) {
+      if (m === 'GET' && !pm[2]) { limit('preview:' + clientIp(req), 60); return send(res, 200, actions.publicView(pm[1])); }
+      if (m === 'POST' && pm[2] === '/lookup') { limit('act:' + clientIp(req), 20); return send(res, 200, await actions.lookup(pm[1], (await readJson(req, 10_000)).address)); }
+      if (m === 'POST' && pm[2] === '/send') {
+        limit('actsend:' + clientIp(req), 4);
+        const b = await readJson(req, 50_000);
+        if (b.website) return send(res, 200, { emailed: [], call: [], forms: [] }); // filled in only by bots
+        return send(res, 200, await actions.send(pm[1], b));
+      }
+    }
     if (p === '/api/sso/lookup' && m === 'GET') { limit('preview:' + clientIp(req), 30); return send(res, 200, store.ssoLookup(url.searchParams.get('email'))); }
     if (p === '/api/dev/outbox' && m === 'GET' && config.authMode === 'dev') return send(res, 200, { emails: mail.outbox(100) });
     if (p === '/api/stripe/webhook' && m === 'POST') { limit('hook:' + clientIp(req), 120); return send(res, 200, await needBilling().webhook(await readRaw(req), req.headers['stripe-signature'])); }
-    let pm;
     if ((pm = /^\/api\/invites\/([A-Za-z0-9_-]{8,64})$/.exec(p)) && m === 'GET') { limit('preview:' + clientIp(req), 30); const v = store.previewInvite(pm[1]); return send(res, 200, { campaign: v.campaign, workspace: v.workspace, role: v.role, invitedBy: v.invitedBy }); }
     if ((pm = /^\/api\/workspace-invites\/([A-Za-z0-9_-]{8,64})$/.exec(p)) && m === 'GET') { limit('preview:' + clientIp(req), 30); const v = store.previewOrgInvite(pm[1]); return send(res, 200, { workspace: v.workspace, role: v.role, invitedBy: v.invitedBy, email: v.email }); }
 
@@ -286,7 +329,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     } else if (req.method === 'GET' || req.method === 'HEAD') serveStatic(req, res, url.pathname);
     else send(res, 405, { error: 'Method not allowed.' });
   });
-  server.jobs = jobs; server.mail = mail; server.notifier = notifier;
+  server.jobs = jobs; server.mail = mail; server.notifier = notifier; server.monitor = monitor;
   server.on('close', () => timers.forEach(clearInterval));
   return server;
 }

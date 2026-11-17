@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Stand-ins for Google's signing keys, Congress.gov, Open States, Stripe and the Claude API.
-const mocks = { claude: [], claudeReply: null, stripe: [], sub: null };
+const mocks = { claude: [], claudeReply: null, stripe: [], sub: null, fedStatus: 'Referred to the Subcommittee on Communications.', scored: [], geo: [] };
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
 const fixtures = {
@@ -34,6 +34,31 @@ const mock = http.createServer((req, res) => {
       return j(404, { error: { message: 'no' } });
     }
     if (u.pathname.startsWith('/v3/') && req.headers['x-api-key'] !== 'cg-key') return j(403, {});
+    // Monitor, intelligence and action center sources
+    if (u.pathname === '/v3/bill') return j(200, { bills: [
+      { congress: 119, type: 'HR', number: '1234', title: 'Rural Broadband Access Act', latestAction: { actionDate: '2026-11-16', text: mocks.fedStatus }, updateDate: '2026-11-16T10:00:00Z' },
+      { congress: 119, type: 'S', number: '99', title: 'Highway Funding Act', latestAction: { actionDate: '2026-11-15', text: 'Introduced.' }, updateDate: '2026-11-15T10:00:00Z' },
+    ] });
+    if (u.pathname === '/bills' && u.searchParams.get('q') && req.headers['x-api-key'] === 'os-key') return j(200, { results: [{ id: 'ocd-bill/fl77', identifier: 'HB 77', title: 'Broadband Infrastructure Grants', session: '2026', jurisdiction: { id: 'ocd-jurisdiction/country:us/state:fl/government', name: 'Florida' }, latest_action_description: 'Filed', latest_action_date: '2026-11-10', updated_at: '2026-11-10T00:00:00', openstates_url: 'https://openstates.org/fl/bills/2026/HB77/' }] });
+    if (u.pathname === '/people' && req.headers['x-api-key'] === 'os-key') return j(200, { pagination: { max_page: 1 }, results: [
+      { id: 'ocd-person/aaaa-1111', name: 'Corey Simon', party: 'Republican', current_role: { district: '3', org_classification: 'upper' }, email: 'simon.corey@flsenate.gov', openstates_url: 'https://openstates.org/person/corey-simon/', offices: [{ classification: 'capitol', address: '404 S. Monroe St., Tallahassee, FL 32399', voice: '850-487-5003' }, { classification: 'district', address: '1 Main St, Tallahassee, FL', voice: '850-555-0100' }] },
+      { id: 'ocd-person/bbbb-2222', name: 'Ana Ruiz', party: 'Democratic', current_role: { district: '12', org_classification: 'upper' }, email: '', offices: [] },
+    ] });
+    if (u.pathname === '/fr/documents.json') return j(200, { results: [{ document_number: '2026-12345', title: 'Broadband Equity Program Requirements', type: 'PRORULE', abstract: 'Proposes requirements for broadband grant recipients.', html_url: 'https://www.federalregister.gov/d/2026-12345', publication_date: '2026-11-12', agencies: [{ name: 'National Telecommunications and Information Administration' }], comments_close_on: '2027-01-12', docket_ids: ['NTIA-2026-0001'] }] });
+    if (u.pathname === '/sam/opportunities/v2/search') {
+      if (u.searchParams.get('api_key') !== 'sam-key') return j(403, {});
+      return j(200, { opportunitiesData: [{ noticeId: 'abc123', title: 'Rural Broadband Network Services', solicitationNumber: 'RUS-26-001', fullParentPathName: 'AGRICULTURE, DEPARTMENT OF.RURAL UTILITIES SERVICE', type: 'Solicitation', postedDate: '2026-11-14', responseDeadLine: '2026-12-15T17:00:00-05:00', naicsCode: '517111', typeOfSetAsideDescription: 'Total Small Business', uiLink: 'https://sam.gov/opp/abc123/view', active: 'Yes' }] });
+    }
+    if (u.pathname === '/lda/filings/') return j(200, { results: [
+      { filing_uuid: 'f1', filing_year: 2026, filing_period_display: '3rd Quarter (Jul 1 - Sep 30)', income: '50000.00', registrant: { name: 'Akin Strategies' }, client: { name: 'Rural Telecom Coalition' }, lobbying_activities: [{ description: 'H.R.1234, Rural Broadband Access Act', government_entities: [{ name: 'HOUSE OF REPRESENTATIVES' }] }], filing_document_url: 'https://lda.gov/filings/f1/', dt_posted: '2026-10-20T10:00:00' },
+      { filing_uuid: 'f2', filing_year: 2026, filing_period_display: '3rd Quarter', income: '10000.00', registrant: { name: 'Other LLC' }, client: { name: 'Unrelated Co' }, lobbying_activities: [{ description: 'H.R. 12345, something else' }], dt_posted: '2026-10-21T10:00:00' },
+    ] });
+    if (u.pathname === '/usa/search/spending_by_category/recipient/') return j(200, { results: [{ name: 'ACME NETWORKS', amount: 3000000 }, { name: 'BETA FIBER', amount: 1000000 }] });
+    if (u.pathname === '/geo/geographies/onelineaddress') {
+      mocks.geo.push(u.searchParams.get('address'));
+      if (/nowhere/i.test(u.searchParams.get('address'))) return j(200, { result: { addressMatches: [] } });
+      return j(200, { result: { addressMatches: [{ matchedAddress: '100 MAIN ST, TALLAHASSEE, FL, 32301', geographies: { States: [{ STUSAB: 'FL', STATE: '12' }], '119th Congressional Districts': [{ CD119: '02', BASENAME: '2', STATE: '12' }], '2024 State Legislative Districts - Upper': [{ SLDU: '003', BASENAME: '3', STATE: '12' }], '2024 State Legislative Districts - Lower': [{ SLDL: '008', BASENAME: '8', STATE: '12' }] } }] } });
+    }
     if (u.pathname === '/bills') {
       if (req.headers['x-api-key'] !== 'os-key') return j(401, {});
       const hit = u.searchParams.get('identifier') === 'HB 123' && u.searchParams.get('jurisdiction') === 'ocd-jurisdiction/country:us/state:fl/government';
@@ -51,11 +76,13 @@ before(async () => {
   Object.assign(process.env, {
     AUTH_MODE: 'dev', CONGRESS_API_KEY: 'cg-key', CONGRESS_API_BASE: `${m}/v3`, OPENSTATES_API_KEY: 'os-key', OPENSTATES_API_BASE: m, FIREBASE_JWKS_URL: `${m}/jwks`,
     ANTHROPIC_API_KEY: 'test-key', ANTHROPIC_BASE_URL: m,
+    FEDREG_API_BASE: `${m}/fr`, SAM_API_KEY: 'sam-key', SAM_API_BASE: `${m}/sam`, LDA_API_BASE: `${m}/lda`, USASPENDING_API_BASE: `${m}/usa`, GEOCODER_BASE: `${m}/geo`, MONITOR: 'off',
     STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: 'whsec_1', STRIPE_PRICE_TEAM: 'price_team', STRIPE_API_BASE: m, PUBLIC_URL: 'https://app.example.org', TRIAL_SEATS: '3', SALES_EMAIL: 'sales@headcount.test',
   });
   mods = { db: await import('../server/db.js'), auth: await import('../server/auth.js'), bills: await import('../server/bills.js'), ai: await import('../server/ai.js'), index: await import('../server/index.js'), config: (await import('../server/config.js')).config };
   store = mods.db.openDb(':memory:', mods.config);
-  server = mods.index.createServer({ store, draft: (x) => mods.ai.draftBrief(x), resolveTxt: async (d) => { if (!txt.has(d)) throw new Error('ENOTFOUND'); return txt.get(d); } });
+  const score = async ({ items }) => { mocks.scored.push(...items); return items.map((i) => ({ id: i.id, score: /broadband/i.test(i.title) ? 92 : 15, reason: /broadband/i.test(i.title) ? 'Directly about rural broadband.' : 'Not about broadband.' })); };
+  server = mods.index.createServer({ store, draft: (x) => mods.ai.draftBrief(x), score, resolveTxt: async (d) => { if (!txt.has(d)) throw new Error('ENOTFOUND'); return txt.get(d); } });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -437,4 +464,117 @@ test('the website and the app have their own addresses', async () => {
   assert.match(await (await fetch(base + '/app')).text(), /<script src="\/app\.js" defer>/);
   for (const pth of ['/site/_header.html', '/site/_hemicycle.svg']) assert.equal((await fetch(base + pth)).status, 403, pth);
   assert.match(await (await fetch(base + '/security')).text(), /mailto:sales@headcount\.test/);
+});
+
+// ---------- Monitor, intelligence, rosters, action center, stakeholders ----------
+const emailsTo = (to, kind) => store.db.prepare('SELECT * FROM email_queue WHERE to_addr = ?' + (kind ? ' AND kind = ?' : '') + ' ORDER BY id').all(...(kind ? [to, kind] : [to]));
+let MW, MC;
+test('the Monitor finds bills in Congress and the states, rules and contract notices, scores them and alerts', async () => {
+  MW = ok(await api('mona', 'POST', '/api/workspaces', { name: 'Mona Group' })).id;
+  ok(await api('mona', 'PATCH', '/api/me/prefs', { monitor: 'instant' }));
+  const bills = ok(await api('mona', 'POST', `/api/workspaces/${MW}/watches`, { kind: 'bill', query: 'broadband, digital equity', states: ['US', 'FL'], priorities: 'Grants for rural broadband co-ops' }));
+  assert.equal(bills.name, 'broadband'); assert.equal(bills.total, 2, 'H.R. 1234 from Congress (S. 99 does not match) and HB 77 from Florida'); assert.equal(bills.fresh, 2);
+  const inbox = ok(await api('mona', 'GET', `/api/workspaces/${MW}/items?view=new`)).items;
+  const hr = inbox.find((i) => i.number === 'H.R. 1234');
+  assert.equal(hr.url, 'https://www.congress.gov/bill/119th-congress/house-bill/1234'); assert.equal(hr.juris, 'US'); assert.equal(hr.score, 92); assert.match(hr.reason, /rural broadband/);
+  assert.equal(inbox.find((i) => i.number === 'HB 77').juris, 'FL');
+  const alert = emailsTo('mona@example.org', 'monitor');
+  assert.equal(alert.length, 1); assert.match(alert[0].subject, /Mona Group Monitor: 2 new items/); assert.match(alert[0].text_body, /H\.R\. 1234: Rural Broadband Access Act \(Congress\)\. Directly about rural broadband\./); assert.ok(alert[0].unsubscribe);
+
+  const regs = ok(await api('mona', 'POST', `/api/workspaces/${MW}/watches`, { kind: 'reg', query: 'broadband equity' }));
+  const rule = ok(await api('mona', 'GET', `/api/workspaces/${MW}/items?view=new&watch=${regs.id}`)).items[0];
+  assert.equal(rule.number, 'NTIA-2026-0001'); assert.equal(rule.deadline, '2027-01-12'); assert.equal(rule.docType, 'Proposed rule'); assert.match(rule.agency, /Telecommunications/);
+  const gov = ok(await api('mona', 'POST', `/api/workspaces/${MW}/watches`, { kind: 'contract', query: 'broadband', naics: '517111' }));
+  const opp = ok(await api('mona', 'GET', `/api/workspaces/${MW}/items?kind=contract`)).items[0];
+  assert.equal(gov.total, 1); assert.equal(opp.agency, 'Agriculture, Department of: Rural Utilities Service'); assert.equal(opp.deadline, '2026-12-15'); assert.equal(opp.extra.naics, '517111');
+
+  // Tracking a bill alerts when it moves
+  ok(await api('mona', 'PATCH', `/api/workspaces/${MW}/items/${hr.id}`, { state: 'tracked' }));
+  mocks.fedStatus = 'Passed House.';
+  const again = ok(await api('mona', 'POST', `/api/workspaces/${MW}/watches/${bills.id}/run`));
+  assert.equal(again.added, 0); assert.equal(again.changed, 1);
+  const tracked = ok(await api('mona', 'GET', `/api/workspaces/${MW}/items?view=tracked`)).items;
+  assert.equal(tracked[0].status, 'Passed House.'); assert.equal(tracked[0].prevStatus, 'Referred to the Subcommittee on Communications.');
+  assert.match(emailsTo('mona@example.org', 'monitor').at(-1).text_body, /H\.R\. 1234: Rural Broadband Access Act: now "Passed House\."/);
+  // Dismissed items leave the inbox
+  const hb = inbox.find((i) => i.number === 'HB 77');
+  ok(await api('mona', 'PATCH', `/api/workspaces/${MW}/items/${hb.id}`, { state: 'dismissed' }));
+  assert.ok(!ok(await api('mona', 'GET', `/api/workspaces/${MW}/items?view=new`)).items.some((i) => i.id === hb.id));
+  // The digest has a Monitor section
+  const d = server.notifier.digestFor({ id: 'dev:mona', email: 'mona@example.org', tz: 'UTC', monitor: 'digest' }, '2000-01-01', new Date().toISOString().slice(0, 10), 'daily');
+  assert.match(d.text, /Monitor: Mona Group/); assert.match(d.subject, /new Monitor item/);
+  // Guests do not see the Monitor; watches are limited by plan; other workspaces cannot reach items
+  const inv = ok(await api('mona', 'POST', `/api/workspaces/${MW}/invites`, { role: 'guest' }));
+  ok(await api('gus', 'POST', `/api/workspace-invites/${inv.code}`));
+  assert.equal((await api('gus', 'GET', `/api/workspaces/${MW}/watches`)).status, 403);
+  assert.equal((await api('alice', 'PATCH', `/api/workspaces/${MW}/items/${hr.id}`, { state: 'new' })).status, 404);
+  assert.equal((await api('mona', 'POST', `/api/workspaces/${MW}/watches`, { kind: 'bill', query: '', states: ['US'] })).status, 400);
+});
+
+test('who is lobbying on a bill, and who wins contracts like this one', async () => {
+  const l = ok(await api('mona', 'GET', `/api/intel/lobbying?number=${encodeURIComponent('H.R. 1234')}`));
+  assert.equal(l.filings.length, 1, 'H.R. 12345 is not H.R. 1234'); assert.equal(l.clients[0].client, 'Rural Telecom Coalition'); assert.equal(l.clients[0].amount, 50000); assert.deepEqual(l.clients[0].registrants, ['Akin Strategies']);
+  assert.ok(mods.config && mods.index);
+  const re = (await import('../server/sources.js')).billPattern('S. 56');
+  assert.ok(re.test('S.56 and more')); assert.ok(re.test('S 56')); assert.ok(!re.test('S. 560'));
+  const inc = ok(await api('mona', 'GET', '/api/intel/incumbents?agency=Department%20of%20Agriculture&naics=517111'));
+  assert.equal(inc.recipients[0].name, 'ACME NETWORKS'); assert.equal(inc.recipients[0].share, 0.75);
+});
+
+test('rosters for any state chamber load from Open States with offices', async () => {
+  const r = ok(await api('mona', 'GET', '/api/rosters/state?state=FL&chamber=upper'));
+  assert.equal(r.label, 'Florida Senate'); assert.deepEqual(r.juris, { level: 'state', state: 'FL', chamber: 'upper' });
+  assert.deepEqual(r.members[0], { k: 'aaaa-1111', n: 'Corey Simon', p: 'R', d: '3', ph: '850-487-5003', of: '404 S. Monroe St., Tallahassee, FL 32399', em: 'simon.corey@flsenate.gov', dph: '850-555-0100', dof: '1 Main St, Tallahassee, FL', url: 'https://openstates.org/person/corey-simon/' });
+  assert.equal(r.members[1].p, 'D');
+  assert.equal((await api('mona', 'GET', '/api/rosters/state?state=ZZ&chamber=upper')).status, 400);
+});
+
+test('action center: supporters find their own legislators by address and their letters reach the office', async () => {
+  MC = 'campact1'; ok(await api('mona', 'POST', '/api/campaigns', { id: MC, workspaceId: MW, name: 'SB 214' }));
+  const targets = [{ id: 'm1', name: 'Corey Simon', district: '3', email: 'simon.corey@flsenate.gov', phone: '850-487-5003' }, { id: 'm2', name: 'Ana Ruiz', district: '12', email: 'ruiz@flsenate.gov' }];
+  const saved = ok(await api('mona', 'PUT', `/api/campaigns/${MC}/action`, { title: 'Back rural broadband', intro: 'SB 214 brings internet to rural Florida.', subject: 'Please support SB 214', letter: 'As your constituent, I ask you to vote yes on SB 214.', juris: { level: 'state', state: 'FL', chamber: 'upper' }, targets }));
+  const id = saved.action.id; assert.equal(saved.action.url, `https://app.example.org/act/${id}`);
+  const pub = await (await fetch(`${base}/api/act/${id}`)).json();
+  assert.equal(pub.title, 'Back rural broadband'); assert.equal(pub.org, 'Mona Group');
+  const page = await fetch(`${base}/act/${id}`); assert.equal(page.status, 200); assert.match(await page.text(), /Find my legislators/);
+  const post = (p, b) => fetch(`${base}/api/act/${id}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const look = await post('/lookup', { address: '100 Main St, Tallahassee FL 32301' });
+  assert.equal(look.status, 200); assert.deepEqual(look.body.members.map((x) => x.name), ['Corey Simon']);
+  assert.equal((await post('/lookup', { address: '1 Nowhere Rd, Nowhere' })).status, 404);
+  const sent = await post('/send', { name: 'Pat Voter', email: 'pat@example.net', address: '100 Main St, Tallahassee FL 32301', message: 'As your constituent, I ask you to vote yes on SB 214. It matters to my farm.', optin: true });
+  assert.equal(sent.status, 200); assert.deepEqual(sent.body.emailed, ['Corey Simon']); assert.deepEqual(sent.body.call, [{ name: 'Corey Simon', phone: '850-487-5003' }]);
+  const letter = emailsTo('simon.corey@flsenate.gov', 'constituent');
+  assert.equal(letter.length, 1); assert.equal(letter[0].reply_to, 'pat@example.net'); assert.equal(letter[0].subject, 'Please support SB 214');
+  assert.match(letter[0].text_body, /^Dear Senator Simon,\n\nAs your constituent/); assert.match(letter[0].text_body, /Pat Voter\n100 MAIN ST, TALLAHASSEE, FL, 32301/);
+  assert.equal(emailsTo('ruiz@flsenate.gov').length, 0, 'other districts get nothing');
+  assert.equal((await post('/send', { name: 'Pat Voter', email: 'PAT@example.net', address: '100 Main St, Tallahassee FL 32301' })).status, 409, 'once a day per person');
+  const stats = ok(await api('mona', 'GET', `/api/campaigns/${MC}/action`));
+  assert.equal(stats.stats.responses, 1); assert.equal(stats.stats.byMember.m1, 1);
+  const resp = ok(await api('mona', 'GET', `/api/campaigns/${MC}/action/responses`)).responses;
+  assert.equal(resp[0].email, 'pat@example.net'); assert.deepEqual(resp[0].members, ['Corey Simon']); assert.equal(resp[0].edited, true);
+  // U.S. House targets match by congressional district
+  ok(await api('mona', 'PUT', `/api/campaigns/${MC}/action`, { title: 'Back H.R. 1234', letter: 'Please cosponsor.', juris: { level: 'us', chamber: 'lower' }, targets: [{ id: 'h1', name: 'Rep One', district: 'FL-1' }, { id: 'h2', name: 'Rep Two', district: 'FL-2', phone: '202-225-5235' }] }));
+  assert.deepEqual((await post('/lookup', { address: '100 Main St, Tallahassee FL 32301' })).body.members.map((x) => x.name), ['Rep Two']);
+  // Turned off, the page is gone; guests and other workspaces cannot change it
+  assert.equal((await api('gus', 'PUT', `/api/campaigns/${MC}/action`, { letter: 'x', targets })).status, 404);
+  ok(await api('mona', 'PUT', `/api/campaigns/${MC}/action`, { title: 'Off', letter: 'x', targets, active: false }));
+  assert.equal((await fetch(`${base}/api/act/${id}`)).status, 404);
+});
+
+test('stakeholder contacts: add, import, log interactions in bulk, export', async () => {
+  const dana = ok(await api('mona', 'POST', `/api/workspaces/${MW}/contacts`, { name: 'Dana Lee', title: 'Policy Advisor', organization: 'NTIA', email: 'dana@ntia.example', tags: 'Agency, broadband' }));
+  assert.deepEqual(dana.tags, ['agency', 'broadband']); assert.equal(dana.ownerId, 'dev:mona');
+  const imp = ok(await api('mona', 'POST', `/api/workspaces/${MW}/contacts/import`, { rows: [{ name: 'Dana Lee', email: 'DANA@ntia.example', tags: 'priority' }, { name: 'Sam Roe', organization: 'Gulf Co-op', email: 'sam@coop.example' }, { name: '', email: 'bad' }] }));
+  assert.deepEqual([imp.added, imp.updated, imp.skipped.length], [1, 1, 1]);
+  const all = ok(await api('mona', 'GET', `/api/workspaces/${MW}/contacts`)).contacts;
+  assert.deepEqual(all.map((c) => c.name), ['Dana Lee', 'Sam Roe']); assert.deepEqual(all[0].tags, ['agency', 'broadband', 'priority']);
+  const logged = ok(await api('mona', 'POST', `/api/workspaces/${MW}/interactions`, { contactIds: all.map((c) => c.id), type: 'Email', note: 'Coalition letter on SB 214', campaignId: MC, day: '2026-11-16' }));
+  assert.equal(logged.logged, 2);
+  const tl = ok(await api('mona', 'GET', `/api/workspaces/${MW}/contacts/${dana.id}/interactions`)).interactions;
+  assert.equal(tl[0].note, 'Coalition letter on SB 214'); assert.equal(tl[0].by, 'Mona'); assert.equal(tl[0].campaignId, MC);
+  assert.equal(ok(await api('mona', 'GET', `/api/workspaces/${MW}/contacts`)).contacts[0].lastTouch, '2026-11-16');
+  assert.equal((await api('gus', 'GET', `/api/workspaces/${MW}/contacts`)).status, 403);
+  assert.equal((await api('mona', 'POST', `/api/workspaces/${MW}/contacts`, { name: 'X', email: 'nope' })).status, 400);
+  const ex = ok(await api('mona', 'GET', `/api/workspaces/${MW}/export`));
+  assert.equal(ex.contacts.length, 2); assert.equal(ex.interactions.length, 2); assert.equal(ex.watches.length, 3); assert.equal(ex.actionResponses[0].name, 'Pat Voter');
 });
