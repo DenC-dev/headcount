@@ -52,7 +52,7 @@ export function verifyDevToken(token) {
   let p;
   try { p = b64json(m[1]); } catch (_) { throw new HttpError(401, 'Not signed in.'); }
   if (typeof p.id !== 'string' || !/^[a-z0-9_-]{1,40}$/i.test(p.id)) throw new HttpError(401, 'Not signed in.');
-  return { id: 'dev:' + p.id, email: String(p.email || '').slice(0, 120).toLowerCase(), emailVerified: p.emailVerified !== false, name: String(p.name || p.id).slice(0, 80), provider: p.provider === 'microsoft' ? 'microsoft' : 'google' };
+  return { id: 'dev:' + p.id, email: String(p.email || '').slice(0, 120).toLowerCase(), emailVerified: p.emailVerified !== false, name: String(p.name || p.id).slice(0, 80), provider: /^(saml|oidc)\.[A-Za-z0-9._-]{1,60}$/.test(p.provider || '') ? p.provider : p.provider === 'microsoft' ? 'microsoft' : 'google' };
 }
 
 export function makeAuthenticator(config) {

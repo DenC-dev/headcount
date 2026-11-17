@@ -6,7 +6,9 @@ import { config } from './config.js';
 import { promises as dns } from 'node:dns';
 import { openDb, HttpError } from './db.js';
 import { makeBilling } from './billing.js';
-import { forJson } from './plans.js';
+import { forJson, PLANS } from './plans.js';
+import { makeMailer } from './mail.js';
+import { makeNotifier } from './notify.js';
 import { makeAuthenticator } from './auth.js';
 import { lookupBill, STATES } from './bills.js';
 
@@ -70,31 +72,88 @@ const SECURITY = {
   'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
 };
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
-function serveStatic(req, res, pathname) {
-  let rel = decodeURIComponent(pathname);
-  if (rel === '/' || rel.startsWith('/join/') || rel.startsWith('/invite/')) rel = '/index.html';
-  if (rel === '/privacy') rel = '/privacy.html';
-  const file = path.normalize(path.join(PUBLIC, rel));
-  if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, { error: 'Forbidden' });
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' };
+const SITE = path.resolve(here, '..', 'site');
+const SITE_PAGES = { '/': 'index.html', '/pricing': 'pricing.html', '/security': 'security.html', '/terms': 'terms.html', '/privacy': 'privacy.html' };
+const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function sendFile(res, file, ext) {
   fs.readFile(file, (err, buf) => {
     if (err) return send(res, 404, { error: 'Not found' });
-    const ext = path.extname(file);
-    res.writeHead(200, {
-      ...SECURITY,
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
-      ...(ext === '.html' ? { 'Content-Security-Policy': csp() } : {}),
-    });
+    res.writeHead(200, { ...SECURITY, 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300', ...(ext === '.html' ? { 'Content-Security-Policy': csp() } : {}) });
     res.end(buf);
   });
 }
+// Website pages are HTML with {{placeholders}} for shared parts and for the
+// plans and prices this server is configured with.
+function sitePage(res, name, vars) {
+  const read = (f) => fs.readFileSync(path.join(SITE, f), 'utf8');
+  let html;
+  try { html = read(name); } catch (_) { return send(res, 404, { error: 'Not found' }); }
+  const parts = { header: read('_header.html'), footer: read('_footer.html'), hemicycle: read('_hemicycle.svg') };
+  html = html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => parts[k]).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+  res.writeHead(200, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', 'Content-Security-Policy': csp() });
+  res.end(html);
+}
+function siteVars() {
+  const inf = (v) => (v === Number.POSITIVE_INFINITY ? 'Unlimited' : v);
+  const P = PLANS;
+  const rows = [
+    ['People', `Up to ${P.free.seats}`, 'As many seats as you need', 'As many seats as you need'],
+    ['Active campaigns', P.free.campaigns, inf(P.team.campaigns), inf(P.firm.campaigns)],
+    ['Guests (clients, partners)', P.free.guests, `${P.team.guestsPerSeat} per seat`, inf(P.firm.guests)],
+    ['Briefs drafted with Claude, per month', P.free.drafts, `${P.team.draftsPerSeat} per seat`, `${P.firm.draftsPerSeat} per seat`],
+    ['Vote counts, meeting requests, bill briefs', 'Yes', 'Yes', 'Yes'],
+    ['Portfolio and clients', 'Yes', 'Yes', 'Yes'],
+    ['Lobbying activity report', 'No', 'Yes', 'Yes'],
+    ['Activity log', 'No', 'Yes', 'Yes'],
+    ['Join by email domain', 'No', 'Yes', 'Yes'],
+    ['Single sign-on (SAML, OIDC)', 'No', 'No', 'Yes'],
+  ];
+  return {
+    year: String(new Date().getFullYear()),
+    trialDays: String(config.trialDays),
+    priceTeam: escHtml(config.priceLabelTeam || 'Per seat, billed monthly'),
+    priceFirm: escHtml(config.priceLabelFirm || 'Per seat, with single sign-on'),
+    salesEmail: config.salesEmail || config.supportEmail ? `<a href="mailto:${escHtml(config.salesEmail || config.supportEmail)}">${escHtml(config.salesEmail || config.supportEmail)}</a>` : 'us through the form on the <a href="/#demo">home page</a>',
+    planTable: `<table class="plans"><thead><tr><th></th><th>Free</th><th>Team</th><th>Firm</th></tr></thead><tbody>${rows.map((r) => `<tr><th scope="row">${escHtml(r[0])}</th>${r.slice(1).map((v) => `<td>${escHtml(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`,
+  };
+}
+function serveStatic(req, res, pathname) {
+  let rel = decodeURIComponent(pathname).replace(/\/+$/, '') || '/';
+  if (SITE_PAGES[rel]) {
+    if (config.siteOff && rel === '/') { res.writeHead(302, { Location: '/app' }); return res.end(); }
+    return sitePage(res, SITE_PAGES[rel], siteVars());
+  }
+  if (rel === '/app' || rel.startsWith('/join/') || rel.startsWith('/invite/')) return sendFile(res, path.join(PUBLIC, 'index.html'), '.html');
+  const root = rel.startsWith('/site/') ? SITE : PUBLIC;
+  if (root === SITE) rel = rel.slice(5);
+  const file = path.normalize(path.join(root, rel));
+  if (!file.startsWith(root + path.sep) || path.basename(file).startsWith('_')) return send(res, 403, { error: 'Forbidden' });
+  sendFile(res, file, path.extname(file));
+}
+function unsubscribePage(res, ok, message) {
+  res.writeHead(ok ? 200 : 400, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': csp() });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email settings · Headcount</title><link rel="stylesheet" href="/site/site.css"></head>
+<body><main class="narrow"><p class="eyebrow">Headcount</p><h1>${ok ? 'You are unsubscribed' : 'This link does not work'}</h1><p>${escHtml(message)}</p><p><a class="button" href="/app#email">Email settings</a></p></main></body></html>`);
+}
 
 // ---------- app ----------
-export function createServer({ store = openDb(path.join(config.dataDir, 'headcount.db'), config), draft = null, resolveTxt = dns.resolveTxt } = {}) {
+export function createServer({ store = openDb(path.join(config.dataDir, 'headcount.db'), config), draft = null, resolveTxt = null } = {}) {
+  // In local test mode, domains ending in .test (reserved, never real) verify without DNS.
+  resolveTxt ||= async (d) => {
+    if (config.authMode === 'dev' && d.endsWith('.test')) { const o = store.db.prepare('SELECT domain_token FROM orgs WHERE domain = ? ORDER BY created_at DESC').get(d); return o ? [[`headcount-verification=${o.domain_token}`]] : []; }
+    return dns.resolveTxt(d);
+  };
   const authenticate = makeAuthenticator(config);
   const draftBrief = draft || (config.aiEnabled ? (input) => import('./ai.js').then((m) => m.draftBrief(input)) : null);
   const billing = config.billing ? makeBilling(config, store) : null;
+  const mail = makeMailer(config, store), notifier = makeNotifier(config, store, mail);
+  store.notify = notifier.handle;
+  const jobs = { mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now) };
+  const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
+  timers.forEach((t) => t.unref());
+  const UNSUB = { digest: ['digest', 'off', 'You will not get digests from Headcount anymore.'], assigned: ['notifyAssigned', false, 'You will not get emails when someone assigns you a follow-up.'], added: ['notifyAdded', false, 'You will not get emails when someone adds you to a campaign.'] };
 
   const publicConfig = {
     auth: config.authMode,
@@ -104,6 +163,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     states: STATES,
     ai: Boolean(draftBrief),
     supportEmail: config.supportEmail,
+    email: mail.enabled,
+    sso: config.authMode !== 'none',
     billing: config.billing ? { trialDays: config.trialDays, team: { price: config.priceLabelTeam }, firm: config.stripePriceFirm ? { price: config.priceLabelFirm } : null, salesEmail: config.salesEmail } : null,
   };
   const needBilling = () => { if (!billing) throw new HttpError(501, 'Billing is not set up on this server.'); return billing; };
@@ -111,7 +172,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   // [method, path pattern, handler(match, ctx)]; ctx has user, url, req, body().
   const W = '([A-Za-z0-9_-]{4,40})', C = '([A-Za-z0-9_.:-]{1,64})', U = '([A-Za-z0-9_.:-]{1,140})', K = '([A-Za-z0-9_-]{8,64})';
   const routes = [
-    ['GET', '/api/me', (m, x) => ({ user: x.user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user) })],
+    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); return { user: x.user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id) }; }],
+    ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
+    ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
     ['DELETE', '/api/me', async (m, x) => { const r = store.deleteUser(x.user.id); if (billing) for (const sub of r.cancel) await billing.cancel(sub); return { transferred: r.transferred, deleted: r.deleted }; }],
     ['GET', '/api/workspaces', (m, x) => ({ workspaces: store.listOrgs(x.user.id) })],
     ['POST', '/api/workspaces', async (m, x) => store.createOrg(x.user.id, (await x.body()).name)],
@@ -123,7 +186,11 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['PATCH', `/api/workspaces/${W}/members/${U}`, async (m, x) => store.setOrgRole(m[1], x.user.id, m[2], (await x.body()).role)],
     ['DELETE', `/api/workspaces/${W}/members/${U}`, (m, x) => store.removeMember(m[1], x.user.id, m[2])],
     ['GET', `/api/workspaces/${W}/invites`, (m, x) => ({ invites: store.listOrgInvites(m[1], x.user.id) })],
-    ['POST', `/api/workspaces/${W}/invites`, async (m, x) => { const b = await x.body(); return store.createOrgInvite(m[1], x.user.id, b.role, b.email); }],
+    ['POST', `/api/workspaces/${W}/invites`, async (m, x) => {
+      const b = await x.body(), inv = store.createOrgInvite(m[1], x.user.id, b.role, b.email);
+      const emailed = Boolean(b.send && inv.email) && notifier.orgInvite({ org: store.q.org.get(m[1]), inviter: x.user, email: inv.email, role: inv.role, link: `${config.publicUrl || `http://localhost:${config.port}`}/invite/${inv.code}` });
+      return { ...inv, emailed };
+    }],
     ['DELETE', `/api/workspaces/${W}/invites/${K}`, (m, x) => store.revokeOrgInvite(m[1], x.user.id, m[2])],
     ['GET', `/api/workspaces/${W}/clients`, (m, x) => ({ clients: store.listClients(m[1], x.user.id) })],
     ['POST', `/api/workspaces/${W}/clients`, async (m, x) => store.addClient(m[1], x.user.id, (await x.body()).name)],
@@ -171,6 +238,24 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     const p = url.pathname, m = req.method;
     if (p === '/api/config' && m === 'GET') return send(res, 200, publicConfig);
     if (p === '/api/health' && m === 'GET') return send(res, 200, { ok: true });
+    if (p === '/api/unsubscribe' && (m === 'GET' || m === 'POST')) {
+      limit('preview:' + clientIp(req), 30);
+      const t = mail.readToken(url.searchParams.get('t')), u = UNSUB[t && t.kind];
+      if (!t || !u || !store.q.user.get(t.uid)) return m === 'GET' ? unsubscribePage(res, false, 'The link is incomplete or was changed. Change your email settings in Headcount instead.') : send(res, 400, { error: 'Invalid link.' });
+      store.setPrefs(t.uid, { [u[0]]: u[1] });
+      return m === 'GET' ? unsubscribePage(res, true, u[2]) : send(res, 200, { ok: true });
+    }
+    if (p === '/api/contact' && m === 'POST') {
+      limit('contact:' + clientIp(req), 5);
+      const b = await readJson(req, 20_000), cut = (v, n) => String(v || '').replace(/[\r\n]+/g, ' ').trim().slice(0, n);
+      if (b.website) return send(res, 200, { ok: true }); // filled in only by bots
+      const lead = { name: cut(b.name, 120), email: cut(b.email, 160), firm: cut(b.firm, 160), size: cut(b.size, 40), message: String(b.message || '').trim().slice(0, 4000) };
+      if (!lead.name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) throw new HttpError(400, 'Add your name and a valid work email.');
+      store.addLead(lead); notifier.contact(lead);
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/api/sso/lookup' && m === 'GET') { limit('preview:' + clientIp(req), 30); return send(res, 200, store.ssoLookup(url.searchParams.get('email'))); }
+    if (p === '/api/dev/outbox' && m === 'GET' && config.authMode === 'dev') return send(res, 200, { emails: mail.outbox(100) });
     if (p === '/api/stripe/webhook' && m === 'POST') { limit('hook:' + clientIp(req), 120); return send(res, 200, await needBilling().webhook(await readRaw(req), req.headers['stripe-signature'])); }
     let pm;
     if ((pm = /^\/api\/invites\/([A-Za-z0-9_-]{8,64})$/.exec(p)) && m === 'GET') { limit('preview:' + clientIp(req), 30); const v = store.previewInvite(pm[1]); return send(res, 200, { campaign: v.campaign, workspace: v.workspace, role: v.role, invitedBy: v.invitedBy }); }
@@ -190,7 +275,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     throw new HttpError(404, 'Not found.');
   }
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local');
     if (url.pathname.startsWith('/api/')) {
       route(req, res, url).catch((e) => {
@@ -201,6 +286,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     } else if (req.method === 'GET' || req.method === 'HEAD') serveStatic(req, res, url.pathname);
     else send(res, 405, { error: 'Method not allowed.' });
   });
+  server.jobs = jobs; server.mail = mail; server.notifier = notifier;
+  server.on('close', () => timers.forEach(clearInterval));
+  return server;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

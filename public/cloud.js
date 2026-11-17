@@ -42,7 +42,8 @@
           let first = true;
           authMod.onAuthStateChanged(auth, (u) => {
             const p = u && u.providerData && u.providerData[0];
-            C.user = u ? { id: u.uid, name: u.displayName || u.email || 'Signed-in user', email: u.email || '', provider: p && p.providerId === 'microsoft.com' ? 'microsoft' : 'google' } : null;
+            const pid = p ? p.providerId : '';
+            C.user = u ? { id: u.uid, name: u.displayName || u.email || 'Signed-in user', email: u.email || '', provider: pid === 'microsoft.com' ? 'microsoft' : pid === 'google.com' ? 'google' : pid, linked: (u.providerData || []).map((x) => x.providerId) } : null;
             if (!u) clearToken();
             if (first) { first = false; resolve(); } else C.emit();
           });
@@ -100,6 +101,18 @@
     catch (e) { throw new CloudError('signin', authMessage(e)); }
     C.emit(); return C.user;
   };
+  // Single sign-on through a firm's identity provider (SAML or OIDC in Identity Platform).
+  C.signInSSO = async function (providerId, email) {
+    if (C.config.auth === 'dev') {
+      const id = String(email || 'sso-user').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'ssouser';
+      C.user = { id, name: String(email || id).split('@')[0], email: String(email || '').toLowerCase(), provider: providerId };
+      localStorage.setItem(DEV_KEY, JSON.stringify(C.user)); C.emit(); return C.user;
+    }
+    const p = providerId.startsWith('saml.') ? new fb.SAMLAuthProvider(providerId) : new fb.OAuthProvider(providerId);
+    try { await fb.signInWithPopup(auth, p); } catch (e) { throw new CloudError('signin', authMessage(e)); }
+    C.emit(); return C.user;
+  };
+  C.isSSO = () => Boolean(C.user && /^(saml|oidc)\./.test(C.user.provider || ''));
   C.signOut = async function () {
     clearToken();
     if (C.config.auth === 'dev') { localStorage.removeItem(DEV_KEY); C.user = null; C.emit(); return; }
@@ -122,7 +135,7 @@
     try { res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (_) { throw new CloudError('offline', 'The Headcount server could not be reached. Check your connection.', 0); }
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) { const err = new CloudError(res.status === 401 ? 'signin' : 'api', json.error || `Request failed (${res.status}).`, res.status); err.upgrade = Boolean(json.upgrade); throw err; }
+    if (!res.ok) { const err = new CloudError(res.status === 401 ? 'signin' : 'api', json.error || `Request failed (${res.status}).`, res.status); err.upgrade = Boolean(json.upgrade); err.sso = Boolean(json.sso); err.workspace = json.workspace; throw err; }
     return json;
   };
   C.publicGet = async function (path) {
@@ -137,24 +150,37 @@
   }
   function clearToken() { try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) { /* nothing stored */ } }
   C.connected = () => Boolean(readToken());
-  C.provider = () => (C.user ? C.user.provider : null);
+  // Which mail and calendar account to use: the connected one, else the sign-in account if it is Google or Microsoft.
+  C.provider = () => { const t = readToken(); if (t) return t.provider; return C.user && (C.user.provider === 'google' || C.user.provider === 'microsoft') ? C.user.provider : null; };
 
   // Asks the person to allow calendar and email access. Call it straight from a
   // click handler, before any await, or the browser may block the pop-up.
-  C.connect = async function () {
+  // People who sign in with single sign-on choose Gmail or Outlook; the account is linked the first time.
+  C.connect = async function (want) {
     if (!C.user) throw new CloudError('signin', 'Sign in first.');
-    const have = readToken(); if (have) return have;
+    const have = readToken(); if (have && (!want || have.provider === want)) return have;
+    const mp = want || C.provider();
+    if (mp !== 'google' && mp !== 'microsoft') throw new CloudError('connect', 'Choose Gmail or Outlook to send from.');
     let access;
     if (C.config.auth === 'dev') access = 'dev-access-token';
     else {
+      const own = mp === C.user.provider, cred = (r) => (mp === 'microsoft' ? fb.OAuthProvider.credentialFromResult(r) : fb.GoogleAuthProvider.credentialFromResult(r));
+      const reauth = () => fb.reauthenticateWithPopup(auth.currentUser, providerFor(mp, true, own ? C.user.email : ''));
       try {
-        const r = await fb.reauthenticateWithPopup(auth.currentUser, providerFor(C.user.provider, true, C.user.email));
-        const cred = C.user.provider === 'microsoft' ? fb.OAuthProvider.credentialFromResult(r) : fb.GoogleAuthProvider.credentialFromResult(r);
-        access = cred && cred.accessToken;
-      } catch (e) { throw new CloudError('connect', authMessage(e)); }
-      if (!access) throw new CloudError('connect', `${C.providerName(C.user.provider)} did not grant access to your calendar and email.`);
+        let r;
+        if (own) r = await reauth();
+        else {
+          try { r = await fb.linkWithPopup(auth.currentUser, providerFor(mp, true)); }
+          catch (e) { if (e && e.code === 'auth/provider-already-linked') r = await reauth(); else throw e; }
+        }
+        const c = cred(r); access = c && c.accessToken;
+      } catch (e) {
+        if (e && e.code === 'auth/credential-already-in-use') throw new CloudError('connect', `That ${C.providerName(mp)} account already signs in to Headcount on its own. Choose a different account, or sign in with it instead.`);
+        throw new CloudError('connect', authMessage(e));
+      }
+      if (!access) throw new CloudError('connect', `${C.providerName(mp)} did not grant access to your calendar and email.`);
     }
-    const t = { user: C.user.id, provider: C.user.provider, access, exp: Date.now() + 50 * 60 * 1000 };
+    const t = { user: C.user.id, provider: mp, access, exp: Date.now() + 50 * 60 * 1000 };
     try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch (_) { /* this tab only */ }
     return t;
   };

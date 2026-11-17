@@ -30,8 +30,8 @@ const mock = http.createServer((req, res) => {
     if (u.pathname === '/v3/bill/119/hr/1234/committees') return j(200, { committees: [{ name: 'Energy and Commerce Committee' }] });
     if (u.pathname === '/v1/messages') return j(200, { id: 'msg', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: JSON.stringify(draft) }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } });
     if (u.pathname === '/v1/customers') return j(200, { id: 'cus_e2e' });
-    if (u.pathname === '/v1/checkout/sessions') { const f = new URLSearchParams(body); stripeState.org = f.get('client_reference_id'); stripeState.seats = +f.get('line_items[0][quantity]'); stripeState.success = f.get('success_url'); return j(200, { id: 'cs_e2e', url: `${M}/checkout` }); }
-    if (u.pathname === '/v1/subscriptions/sub_e2e') return j(200, { id: 'sub_e2e', customer: 'cus_e2e', status: 'active', metadata: { org_id: stripeState.org }, current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400, items: { data: [{ id: 'si_e2e', quantity: stripeState.seats, price: { id: 'price_team' } }] } });
+    if (u.pathname === '/v1/checkout/sessions') { const f = new URLSearchParams(body); stripeState.org = f.get('client_reference_id'); stripeState.seats = +f.get('line_items[0][quantity]'); stripeState.price = f.get('line_items[0][price]'); stripeState.success = f.get('success_url'); return j(200, { id: 'cs_e2e', url: `${M}/checkout` }); }
+    if (u.pathname === '/v1/subscriptions/sub_e2e') return j(200, { id: 'sub_e2e', customer: 'cus_e2e', status: 'active', metadata: { org_id: stripeState.org }, current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400, items: { data: [{ id: 'si_e2e', quantity: stripeState.seats, price: { id: stripeState.price } }] } });
     if (u.pathname === '/checkout') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<!doctype html><title>Stripe Checkout (test)</title><h1>Pay</h1>'); }
     j(404, {});
   });
@@ -46,7 +46,7 @@ const BASE = `http://localhost:${port}`;
 const server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], {
   cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'],
   env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, AUTH_MODE: 'dev', NODE_ENV: 'test', CONGRESS_API_KEY: 'k', CONGRESS_API_BASE: `${M}/v3`, ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: M,
-    STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: 'whsec_e2e', STRIPE_PRICE_TEAM: 'price_team', STRIPE_API_BASE: M, PUBLIC_URL: BASE, PRICE_LABEL_TEAM: 'per seat, monthly' },
+    STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: 'whsec_e2e', STRIPE_PRICE_TEAM: 'price_team', STRIPE_PRICE_FIRM: 'price_firm', STRIPE_API_BASE: M, PUBLIC_URL: BASE, PRICE_LABEL_TEAM: 'per seat, monthly', PRICE_LABEL_FIRM: 'per seat, with SSO', SALES_EMAIL: 'sales@headcount.test' },
 });
 await new Promise((resolve) => server.stdout.on('data', (d) => { if (String(d).includes('Headcount on')) resolve(); }));
 async function stripeHook(event) {
@@ -99,13 +99,14 @@ async function signIn(p) {
   await p.page.click(`[data-act=signinWith][data-p=${p.provider}]`);
   await p.page.waitForFunction(() => typeof ME === 'string' && ME.length > 0);
 }
+const outbox = async () => (await (await fetch(`${BASE}/api/dev/outbox`)).json()).emails;
 const settle = (page) => page.waitForFunction(() => !SYNC.busy && !SYNC.timer && !SYNC.creating && !SYNC.loading, null, { timeout: 20000 });
 const shot = async (page, name, full) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: Boolean(full) }); };
 
 try {
   // ===== Signed out: everything works in the browser =====
   const guest = await person('Guest', 'google');
-  await guest.page.goto(BASE); await guest.page.waitForSelector('.seat');
+  await guest.page.goto(`${BASE}/app`); await guest.page.waitForSelector('.seat');
   assert.match(await guest.page.locator('#banner').innerText(), /Example campaign/);
   await guest.page.locator('#calls .who').first().click();
   await guest.page.click('[data-tab=staff]'); await guest.page.click('[data-act=addStaff]');
@@ -128,7 +129,7 @@ try {
 
   // ===== Alice signs in with Google and sets up her firm's workspace =====
   const alice = await person('Alice', 'google');
-  await alice.page.goto(BASE); await alice.page.waitForSelector('.seat');
+  await alice.page.goto(`${BASE}/app`); await alice.page.waitForSelector('.seat');
   await signIn(alice);
   await alice.page.waitForSelector('#woForm');
   await alice.page.fill('#wo_name', 'Capitol Strategies'); await alice.page.click('#woForm .primary');
@@ -213,6 +214,21 @@ try {
   await alice.page.waitForFunction((b) => S.members.some((m) => m.pos !== b) && S.members.filter((m) => m.pos === 4).length > 0, before, { timeout: 15000 });
   log('ok  Bob joined from a workspace invitation, found the campaign in the portfolio, and his change reached Alice');
 
+  // Alice assigns Bob a follow-up; Bob gets an email
+  await alice.page.reload(); await alice.page.waitForFunction(() => S.cloud && S.members.length === 41);
+  await alice.page.waitForFunction(() => WS.members && WS.members.some((x) => x.name === 'Bob') && document.querySelector('#t_for option[value="dev:bob"]'));
+  await alice.page.fill('#t_text', 'Send Bob the fiscal note'); await alice.page.selectOption('#t_for', 'dev:bob'); await alice.page.click('#tForm .btn');
+  await alice.page.waitForFunction(() => /for Bob/.test(document.querySelector('#tasks').textContent));
+  await settle(alice.page);
+  for (let i = 0; i < 20 && !(await outbox()).some((x) => x.kind === 'assigned'); i++) await alice.page.waitForTimeout(250);
+  const asg = (await outbox()).find((x) => x.kind === 'assigned');
+  assert.equal(asg.to_addr, 'bob@example.org'); assert.match(asg.subject, /Alice assigned you a follow-up: Send Bob the fiscal note/);
+  await alice.page.click('#acct [data-act=account]');
+  await alice.page.selectOption('#pf_digest', 'daily');
+  await alice.page.waitForFunction(() => PREFS && PREFS.digest === 'daily');
+  await alice.page.keyboard.press('Escape');
+  log('ok  a follow-up assigned to Bob emailed him; Alice switched to a daily digest');
+
   // Bob requests through Outlook
   await bob.page.fill('#q', memberName); await bob.page.locator('#rows .who').first().click();
   await bob.page.click('[data-act=rq]');
@@ -271,20 +287,55 @@ try {
   // ===== Subscribing through Stripe =====
   await alice.page.click('[data-page=workspace]');
   await alice.page.fill('#bill_seats', '5');
-  await Promise.all([alice.page.waitForURL(`${M}/checkout`), alice.page.click('[data-act=billCheckout][data-plan=team]')]);
+  await Promise.all([alice.page.waitForURL(`${M}/checkout`), alice.page.click('[data-act=billCheckout][data-plan=firm]')]);
   assert.equal(stripeState.seats, 5);
   await stripeHook({ id: 'evt_e2e', type: 'checkout.session.completed', data: { object: { client_reference_id: stripeState.org, customer: 'cus_e2e', subscription: 'sub_e2e' } } });
   await alice.page.goto(stripeState.success);
-  await alice.page.waitForFunction(() => ORG && ORG.plan.key === 'team' && page === 'workspace', null, { timeout: 15000 });
-  assert.match(await alice.page.locator('#workspacePage').innerText(), /Team · Active/);
+  await alice.page.waitForFunction(() => ORG && ORG.plan.key === 'firm' && page === 'workspace', null, { timeout: 15000 });
+  assert.match(await alice.page.locator('#workspacePage').innerText(), /Firm · Active/);
   assert.match(await alice.page.locator('#workspacePage').innerText(), /People using seats\s*2 of 5/);
   assert.equal(new URL(alice.page.url()).search, '');
-  log('ok  Stripe checkout and webhook moved the workspace to Team with 5 seats');
+  log('ok  Stripe checkout and webhook moved the workspace to Firm with 5 seats');
+
+  // ===== Single sign-on =====
+  await alice.page.fill('#dm_name', 'capstrat.test'); await alice.page.click('#dmForm .btn');
+  await alice.page.click('[data-act=dmVerify]');
+  await alice.page.waitForFunction(() => ORG.domain && ORG.domain.verified);
+  await alice.page.fill('#ss_provider', 'saml.capstrat'); await alice.page.check('#ss_required'); await alice.page.click('#ssForm .primary');
+  await alice.page.waitForFunction(() => ORG.sso && ORG.sso.required && ORG.sso.provider === 'saml.capstrat');
+  const dana = await person('Dana', 'google');
+  await dana.page.goto(`${BASE}/app`); await dana.page.waitForSelector('.seat', { state: 'attached' });
+  await dana.page.click('#acct [data-act=signin]'); await dana.page.click('#drawer details.sect summary');
+  await dana.page.fill('#sso_email', 'dana@capstrat.test'); await dana.page.click('#ssoForm .btn');
+  await dana.page.click('[data-act=ssoGo]');
+  await dana.page.waitForFunction(() => ORG && ORG.name === 'Capitol Strategies' && ORG.role === 'member', null, { timeout: 15000 });
+  await bob.page.reload();
+  await bob.page.waitForFunction(() => /Capitol Strategies<\/b> requires single sign-on/.test(document.querySelector('#banner').innerHTML), null, { timeout: 15000 });
+  log('ok  single sign-on: Dana joined through the firm\'s identity provider; Bob is asked to use it');
 
   // Carol deletes her account
-  await carol.page.click('#acct [data-act=account]'); await carol.page.click('#drawer details.sect summary'); await carol.page.click('[data-act=delAccount]'); await carol.page.click('[data-act=delAccount]');
+  await carol.page.click('#acct [data-act=account]'); await carol.page.click('#drawer details.sect summary:has-text("Delete my account")'); await carol.page.click('[data-act=delAccount]'); await carol.page.click('[data-act=delAccount]');
   await carol.page.waitForFunction(() => ME === null);
   log('ok  Carol deleted her account');
+
+  // ===== The website =====
+  const visitor = await person('Visitor', 'google');
+  await visitor.page.goto(`${BASE}/`);
+  assert.match(await visitor.page.locator('h1').innerText(), /Know the count/);
+  await shot(visitor.page, 'site-home', true);
+  await visitor.page.fill('form.lead [name=name]', 'Pat Lee'); await visitor.page.fill('form.lead [name=email]', 'pat@leepartners.example');
+  await visitor.page.fill('form.lead [name=firm]', 'Lee Partners'); await visitor.page.click('form.lead button');
+  await visitor.page.waitForFunction(() => /Thank you/.test(document.querySelector('form.lead .status').textContent));
+  assert.ok((await outbox()).some((x) => x.kind === 'lead' && x.to_addr === 'sales@headcount.test'));
+  await visitor.page.goto(`${BASE}/pricing`); await shot(visitor.page, 'site-pricing', true);
+  assert.match(await visitor.page.locator('table.plans').innerText(), /Single sign-on/);
+  await visitor.page.setViewportSize({ width: 390, height: 844 });
+  for (const pg of ['/', '/pricing', '/security', '/privacy', '/terms']) {
+    await visitor.page.goto(BASE + pg);
+    assert.equal(await visitor.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `no sideways scroll on ${pg}`);
+  }
+  await visitor.page.goto(`${BASE}/`); await shot(visitor.page, 'site-phone');
+  log('ok  website pages, demo request and phone layout');
 
   // Layout checks
   await alice.page.setViewportSize({ width: 390, height: 844 });

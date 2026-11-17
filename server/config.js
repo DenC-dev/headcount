@@ -45,5 +45,15 @@ export const config = {
   trialDays: Number(env.TRIAL_DAYS) || 14,
   trialSeats: Number(env.TRIAL_SEATS) || 10,
 };
+// Email: any SMTP service. EMAIL_MODE=outbox keeps messages in the database
+// without sending them (the default for local testing).
+config.smtpUrl = env.SMTP_URL || '';
+config.emailFrom = env.EMAIL_FROM || '';
+config.emailMode = (env.EMAIL_MODE || (config.smtpUrl ? 'smtp' : authMode === 'dev' ? 'outbox' : 'off')).toLowerCase();
+config.appSecret = env.APP_SECRET || '';
+config.digestEvery = Number(env.DIGEST_INTERVAL_MS) || 10 * 60 * 1000;
+if (config.smtpUrl && !config.emailFrom) throw new Error('SMTP_URL needs EMAIL_FROM, for example "Headcount <notifications@yourdomain.com>".');
+if ((config.smtpUrl || config.emailMode === 'outbox') && !config.publicUrl) config.publicUrl = `http://localhost:${config.port}`;
+config.siteOff = env.SITE === 'off';
 config.billing = Boolean(config.stripeKey && config.stripeWebhookSecret && config.stripePriceTeam);
 if (config.billing && !config.publicUrl) throw new Error('Billing needs PUBLIC_URL so Stripe can send people back to the app.');

@@ -477,7 +477,7 @@ function goExample() { S = exampleState(); BOOK.list = BOOK.list.filter((c) => c
 async function onAuthChange(user) {
   if (user && !ME) return onSignedIn();
   if (!user && ME) {
-    ME = null; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = [];
+    ME = null; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
     WS.members = WS.invites = WS.audit = WS.report = WS.lastInvite = null;
     if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
     if (page === 'portfolio' || page === 'workspace') page = 'count';
@@ -485,12 +485,17 @@ async function onAuthChange(user) {
   }
 }
 async function onSignedIn() {
-  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; }
+  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
   catch (e) { fail(e); return render(); }
+  const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })();
+  if (tz && PREFS && PREFS.tz !== tz) CLOUD.api('PATCH', '/api/me/prefs', { tz }).then((x) => { PREFS = x; }).catch(() => {});
+  if (location.hash === '#email') setTimeout(() => accountDrawer(true), 0);
   if (JOIN && JOIN.info) return acceptJoin();
-  const want = lsGet(LASTORG), oid = ORGS.some((o) => o.id === want) ? want : ORGS[0] && ORGS[0].id;
+  const blocked = ORGS.filter((o) => o.ssoRequired), open = ORGS.filter((o) => !o.ssoRequired);
+  SSO_NEEDED = blocked.length ? blocked.map((o) => o.name).join(' and ') : null;
+  const want = lsGet(LASTORG), oid = open.some((o) => o.id === want) ? want : open[0] && open[0].id;
   if (oid) await loadOrg(oid, { quiet: true });
-  if (!ORG) { page = 'workspace'; return render(); }
+  if (!ORG) { page = SSO_NEEDED ? 'count' : 'workspace'; return render(); }
   if (!S.cloud) {
     const last = lsGet(LAST);
     if (last && ACCOUNT.list.some((e) => e.id === last)) return cloudOpen(last);
@@ -501,7 +506,7 @@ async function onSignedIn() {
 async function acceptJoin() {
   try {
     const r = await CLOUD.api('POST', JOIN.kind === 'org' ? `/api/workspace-invites/${JOIN.code}` : `/api/invites/${JOIN.code}`);
-    const info = JOIN.info; JOIN = null; history.replaceState(null, '', '/');
+    const info = JOIN.info; JOIN = null; history.replaceState(null, '', '/app');
     ORGS = (await CLOUD.api('GET', '/api/workspaces')).workspaces;
     await loadOrg(r.orgId);
     if (r.campaignId) { await cloudOpen(r.campaignId); toast(`You joined ${info.campaign}`); }
@@ -608,13 +613,25 @@ function renderCalls(nd, base) {
     plan.innerHTML = `If the ${S.plan.length} ticked meeting${S.plan.length > 1 ? 's' : ''} each move one step: <b>${pct(goal(S, base.both))}% to ${pct(goal(S, p))}%</b>`;
   } else plan.innerHTML = 'Tick meetings to see where the odds land if they all go your way.';
 }
+function assignSelect(id, name, value) {
+  const people = (WS.members || []).filter((x) => x.id !== ME && x.role !== 'guest');
+  return `<select id="${id}" name="${name}" aria-label="For"><option value="">For anyone</option><option value="${esc(ME)}" ${value === ME ? 'selected' : ''}>For me</option>${people.map((x) => `<option value="${esc(x.id)}" ${value === x.id ? 'selected' : ''}>For ${esc(x.name || x.email)}</option>`).join('')}</select>`;
+}
+const whoFor = (t) => (!t.assignee ? '' : t.assignee === ME ? 'for you' : `for ${((WS.members || []).find((x) => x.id === t.assignee) || PEOPLE[t.assignee] || { name: 'a teammate' }).name}`);
+function ensureMembers() {
+  if (!S.cloud || !ORG || ORG.role === 'guest' || WS.members !== null || WS.loadingMembers) return;
+  WS.loadingMembers = true;
+  CLOUD.api('GET', `/api/workspaces/${ORG.id}/members`).then((r) => { WS.members = r.members; soon(); }).catch(() => {}).finally(() => { WS.loadingMembers = false; });
+}
 function taskHtml(t) {
   const m = t.mid && S.members.find((x) => x.id === t.mid), n = t.due ? dayDiff(t.due) : null;
   return `<li><input type="checkbox" data-task="${esc(t.id)}" ${t.done ? 'checked' : ''} aria-label="Mark done: ${esc(t.text)}">
-    <div><div>${esc(t.text)}</div><div class="due${n !== null && n < 0 && !t.done ? ' over' : ''}">${t.due ? `${n < 0 && !t.done ? 'Overdue, was due ' : 'Due '}${esc(fmtDay(t.due))} (${esc(inDays(t.due))})` : 'No due date'}${m ? ` · <button class="linkbtn" data-open="${esc(m.id)}">${esc(m.name)}</button>` : ''}</div></div></li>`;
+    <div><div>${esc(t.text)}</div><div class="due${n !== null && n < 0 && !t.done ? ' over' : ''}">${t.due ? `${n < 0 && !t.done ? 'Overdue, was due ' : 'Due '}${esc(fmtDay(t.due))} (${esc(inDays(t.due))})` : 'No due date'}${m ? ` · <button class="linkbtn" data-open="${esc(m.id)}">${esc(m.name)}</button>` : ''}${t.assignee ? ` · <b>${esc(whoFor(t))}</b>` : ''}</div></div></li>`;
 }
 const openTasks = () => S.tasks.filter((t) => !t.done).sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
 function renderTasks() {
+  const tf = $('#t_for');
+  if (tf) { tf.hidden = !S.cloud || !signedIn(); if (S.cloud && signedIn()) { const v = tf.value; tf.outerHTML = assignSelect('t_for', 'for', v); } ensureMembers(); }
   const open = openTasks(), done = S.tasks.filter((t) => t.done).slice(-8).reverse();
   $('#tasks').innerHTML = (open.length ? open.map(taskHtml).join('') : upcoming().length ? '' : '<li style="display:block" class="note">Nothing scheduled or outstanding. Schedule a meeting from any member, or add a follow-up below.</li>')
     + (done.length ? `<li style="display:block"><details><summary class="note">Recently completed (${done.length})</summary><ul class="tasks">${done.map(taskHtml).join('')}</ul></details></li>` : '');
@@ -938,7 +955,8 @@ function rqHtml(m) {
   const common = `<label class="wide">To ${toSel}</label>
     <label class="wide" ${RQ.other ? '' : 'hidden'}>Email address<input id="rq_other" type="email" value="${RQ.other ? esc(RQ.to) : ''}" placeholder="scheduler@senate.example.gov"></label>
     <label>Length<select id="rq_mins">${[15, 30, 45, 60].map((n) => `<option value="${n}" ${RQ.mins === n ? 'selected' : ''}>${n} minutes</option>`).join('')}</select></label>
-    ${signed ? `<div style="align-self:end"><button type="button" class="btn" data-act="rqFind">${RQ.mode === 'email' ? 'Offer open times from my calendar' : 'Use my next open time'}</button></div>` : '<div></div>'}`;
+    ${signed && prov ? `<div style="align-self:end"><button type="button" class="btn" data-act="rqFind">${RQ.mode === 'email' ? 'Offer open times from my calendar' : 'Use my next open time'}</button></div>` : '<div></div>'}`;
+  const sendAs = prov ? [prov] : ['google', 'microsoft'];
   const signNote = !signed && canSign ? `<p class="wide note">Sign in with ${CLOUD.config.providers.map(CLOUD.providerName).join(' or ')} to send this from your own email and calendar. <button type="button" class="btn sm" data-act="signin">Sign in</button></p>` : '';
   let body;
   if (RQ.mode === 'email') {
@@ -946,14 +964,14 @@ function rqHtml(m) {
       <label class="wide">Subject<input id="rq_subject" value="${esc(RQ.subject)}"></label>
       <label class="wide">Message<textarea id="rq_body" class="out" style="min-height:260px">${esc(RQ.body)}</textarea></label>
       ${signNote}
-      <div class="wide btnrow">${signed ? `<button type="button" class="btn primary" data-act="rqSend">Send from ${CLOUD.mailName(prov)}</button>` : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqMailto">Open in my email app</button><button type="button" class="btn" data-act="rqCopy">Copy message</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
+      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqSend" data-mp="${x}">Send from ${CLOUD.mailName(x)}</button>`).join('') : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqMailto">Open in my email app</button><button type="button" class="btn" data-act="rqCopy">Copy message</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
   } else {
     body = `<label>Date and time<input type="datetime-local" id="rq_start" value="${RQ.start ? toInput(new Date(RQ.start)) : ''}"></label>
       <label>Where<input id="rq_where" value="${esc(RQ.where)}" placeholder="Office, phone or video"></label>
-      ${signed ? `<label class="wide check"><input type="checkbox" id="rq_video" ${RQ.video ? 'checked' : ''}> Add a ${CLOUD.videoName(prov)} link</label>` : ''}
+      ${signed ? `<label class="wide check"><input type="checkbox" id="rq_video" ${RQ.video ? 'checked' : ''}> Add a ${prov ? CLOUD.videoName(prov) : 'video meeting'} link</label>` : ''}
       <label class="wide">Note in the invitation <span class="note">optional</span><textarea id="rq_note">${esc(RQ.note)}</textarea></label>
       ${signNote}
-      <div class="wide btnrow">${signed ? `<button type="button" class="btn primary" data-act="rqInvite">Send invitation from ${CLOUD.calName(prov)}</button>` : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqIcs">Download invitation (.ics)</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
+      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqInvite" data-mp="${x}">Send invitation from ${CLOUD.calName(x)}</button>`).join('') : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqIcs">Download invitation (.ics)</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
   }
   return `<form id="rqForm" class="form">${tabs}${common}${body}<p class="wide note" id="rqMsg" role="status">${esc(RQ.msg)}</p></form>`;
 }
@@ -1128,7 +1146,7 @@ function parseRoster(text) {
     cmte: /^(y|yes|1|true)$/i.test(r[3] || ''), pos: posOf(r[4] || ''), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], phone: (r[5] || '').slice(0, 40), email: (r[6] || '').slice(0, 120) }));
 }
 // ---------- workspaces ----------
-let ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [];
+let ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null;
 const WS = { members: null, invites: null, audit: null, auditMore: true, report: null, lastInvite: null, loading: false, filter: { client: '', q: '', archived: false } };
 const LASTORG = 'headcount.lastOrg';
 const isAdmin = () => ORG && (ORG.role === 'owner' || ORG.role === 'admin');
@@ -1136,7 +1154,7 @@ const clientOf = (st = S) => (st.cloud && st.campaign.clientId ? (CLIENTS.find((
 const firmOf = (st = S) => (st.cloud && ORG ? ORG.name : '');
 const fmtDate = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
 const limitText = (used, max) => (max === null || max === undefined ? `${used}` : `${used} of ${max}`);
-function fail(e) { if (e && e.upgrade) notify(e.message, isAdmin() ? 'See plans' : '', 'gotoPlans'); else toast(e && e.message ? e.message : String(e)); }
+function fail(e) { if (e && e.sso) { SSO_NEEDED = e.workspace || 'This workspace'; render(); return toast(e.message); } if (e && e.upgrade) notify(e.message, isAdmin() ? 'See plans' : '', 'gotoPlans'); else toast(e && e.message ? e.message : String(e)); }
 function notify(msg, label, act) {
   const t = $('#toast'); t.innerHTML = `${esc(msg)}${label ? ` <button class="btn sm" data-act="${act}">${esc(label)}</button>` : ''}`; t.hidden = false;
   clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 7000);
@@ -1277,7 +1295,7 @@ function peoplePanel() {
     ${admin ? `<form id="oiForm" class="form" style="margin-top:12px">
       <label>Email <span class="note">optional</span><input id="oi_email" name="email" type="email" placeholder="colleague@yourfirm.com"></label>
       <label>Role<select id="oi_role" name="role"><option value="member">Member</option><option value="admin">Admin</option><option value="guest">Guest</option></select></label>
-      <div class="wide btnrow"><button class="btn primary">Create invitation</button>${signedIn() && CLOUD.user ? `<label class="check note"><input type="checkbox" id="oi_send" checked> Email it from my ${CLOUD.mailName(CLOUD.provider())} when an address is given</label>` : ''}</div>
+      <div class="wide btnrow"><button class="btn primary">Create invitation</button>${CLOUD.config.email || CLOUD.provider() ? `<label class="check note"><input type="checkbox" id="oi_send" checked> ${CLOUD.config.email ? 'Email the invitation' : `Email it from my ${CLOUD.mailName(CLOUD.provider())}`} when an address is given</label>` : ''}</div>
       </form>
       ${WS.lastInvite ? `<div class="linkbox" style="margin-top:8px"><input id="oi_link" readonly value="${esc(WS.lastInvite)}" aria-label="Invitation link"><button class="btn sm" data-copy="${esc(WS.lastInvite)}">Copy</button></div>` : ''}
       <p class="note">Members and admins use a seat; admins also manage people, billing and settings. Guests (clients, coalition partners) see only the campaigns they are added to and do not use a seat. An invitation with an email address works once, for that person; without one, anyone with the link can join for 14 days.</p>
@@ -1300,6 +1318,19 @@ function domainPanel() {
   else if (!d.verified) body = `<p class="note">Add this TXT record to <b>${esc(d.name)}</b> at your DNS provider, then press Verify. Changes can take up to an hour to appear.</p><div class="linkbox"><input readonly value="headcount-verification=${esc(d.token)}" aria-label="TXT record"><button class="btn sm" data-copy="headcount-verification=${esc(d.token)}">Copy</button></div><div class="btnrow" style="margin-top:8px"><button class="btn primary" data-act="dmVerify">Verify</button><button class="btn" data-act="dmRemove">Remove</button></div>`;
   else body = `<p><span class="status ok">Verified</span> ${esc(d.name)}</p><label class="check"><input type="checkbox" id="dm_join" ${d.join ? 'checked' : ''}> Anyone who signs in with a verified @${esc(d.name)} address can join as a member (each uses a seat)</label><div><button class="btn sm" data-act="dmRemove">Remove domain</button></div>`;
   return `<div class="panel"><span class="label">Email domain</span>${body}</div>`;
+}
+function ssoPanel() {
+  if (!isAdmin()) return '';
+  const sso = ORG.sso || {}, d = ORG.domain, support = CLOUD.config.supportEmail;
+  if (!ORG.plan.features.sso) return '<div class="panel"><span class="label">Single sign-on</span><p class="note">On the Firm plan, staff sign in through your identity provider (Okta, Microsoft Entra ID, or any SAML or OIDC provider), and you can require it.</p></div>';
+  return `<div class="panel"><span class="label">Single sign-on</span>
+    ${!d || !d.verified ? '<p class="note">Verify your email domain first: people reach your sign-in page by entering their work email.</p>' : ''}
+    <form id="ssForm" class="form">
+      <label class="wide">Provider ID from Identity Platform<input id="ss_provider" name="provider" value="${esc(sso.provider || '')}" placeholder="saml.yourfirm"></label>
+      <label class="wide check"><input type="checkbox" id="ss_required" name="required" ${sso.required ? 'checked' : ''}> Require single sign-on for members and admins. Owners can always sign in, so they can fix these settings.</label>
+      <div class="wide"><button class="btn primary">Save</button></div>
+    </form>
+    <p class="note">To connect your identity provider, ${support ? `write to ${esc(support)}` : 'contact Headcount support'}. They set it up in Identity Platform with your provider's details and give you the provider ID to enter here. People then choose "Sign in with single sign-on" and enter their ${d ? '@' + esc(d.name) : 'work'} email; anyone who signs in that way joins this workspace as a member.</p></div>`;
 }
 function reportPanel() {
   if (!isAdmin()) return '';
@@ -1341,11 +1372,23 @@ function onboardingHtml() {
     <form id="woForm" class="taskadd"><input id="wo_name" name="name" placeholder="Your firm or organization" value="${esc(domainName)}" aria-label="Workspace name" required><button class="btn primary">Create workspace</button></form>
     <p class="note">Invited to someone else's workspace? Open the link from your invitation.</p></div>`;
 }
+// Redraws a page section without losing what the person was typing.
+function keepEdits(el, draw) {
+  const dirty = [...el.querySelectorAll('input[id], select[id], textarea[id]')].filter((f) => !f.readOnly && (f.type === 'checkbox' ? f.checked !== f.defaultChecked : f.tagName === 'SELECT' ? [...f.options].some((o) => o.selected !== o.defaultSelected) : f.value !== f.defaultValue))
+    .map((f) => [f.id, f.type === 'checkbox' ? f.checked : f.value]);
+  const focus = document.activeElement && el.contains(document.activeElement) ? document.activeElement.id : null;
+  draw();
+  for (const [id, v] of dirty) { const f = document.getElementById(id); if (f) { if (f.type === 'checkbox') f.checked = v; else f.value = v; } }
+  if (focus && document.getElementById(focus)) document.getElementById(focus).focus();
+}
 function renderWorkspace(fromLoad) {
+  keepEdits($('#workspacePage'), () => drawWorkspace(fromLoad));
+}
+function drawWorkspace(fromLoad) {
   const el = $('#workspacePage');
   if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to set up a workspace for your team. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'Workspaces need accounts, which are not set up on this server.'}</div>`; return; }
   if (!ORG) { el.innerHTML = onboardingHtml(); return; }
-  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
+  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${ssoPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
   if (!fromLoad) loadWs();
 }
 async function runReport(form) {
@@ -1357,12 +1400,13 @@ async function runReport(form) {
 }
 async function sendOrgInvite(form) {
   const fd = new FormData(form), email = String(fd.get('email') || '').trim(), role = fd.get('role');
-  const sendIt = email && $('#oi_send') && $('#oi_send').checked;
-  const access = sendIt && !CLOUD.connected() ? CLOUD.connect() : null;
+  const sendIt = email && $('#oi_send') && $('#oi_send').checked, server = Boolean(CLOUD.config.email);
+  const access = sendIt && !server && !CLOUD.connected() ? CLOUD.connect() : null;
   try {
-    const r = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/invites`, { role, email: email || undefined });
+    const r = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/invites`, { role, email: email || undefined, send: Boolean(sendIt && server) });
     WS.lastInvite = `${location.origin}/invite/${r.code}`; WS.invites = null;
-    if (sendIt) {
+    if (sendIt && server) toast(r.emailed ? `Invitation emailed to ${email}` : 'Invitation link created. Copy it and send it to your colleague.');
+    else if (sendIt) {
       if (access) await access;
       await CLOUD.mail.send({ to: [email], subject: `Join ${ORG.name} on Headcount`, body: `Hi,\n\n${CLOUD.user.name} invited you to join ${ORG.name} on Headcount as ${role === 'guest' ? 'a guest' : role === 'admin' ? 'an admin' : 'a member'}. Headcount is where we track vote counts, meetings and bill briefs.\n\nJoin here (the link works for 14 days and only for ${email}):\n${WS.lastInvite}\n\n${CLOUD.user.name}` });
       toast(`Invitation sent to ${email}`);
@@ -1378,7 +1422,7 @@ function renderSwitcher() {
   const opt = (v, label, sel) => `<option value="${esc(v)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
   const os = $('#orgSel');
   os.hidden = !signedIn();
-  if (signedIn()) os.innerHTML = (ORG ? '' : '<option value="">No workspace yet</option>') + ORGS.map((o) => opt(o.id, o.name + (o.role === 'guest' ? ' (guest)' : ''), ORG && o.id === ORG.id)).join('') + '<option value="__new">New workspace…</option>';
+  if (signedIn()) os.innerHTML = (ORG ? '' : '<option value="">No workspace yet</option>') + ORGS.map((o) => opt(o.id, o.name + (o.ssoRequired ? ' (single sign-on)' : o.role === 'guest' ? ' (guest)' : ''), ORG && o.id === ORG.id)).join('') + '<option value="__new">New workspace…</option>';
   if (signedIn() && ORG) {
     const acct = ACCOUNT.list.filter((e) => !e.archived || (S.cloud && e.id === S.id)); if (S.cloud && !acct.some((e) => e.id === S.id)) acct.unshift({ id: S.id, name: c.bill, role: ROLE, people: 1 });
     const tag = (e) => (e.role === 'viewer' ? ' (view only)' : e.client ? ` · ${e.client}` : '');
@@ -1425,6 +1469,7 @@ function render() {
     banner = JOIN.error ? `<span>${esc(JOIN.error)}</span>`
       : JOIN.info ? `<span><b>${esc(JOIN.info.invitedBy)}</b> invited you to ${JOIN.kind === 'org' ? 'join' : 'work on'} ${what} as ${role}.${signedIn() ? '' : ' Sign in to accept.'}</span>${signedIn() ? '<button class="btn sm primary" data-act="joinNow">Accept</button>' : '<button class="btn sm primary" data-act="signin">Sign in to accept</button>'}` : '<span>Checking your invitation</span>';
   } else if (cfg.authError) banner = `<span>${esc(cfg.authError)}</span>`;
+  else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's identity provider to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
   else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
@@ -1481,6 +1526,7 @@ function memberDrawer(id) {
     <label class="wide">What happened<textarea id="c_note" name="note" placeholder="Their ask, their objection, who else was in the room"></textarea></label>
     <label>Follow-up<input id="c_fu" name="fu" placeholder="Send the fiscal note"></label>
     <label>Due<input type="date" id="c_fud" name="fud"></label>
+    ${S.cloud ? `<label class="wide">Who does it${assignSelect('c_fufor', 'fufor', '')}</label>` : ''}
     <div class="wide"><button class="btn primary">Log contact</button></div>
   </form>`}`;
   const details = () => `<form id="mForm" class="form">
@@ -1582,25 +1628,38 @@ function newCampDrawer() {
     <div class="wide"><button class="btn primary">Create campaign</button></div>
   </form>`);
 }
-function signInDrawer() {
+function signInDrawer(mode) {
   const cfg = CLOUD.config;
   showDrawer(`<div class="row"><h2>Sign in</h2><button class="btn sm" data-act="close">Close</button></div>
   <div class="signin">
     ${cfg.auth === 'dev' ? '<p class="note"><b>Local test mode.</b> No real account is used.</p><label class="note">Name<input id="dev_name" value="Test User"></label><label class="note">Email<input id="dev_email" value="tester@example.org"></label>' : ''}
     ${cfg.providers.map((p) => `<button class="btn" data-act="signinWith" data-p="${p}">Continue with ${CLOUD.providerName(p)}</button>`).join('')}
-    <p class="note">Signing in saves your campaigns to your account so you can use them on any device and share them with teammates. Headcount asks for access to your calendar and email only when you first send a meeting request, and uses it only to send what you ask it to. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+    ${cfg.sso ? `<details class="sect" ${mode === 'sso' ? 'open' : ''}><summary>Sign in with single sign-on</summary>
+      <form id="ssoForm" class="taskadd"><input id="sso_email" name="email" type="email" required placeholder="you@yourfirm.com" aria-label="Work email" value="${esc((SSO_STEP && SSO_STEP.email) || '')}"><button class="btn">Continue</button></form>
+      <div id="ssoNext" class="note">${SSO_STEP && SSO_STEP.provider ? `<button class="btn primary" data-act="ssoGo">Continue to ${esc(SSO_STEP.workspace)} sign-in</button>` : 'For firms that sign in through Okta, Microsoft Entra ID or another identity provider.'}</div></details>` : ''}
+    <p class="note">Signing in saves your campaigns to your firm's workspace so you can use them on any device and share them with colleagues. Headcount asks for access to your calendar and email only when you first send a meeting request, and uses it only to send what you ask it to. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
   </div>`);
 }
-function accountDrawer() {
-  const u = CLOUD.user, p = CLOUD.provider();
+function accountDrawer(scrollToEmail) {
+  const u = CLOUD.user, p = CLOUD.provider(), cfg = CLOUD.config || {}, pr = PREFS || { digest: 'weekly', digestHour: 8, notifyAssigned: true, notifyAdded: true };
+  const how = CLOUD.isSSO() ? 'Single sign-on' : CLOUD.providerName(u.provider);
+  const choices = p ? [p] : ['google', 'microsoft'];
   showDrawer(`<div class="row"><h2>Account</h2><button class="btn sm" data-act="close">Close</button></div>
-  <dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Signed in with</dt><dd>${CLOUD.providerName(p)}</dd>
-  <dt>Calendar and email</dt><dd>${CLOUD.connected() ? `<span class="status ok">Connected in this tab</span>` : '<span class="status">Not connected</span>'}</dd></dl>
-  ${CLOUD.connected() ? '' : `<p class="note">Connect ${CLOUD.mailName(p)} and ${CLOUD.calName(p)} to send meeting requests and invitations from your own account. Headcount reads your calendar only to find open times, never reads your email, and keeps the connection in this browser tab.</p><div><button class="btn" data-act="connect">Connect ${CLOUD.mailName(p)} and ${CLOUD.calName(p)}</button></div>`}
+  <dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Signed in with</dt><dd>${esc(how)}</dd>
+  <dt>Calendar and email</dt><dd>${CLOUD.connected() ? `<span class="status ok">${esc(CLOUD.mailName(p))} connected in this tab</span>` : '<span class="status">Not connected</span>'}</dd></dl>
+  ${CLOUD.connected() ? '' : `<p class="note">Connect ${choices.map((x) => `${CLOUD.mailName(x)} and ${CLOUD.calName(x)}`).join(', or ')} to send meeting requests and invitations from your own account. Headcount reads your calendar only to find open times, never reads your email, and keeps the connection in this browser tab.</p>
+  <div class="btnrow">${choices.map((x) => `<button class="btn" data-act="connect" data-mp="${x}">Connect ${CLOUD.mailName(x)}</button>`).join('')}</div>`}
+  ${cfg.email ? `<details class="sect" id="emailSect" open><summary>Email from Headcount</summary>
+    <label class="note" style="display:flex;flex-direction:column;gap:4px">Digest<select id="pf_digest"><option value="daily" ${pr.digest === 'daily' ? 'selected' : ''}>Every morning</option><option value="weekly" ${pr.digest === 'weekly' ? 'selected' : ''}>Monday mornings</option><option value="off" ${pr.digest === 'off' ? 'selected' : ''}>No digest</option></select></label>
+    <label class="note" style="display:flex;flex-direction:column;gap:4px">Send it at<select id="pf_hour">${[6, 7, 8, 9, 10, 11, 12].map((h) => `<option value="${h}" ${pr.digestHour === h ? 'selected' : ''}>${h <= 12 ? h : h - 12}${h < 12 ? ' a.m.' : ' p.m.'}</option>`).join('')}</select></label>
+    <p class="note">The digest covers position changes, contacts logged, votes and meetings coming up, and your overdue follow-ups, in your time zone${pr.tz ? ` (${esc(pr.tz)})` : ''}.</p>
+    <label class="check"><input type="checkbox" id="pf_assigned" ${pr.notifyAssigned ? 'checked' : ''}> Email me when someone assigns me a follow-up</label>
+    <label class="check"><input type="checkbox" id="pf_added" ${pr.notifyAdded ? 'checked' : ''}> Email me when someone adds me to a campaign</label>
+  </details>` : ''}
   <div class="btnrow"><button class="btn" data-act="signout">Sign out</button></div>
-  <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every campaign. Campaigns you own pass to their longest-standing editor, or are deleted if nobody else edits them. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
+  <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every workspace. A workspace you alone own passes to its longest-standing admin or member, or is deleted if nobody else is in it. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
+  if (scrollToEmail && $('#emailSect')) $('#emailSect').scrollIntoView({ block: 'start' });
 }
-
 async function reloadClients() { CLIENTS = (await CLOUD.api('GET', `/api/workspaces/${ORG.id}/clients`)).clients; }
 function newOrgDrawer() {
   showDrawer(`<div class="row"><h2>New workspace</h2><button class="btn sm" data-act="close">Close</button></div>
@@ -1627,7 +1686,7 @@ document.addEventListener('click', async (e) => {
   const sure = (label) => { if (t.dataset.sure === '1') return true; t.dataset.sure = '1'; t.textContent = label; t.classList.add('warn'); return false; };
   // Calendar and email access needs a pop-up, so ask before any await.
   const needsMail = ['rqSend', 'rqInvite', 'rqFind', 'checkReplies', 'connect'].includes(a) || (a === 'cancelMeet' && (() => { const mt = S.meetings.find((x) => x.id === t.dataset.id); return mt && mt.eventId && mine(mt) && !ended(mt) && t.dataset.sure === '1'; })());
-  const access = needsMail && signedIn() && !CLOUD.connected() ? CLOUD.connect() : null;
+  const access = needsMail && signedIn() && (!CLOUD.connected() || (t.dataset.mp && CLOUD.provider() !== t.dataset.mp)) ? CLOUD.connect(t.dataset.mp) : null;
   const ready = async () => { if (access) { try { await access; } catch (err) { if (RQ && $('#rqMsg')) rqMsg(err.message); else fail(err); return false; } } return true; };
   switch (a) {
     case 'close': return closeDrawer();
@@ -1696,6 +1755,8 @@ document.addEventListener('click', async (e) => {
     case 'staffDir': return staffDirDrawer();
     case 'newCamp': return newCampDrawer();
     case 'signin': return signInDrawer();
+    case 'ssoSwitch': await flushNow(); await CLOUD.signOut(); SSO_NEEDED = null; return signInDrawer('sso');
+    case 'ssoGo': try { await CLOUD.signInSSO(SSO_STEP.provider, SSO_STEP.email); SSO_STEP = null; closeDrawer(); } catch (err) { fail(err); } return;
     case 'account': return accountDrawer();
     case 'signinWith': {
       const dev = CLOUD.config.auth === 'dev' ? { name: $('#dev_name').value, email: $('#dev_email').value, id: $('#dev_email').value.split('@')[0] } : null;
@@ -1822,6 +1883,11 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'orgSel') { if (t.value === '__new') { t.value = ORG ? ORG.id : ''; return newOrgDrawer(); } return switchOrg(t.value); }
   if (t.dataset.orgrole) { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/members/${encodeURIComponent(t.dataset.orgrole)}`, { role: t.value }); toast('Role changed'); } catch (err) { fail(err); } WS.members = null; await loadOrg(ORG.id, { quiet: true }); return render(); }
   if (t.id === 'pf_client') { WS.filter.client = t.value; return renderPortfolio(); }
+  if (['pf_digest', 'pf_hour', 'pf_assigned', 'pf_added'].includes(t.id)) {
+    const patch = { pf_digest: { digest: t.value }, pf_hour: { digestHour: +t.value }, pf_assigned: { notifyAssigned: t.checked }, pf_added: { notifyAdded: t.checked } }[t.id];
+    try { PREFS = await CLOUD.api('PATCH', '/api/me/prefs', patch); toast('Email settings saved'); } catch (err) { fail(err); }
+    return;
+  }
   if (t.id === 'pf_arch') { WS.filter.archived = t.checked; return renderPortfolio(); }
   if (t.id === 'dm_join') { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/domain`, { join: t.checked }); await loadOrg(ORG.id); toast(t.checked ? 'Colleagues can now join from their work email' : 'Joining by email domain is off'); } catch (err) { fail(err); } return render(); }
   if (t.id === 'camp_vis') { try { await CLOUD.api('PATCH', `/api/campaigns/${encodeURIComponent(S.id)}`, { visibility: t.value }); await refreshAccount(); toast(t.value === 'team' ? 'Only the people listed can see it now' : `Everyone in ${ORG.name} can see it now`); render(); } catch (err) { fail(err); } return; }
@@ -1864,6 +1930,16 @@ document.addEventListener('submit', async (e) => {
   const fd = new FormData(e.target), id = e.target.id, cut = (k, n) => String(fd.get(k) || '').trim().slice(0, n);
   const m = S.members.find((x) => x.id === openId);
   if (id === 'oiForm') return sendOrgInvite(e.target);
+  if (id === 'ssoForm') {
+    const email = cut('email', 160);
+    try { const r = await CLOUD.publicGet(`/api/sso/lookup?email=${encodeURIComponent(email)}`); SSO_STEP = { email, provider: r.provider, workspace: r.workspace }; signInDrawer('sso'); }
+    catch (err) { SSO_STEP = null; $('#ssoNext').textContent = err.message; }
+    return;
+  }
+  if (id === 'ssForm') {
+    try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/sso`, { provider: cut('provider', 70), required: fd.has('required') }); await loadOrg(ORG.id); render(); toast('Single sign-on saved'); } catch (err) { fail(err); }
+    return;
+  }
   if (id === 'woForm' || id === 'noForm') { closeDrawer(); return createOrg(cut('name', 80)); }
   if (id === 'rpForm') return runReport(e.target);
   if (id === 'ckForm') { try { await CLOUD.api('POST', `/api/workspaces/${ORG.id}/clients`, { name: cut('name', 120) }); await reloadClients(); renderWorkspace(true); toast('Client added'); } catch (err) { fail(err); } return; }
@@ -1873,7 +1949,7 @@ document.addEventListener('submit', async (e) => {
   if (id === 'dfForm') return draftAnalysis(e.target);
   if (id === 'bfForm') return saveBriefForm(e.target);
   if (id === 'tForm') {
-    S.tasks.push(stamp({ id: uid(), text: cut('text', 200), due: fd.get('due') || '', mid: '', done: false }));
+    S.tasks.push(stamp({ id: uid(), text: cut('text', 200), due: fd.get('due') || '', mid: '', done: false, assignee: S.cloud ? String(fd.get('for') || '') : '' }));
     if (S.tasks.length > 300) S.tasks = S.tasks.slice(-300);
     e.target.reset(); save(); render(); return toast('Follow-up added');
   }
@@ -1915,7 +1991,7 @@ document.addEventListener('submit', async (e) => {
     const to = +fd.get('pos'), st = m.staffers.find((s) => s.id === fd.get('who'));
     m.history.push(stamp({ d: fd.get('d') || today(), type: fd.get('type'), who: st ? st.name : '', from: m.pos, to, note: cut('note', 1000) }));
     if (m.history.length > 60) m.history = m.history.slice(-60);
-    if (cut('fu', 200)) S.tasks.push(stamp({ id: uid(), text: cut('fu', 200), due: fd.get('fud') || '', mid: m.id, done: false }));
+    if (cut('fu', 200)) S.tasks.push(stamp({ id: uid(), text: cut('fu', 200), due: fd.get('fud') || '', mid: m.id, done: false, assignee: S.cloud ? String(fd.get('fufor') || '') : '' }));
     m.pos = to; commit('Contact logged'); tab = 'history'; return memberDrawer(m.id);
   }
 });
@@ -1930,7 +2006,7 @@ document.addEventListener('submit', async (e) => {
   if (JOIN) { try { JOIN.info = await CLOUD.publicGet(JOIN.kind === 'org' ? `/api/workspace-invites/${JOIN.code}` : `/api/invites/${JOIN.code}`); } catch (e) { JOIN.error = e.message; } }
   if (CLOUD.user) await onSignedIn(); else render();
   if (billing) {
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', '/app');
     if (billing === 'done') { toast('Thank you. Your plan will update in a few seconds.'); page = 'workspace'; render(); setTimeout(() => { if (ORG) loadOrg(ORG.id, { quiet: true }).then(render); }, 4000); }
     else if (billing === 'back' && ORG) { page = 'workspace'; await loadOrg(ORG.id, { quiet: true }); render(); }
   }

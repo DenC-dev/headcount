@@ -51,7 +51,7 @@ before(async () => {
   Object.assign(process.env, {
     AUTH_MODE: 'dev', CONGRESS_API_KEY: 'cg-key', CONGRESS_API_BASE: `${m}/v3`, OPENSTATES_API_KEY: 'os-key', OPENSTATES_API_BASE: m, FIREBASE_JWKS_URL: `${m}/jwks`,
     ANTHROPIC_API_KEY: 'test-key', ANTHROPIC_BASE_URL: m,
-    STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: 'whsec_1', STRIPE_PRICE_TEAM: 'price_team', STRIPE_API_BASE: m, PUBLIC_URL: 'https://app.example.org', TRIAL_SEATS: '3',
+    STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: 'whsec_1', STRIPE_PRICE_TEAM: 'price_team', STRIPE_API_BASE: m, PUBLIC_URL: 'https://app.example.org', TRIAL_SEATS: '3', SALES_EMAIL: 'sales@headcount.test',
   });
   mods = { db: await import('../server/db.js'), auth: await import('../server/auth.js'), bills: await import('../server/bills.js'), ai: await import('../server/ai.js'), index: await import('../server/index.js'), config: (await import('../server/config.js')).config };
   store = mods.db.openDb(':memory:', mods.config);
@@ -176,7 +176,7 @@ test('Stripe checkout, signed webhooks, seats and cancellation', async () => {
   const sess = mocks.stripe.find((r) => r.path === '/v1/checkout/sessions');
   assert.equal(sess.auth, 'Bearer sk_test_1');
   assert.deepEqual([sess.form.get('mode'), sess.form.get('customer'), sess.form.get('client_reference_id'), sess.form.get('line_items[0][price]'), sess.form.get('line_items[0][quantity]'), sess.form.get('subscription_data[metadata][org_id]')], ['subscription', 'cus_1', W, 'price_team', '5', W]);
-  assert.equal(sess.form.get('success_url'), 'https://app.example.org/?billing=done');
+  assert.equal(sess.form.get('success_url'), 'https://app.example.org/app?billing=done');
   // Forged and stale webhooks are refused.
   const ev = { id: 'evt_1', type: 'checkout.session.completed', data: { object: { client_reference_id: W, customer: 'cus_1', subscription: 'sub_1' } } };
   const s1 = signed(ev);
@@ -307,4 +307,134 @@ test('pages carry security headers and paths cannot escape', async () => {
   assert.notEqual(raw, 200);
   const ct = await fetch(base + '/api/workspaces', { method: 'POST', headers: { Authorization: 'Bearer ' + tok('alice'), 'Content-Type': 'text/plain' }, body: '{}' });
   assert.equal(ct.status, 415);
+});
+
+// ---------- email ----------
+const outbox = async () => (await (await fetch(base + '/api/dev/outbox')).json()).emails;
+test('being added to a campaign or assigned a follow-up sends an email, within each person\'s settings', async () => {
+  ok(await api('alice', 'POST', `/api/campaigns/${C2}/people`, { userId: 'dev:cara', role: 'editor' }));
+  const added = (await outbox()).find((x) => x.to_addr === 'cara@example.org' && x.kind === 'added');
+  assert.match(added.subject, /Alice added you to Closed one/); assert.match(added.unsubscribe, /^https:\/\/app\.example\.org\/api\/unsubscribe\?t=/);
+  const task = (id, extra) => ({ kind: 'tasks', id, data: { id, text: 'Send the fiscal note', due: '2026-11-20', done: false, ...extra } });
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [task('t1', { assignee: 'dev:cara' })] }));
+  const count = async (to, kind) => (await outbox()).filter((x) => x.to_addr === to && x.kind === kind).length;
+  const a = (await outbox()).find((x) => x.kind === 'assigned');
+  assert.match(a.subject, /^Alice assigned you a follow-up: Send the fiscal note/); assert.equal(a.to_addr, 'cara@example.org'); assert.equal(a.reply_to, 'alice@example.org');
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [task('t1', { assignee: 'dev:cara', text: 'Send the revised fiscal note' })] }));
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [task('t9', { assignee: 'dev:alice' })] }));
+  assert.equal(await count('cara@example.org', 'assigned'), 1, 'no repeat, and nothing for assigning yourself');
+  assert.equal(await count('alice@example.org', 'assigned'), 0);
+  ok(await api('cara', 'PATCH', '/api/me/prefs', { notifyAssigned: false }));
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [task('t2', { assignee: 'dev:cara' })] }));
+  assert.equal(await count('cara@example.org', 'assigned'), 1, 'turned off');
+  assert.equal((await api('cara', 'PATCH', '/api/me/prefs', { digest: 'hourly' })).status, 400);
+  assert.equal((await api('cara', 'PATCH', '/api/me/prefs', { tz: 'Mars/Olympus' })).status, 400);
+});
+
+test('unsubscribe links are signed, work in one click and refuse tampering', async () => {
+  const added = (await outbox()).find((x) => x.kind === 'added'), u = new URL(added.unsubscribe);
+  const page = await fetch(base + u.pathname + u.search);
+  assert.equal(page.status, 200); assert.match(await page.text(), /You are unsubscribed/);
+  assert.equal(ok(await api('cara', 'GET', '/api/me')).prefs.notifyAdded, false);
+  const forged = u.search.replace('.added.', '.digest.');
+  assert.equal((await fetch(base + u.pathname + forged)).status, 400);
+  const one = await fetch(base + u.pathname + u.search, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' });
+  assert.equal(one.status, 200);
+});
+
+test('a daily digest arrives at the chosen hour in the person\'s time zone, once a day', async () => {
+  ok(await api('alice', 'PATCH', '/api/me/prefs', { digest: 'daily', tz: 'America/New_York', digestHour: 8 }));
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [
+    { kind: 'members', id: 'm1', data: { name: 'Vega', party: 'D', district: '4', pos: 3, history: [{ d: '2026-11-16', type: 'Meeting', from: 2, to: 3, by: 'dev:bob' }] } },
+    { kind: 'tasks', id: 't3', data: { id: 't3', text: 'Call the district office', due: '2026-11-10', done: false } },
+    { kind: 'summary', data: { odds: 0.6, side: 'pass', cmteDate: '2026-11-20', trend: [{ d: '2026-11-10', p: 0.5 }], meetings: [] } },
+  ] }));
+  // 2026-11-17 is a Tuesday, so weekly digests wait for Monday.
+  assert.equal(server.jobs.digests(new Date('2026-11-17T12:00:00Z')), 0, '7 a.m. in New York is too early');
+  assert.equal(server.jobs.digests(new Date('2026-11-17T14:00:00Z')), 1);
+  assert.equal(server.jobs.digests(new Date('2026-11-17T20:00:00Z')), 0, 'once a day');
+  const d = (await outbox()).find((x) => x.kind === 'digest');
+  assert.equal(d.to_addr, 'alice@example.org'); assert.match(d.subject, /^Headcount for Tue, Nov 17: 1 position change/);
+  for (const line of ['SB 214: Broadband (Prairie Co-ops · Capitol Strategies)', 'Odds of passage: 60% (up 10 points)', 'Moved: Vega: Undecided to Lean yes', '1 contact logged by the team', 'Committee vote Fri, Nov 20', 'Overdue follow-up: Call the district office']) assert.ok(d.text_body.includes(line), line);
+});
+
+test('admins hear when a trial is about to end, once', async () => {
+  const t = ok(await api('ivan', 'POST', '/api/workspaces', { name: 'Trial Co' }));
+  store.db.prepare('UPDATE orgs SET trial_ends = ? WHERE id = ?').run(Date.now() + 2.5 * 864e5, t.id);
+  assert.equal(server.jobs.trialNotices(Date.now()), 1);
+  assert.equal(server.jobs.trialNotices(Date.now()), 0);
+  assert.match((await outbox()).find((x) => x.to_addr === 'ivan@example.org').subject, /Trial Co: your Headcount trial ends in 3 days/);
+});
+
+test('workspace invitations can be emailed by the server', async () => {
+  const r = ok(await api('alice', 'POST', `/api/workspaces/${W}/invites`, { role: 'guest', email: 'client@prairie.org', send: true }));
+  assert.equal(r.emailed, true);
+  const m = (await outbox()).find((x) => x.to_addr === 'client@prairie.org');
+  assert.match(m.subject, /Alice invited you to Capitol Strategies on Headcount/); assert.ok(m.text_body.includes(`/invite/${r.code}`));
+});
+
+test('the mail worker sends queued email with unsubscribe headers and retries failures', async () => {
+  const { makeMailer } = await import('../server/mail.js');
+  const sent = []; let failNext = true;
+  const transport = { sendMail: async (msg) => { if (failNext) { failNext = false; throw new Error('421 try again later'); } sent.push(msg); } };
+  const s2 = mods.db.openDb(':memory:', { billing: false });
+  s2.touchUser({ id: 'u1', email: 'u1@x.org', name: 'U' });
+  const mailer = makeMailer({ smtpTransport: transport, emailFrom: 'Headcount <n@headcount.test>', publicUrl: 'https://app.test' }, s2);
+  assert.equal(mailer.queue({ to: 'u1@x.org', subject: 'Hello', text: 'Body', kind: 'digest', userId: 'u1', unsubscribeKind: 'digest' }), true);
+  assert.equal(await mailer.work(), 0);
+  const row = s2.db.prepare('SELECT attempts, next_at, error FROM email_queue').get();
+  assert.equal(row.attempts, 1); assert.match(row.error, /421/); assert.ok(row.next_at > Date.now() + 50e3);
+  assert.equal(await mailer.work(Date.now() + 61e3), 1);
+  assert.equal(sent[0].from, 'Headcount <n@headcount.test>');
+  assert.equal(sent[0].headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
+  assert.match(sent[0].headers['List-Unsubscribe'], /^<https:\/\/app\.test\/api\/unsubscribe\?t=/);
+});
+
+test('the demo request form stores the lead and emails sales', async () => {
+  const post = (b) => fetch(base + '/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+  assert.equal((await post({ name: 'Pat', email: 'nope' })).status, 400);
+  assert.equal((await post({ name: 'Bot', email: 'b@x.org', website: 'http://spam' })).status, 200);
+  assert.equal((await post({ name: 'Pat Lee', email: 'pat@firm.org', firm: 'Lee Partners', size: '6 to 20', message: 'Florida House' })).status, 200);
+  assert.deepEqual(store.db.prepare('SELECT name FROM leads').all().map((l) => l.name), ['Pat Lee']);
+  const m = (await outbox()).find((x) => x.kind === 'lead');
+  assert.equal(m.to_addr, 'sales@headcount.test'); assert.equal(m.reply_to, 'pat@firm.org'); assert.match(m.text_body, /Lee Partners/);
+});
+
+// ---------- single sign-on ----------
+test('single sign-on: Firm plan, verified domain, required for members but not owners, joins on sign-in', async () => {
+  const f = ok(await api('olga', 'POST', '/api/workspaces', { name: 'Big Firm' }));
+  assert.equal((await api('olga', 'PATCH', `/api/workspaces/${f.id}/sso`, { provider: 'saml.bigfirm' })).status, 402, 'not on the trial');
+  store.db.prepare("UPDATE orgs SET plan = 'firm', status = 'active', stripe_subscription = 'sub_bf', seats = 10 WHERE id = ?").run(f.id);
+  assert.equal((await api('olga', 'PATCH', `/api/workspaces/${f.id}/sso`, { provider: 'saml.bigfirm' })).status, 400, 'domain not verified');
+  const d = ok(await api('olga', 'POST', `/api/workspaces/${f.id}/domain`, { domain: 'bigfirm.com' }));
+  txt.set('bigfirm.com', [[d.record]]); ok(await api('olga', 'POST', `/api/workspaces/${f.id}/domain/verify`));
+  assert.equal((await api('olga', 'PATCH', `/api/workspaces/${f.id}/sso`, { provider: 'not a provider' })).status, 400);
+  ok(await api('olga', 'PATCH', `/api/workspaces/${f.id}/sso`, { provider: 'saml.bigfirm', required: true }));
+  assert.deepEqual(ok(await api(null, 'GET', '/api/sso/lookup?email=someone@BigFirm.com')), { provider: 'saml.bigfirm', workspace: 'Big Firm' });
+  assert.equal((await api(null, 'GET', '/api/sso/lookup?email=someone@other.org')).status, 404);
+  const inv = ok(await api('olga', 'POST', `/api/workspaces/${f.id}/invites`, { role: 'member' }));
+  ok(await api('paul', 'POST', `/api/workspace-invites/${inv.code}`));
+  const blocked = await api('paul', 'GET', `/api/workspaces/${f.id}/campaigns`);
+  assert.equal(blocked.status, 403); assert.equal(blocked.body.sso, true); assert.equal(blocked.body.workspace, 'Big Firm');
+  assert.equal(ok(await api('paul', 'GET', '/api/workspaces')).workspaces.find((w) => w.id === f.id).ssoRequired, true);
+  ok(await api('olga', 'POST', '/api/campaigns', { id: 'bf1', workspaceId: f.id, name: 'Firm bill' }));
+  assert.equal((await api('paul', 'GET', '/api/campaigns/bf1/records?since=0')).status, 403);
+  const sso = { provider: 'saml.bigfirm', domain: 'bigfirm.com' };
+  const me = ok(await api('quinn', 'GET', '/api/me', null, sso));
+  assert.equal(me.workspaces.find((w) => w.id === f.id).role, 'member');
+  assert.equal(ok(await api('quinn', 'GET', '/api/campaigns/bf1/records?since=0', null, sso)).role, 'editor');
+  assert.ok(ok(await api('olga', 'GET', `/api/workspaces/${f.id}/audit`)).entries.some((e) => e.action === 'member.joined' && e.detail.via === 'single sign-on'));
+});
+
+// ---------- website ----------
+test('the website and the app have their own addresses', async () => {
+  const home = await fetch(base + '/'); assert.equal(home.status, 200);
+  const h = await home.text();
+  assert.match(h, /Know the count/); assert.match(h, /<svg/); assert.doesNotMatch(h, /\{\{\w+\}\}/);
+  const pricing = await (await fetch(base + '/pricing')).text();
+  assert.match(pricing, /<td>3<\/td>/); assert.match(pricing, /Single sign-on \(SAML, OIDC\)/); assert.doesNotMatch(pricing, /\{\{\w+\}\}/);
+  for (const pth of ['/security', '/privacy', '/terms', '/site/site.css', '/site/site.js', '/app', '/app/', '/invite/abcdefgh12']) assert.equal((await fetch(base + pth)).status, 200, pth);
+  assert.match(await (await fetch(base + '/app')).text(), /<script src="\/app\.js" defer>/);
+  for (const pth of ['/site/_header.html', '/site/_hemicycle.svg']) assert.equal((await fetch(base + pth)).status, 403, pth);
+  assert.match(await (await fetch(base + '/security')).text(), /mailto:sales@headcount\.test/);
 });

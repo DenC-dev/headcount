@@ -15,7 +15,7 @@
 <div class="wrap">
   <header class="mast">
     <div>
-      <div class="brandrow"><span class="brand">Headcount</span><select id="orgSel" aria-label="Workspace" hidden></select></div>
+      <div class="brandrow"><a class="brand" href="/">Headcount</a><select id="orgSel" aria-label="Workspace" hidden></select></div>
       <div class="camp"><select id="campSel" aria-label="Campaign"></select></div>
       <h1 id="hBill"></h1>
       <div class="sub" id="hSub"></div>
@@ -82,6 +82,7 @@
         <ul class="tasks" id="tasks"></ul>
         <form id="tForm" class="taskadd">
           <input id="t_text" name="text" placeholder="Add a follow-up" aria-label="Follow-up" required>
+          <select id="t_for" name="for" aria-label="For" hidden></select>
           <input id="t_due" name="due" type="date" aria-label="Due date">
           <button class="btn">Add</button>
         </form>
@@ -109,7 +110,7 @@
   <div id="portfolioPage" class="stack" hidden></div>
   <div id="workspacePage" hidden></div>
 
-  <footer class="note noprint" style="text-align:center;padding-top:8px"><a href="/privacy">Privacy</a></footer>
+  <footer class="note noprint" style="text-align:center;padding-top:8px"><a href="/">Headcount</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/security">Security</a></footer>
 </div>
 <div class="scrim" id="scrim" hidden></div>
 <aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-label="Detail"></aside>

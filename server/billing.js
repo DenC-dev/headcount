@@ -56,7 +56,7 @@ export function makeBilling(cfg, store) {
       line_items: { 0: { price, quantity: n } },
       subscription_data: { metadata: { org_id: oid } },
       allow_promotion_codes: 'true',
-      success_url: `${base}/?billing=done`, cancel_url: `${base}/?billing=cancelled`,
+      success_url: `${base}/app?billing=done`, cancel_url: `${base}/app?billing=cancelled`,
     });
     store.log(oid, user.id, 'billing.checkout_started', null, { seats: n });
     return { url: s.url };
@@ -65,7 +65,7 @@ export function makeBilling(cfg, store) {
   async function portal(oid, user) {
     const org = store.billingOrg(oid, user.id);
     if (!org.stripe_customer) throw new HttpError(400, 'This workspace has no billing account yet. Choose a plan first.');
-    const s = await stripe(cfg, 'POST', '/v1/billing_portal/sessions', { customer: org.stripe_customer, return_url: `${base}/?billing=back` });
+    const s = await stripe(cfg, 'POST', '/v1/billing_portal/sessions', { customer: org.stripe_customer, return_url: `${base}/app?billing=back` });
     return { url: s.url };
   }
 
@@ -125,7 +125,7 @@ export function makeBilling(cfg, store) {
         sync(obj); break;
       case 'invoice.payment_failed': {
         const org = store.orgForStripe(null, obj.customer);
-        if (org) store.log(org.id, null, 'billing.payment_failed');
+        if (org) { store.log(org.id, null, 'billing.payment_failed'); store.notify({ type: 'billing.payment_failed', org }); }
         break;
       }
       default: break;
