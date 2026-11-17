@@ -10,6 +10,11 @@
 <link rel="stylesheet" href="/styles.css">
 <script src="/cloud.js" defer></script>
 <script src="/app.js" defer></script>
+<script src="/intel.js" defer></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2b3fbf">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
 </head>
 <body>
 <div class="wrap">
@@ -24,6 +29,8 @@
         <button id="pgPortfolio" data-page="portfolio" aria-pressed="false" hidden>Portfolio</button>
         <button id="pgCount" data-page="count" aria-pressed="true">Vote count</button>
         <button id="pgBrief" data-page="brief" aria-pressed="false">Bill brief</button>
+        <button id="pgMonitor" data-page="monitor" aria-pressed="false" hidden>Monitor</button>
+        <button id="pgContacts" data-page="contacts" aria-pressed="false" hidden>Contacts</button>
         <button id="pgWorkspace" data-page="workspace" aria-pressed="false" hidden>Workspace</button>
       </div>
     </div>
@@ -34,6 +41,7 @@
         <div class="menulist">
           <button data-act="newCamp">New campaign</button>
           <button data-act="reports">Reports</button>
+          <button data-x="actionCenter">Action center</button>
           <button data-act="staffDir">Staff directory</button>
           <button data-act="account" id="menuAccount">Account</button>
         </div>
@@ -108,6 +116,8 @@
 
   <div id="briefPage" hidden></div>
   <div id="portfolioPage" class="stack" hidden></div>
+  <div id="monitorPage" class="stack" hidden></div>
+  <div id="contactsPage" class="stack" hidden></div>
   <div id="workspacePage" hidden></div>
 
   <footer class="note noprint" style="text-align:center;padding-top:8px"><a href="/">Headcount</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/security">Security</a></footer>

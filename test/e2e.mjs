@@ -28,7 +28,20 @@ const mock = http.createServer((req, res) => {
     if (u.pathname === '/v3/bill/119/hr/1234') return j(200, { bill: { title: 'Rural Broadband Access Act', introducedDate: '2025-03-04', sponsors: [{ fullName: 'Rep. Smith, Ann [D-IA-2]', party: 'D', state: 'IA', district: 2 }], cosponsors: { count: 12 }, latestAction: { actionDate: '2025-06-01', text: 'Referred to the Subcommittee on Communications and Technology.' } } });
     if (u.pathname === '/v3/bill/119/hr/1234/summaries') return j(200, { summaries: [{ actionDate: '2025-03-04', actionDesc: 'Introduced in House', text: '<p>This bill creates grants for rural broadband.</p>' }] });
     if (u.pathname === '/v3/bill/119/hr/1234/committees') return j(200, { committees: [{ name: 'Energy and Commerce Committee' }] });
-    if (u.pathname === '/v1/messages') return j(200, { id: 'msg', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: JSON.stringify(draft) }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } });
+    if (u.pathname === '/v1/messages') {
+      const b = JSON.parse(body || '{}'), screening = /You screen/.test(JSON.stringify(b.system || ''));
+      const items = screening ? [...JSON.stringify(b.messages).matchAll(/<item id=\\"(\d+)\\">([^<]*)/g)].map((x) => ({ id: x[1], score: /broadband/i.test(x[2]) ? 88 : 20, reason: /broadband/i.test(x[2]) ? 'Directly about rural broadband grants.' : 'Not about broadband.' })) : null;
+      return j(200, { id: 'msg', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: JSON.stringify(screening ? { scores: items } : draft) }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } });
+    }
+    // Monitor, intelligence, rosters and the action center
+    if (u.pathname === '/v3/bill') return j(200, { bills: [{ congress: 119, type: 'HR', number: '1234', title: 'Rural Broadband Access Act', latestAction: { actionDate: '2026-11-16', text: 'Referred to the Subcommittee on Communications and Technology.' }, updateDate: '2026-11-16T10:00:00Z' }, { congress: 119, type: 'S', number: '99', title: 'Highway Funding Act', latestAction: { actionDate: '2026-11-15', text: 'Introduced.' }, updateDate: '2026-11-15T10:00:00Z' }] });
+    if (u.pathname === '/bills' && u.searchParams.get('q')) return j(200, { results: [{ id: 'ocd-bill/fl77', identifier: 'HB 77', title: 'Broadband Infrastructure Grants', session: '2026', jurisdiction: { id: 'ocd-jurisdiction/country:us/state:fl/government' }, latest_action_description: 'Filed', latest_action_date: '2026-11-10', updated_at: '2026-11-10T00:00:00', openstates_url: 'https://openstates.org/fl/bills/2026/HB77/' }] });
+    if (u.pathname === '/people') return j(200, { pagination: { max_page: 1 }, results: [
+      { id: 'ocd-person/aaaa-1111', name: 'Corey Simon', party: 'Republican', current_role: { district: '3' }, email: 'simon.corey@flsenate.gov', offices: [{ classification: 'capitol', address: '404 S. Monroe St., Tallahassee, FL 32399', voice: '850-487-5003' }] },
+      { id: 'ocd-person/bbbb-2222', name: 'Ana Ruiz', party: 'Democratic', current_role: { district: '12' }, email: 'ruiz.ana@flsenate.gov', offices: [] }] });
+    if (u.pathname === '/lda/filings/') return j(200, { results: [{ filing_uuid: 'f1', filing_year: 2026, filing_period_display: '3rd Quarter', income: '50000.00', registrant: { name: 'Akin Strategies' }, client: { name: 'Rural Telecom Coalition' }, lobbying_activities: [{ description: 'H.R.1234, Rural Broadband Access Act', government_entities: [{ name: 'HOUSE OF REPRESENTATIVES' }] }], dt_posted: '2026-10-20T10:00:00' }] });
+    if (u.pathname === '/geo/geographies/onelineaddress') return j(200, { result: { addressMatches: [{ matchedAddress: '100 MAIN ST, TALLAHASSEE, FL, 32301', geographies: { States: [{ STUSAB: 'FL' }], '119th Congressional Districts': [{ CD119: '02' }], '2024 State Legislative Districts - Upper': [{ BASENAME: '3' }], '2024 State Legislative Districts - Lower': [{ BASENAME: '8' }] } }] } });
+    if (u.pathname === '/fr/documents.json') return j(200, { results: [] });
     if (u.pathname === '/v1/customers') return j(200, { id: 'cus_e2e' });
     if (u.pathname === '/v1/checkout/sessions') { const f = new URLSearchParams(body); stripeState.org = f.get('client_reference_id'); stripeState.seats = +f.get('line_items[0][quantity]'); stripeState.price = f.get('line_items[0][price]'); stripeState.success = f.get('success_url'); return j(200, { id: 'cs_e2e', url: `${M}/checkout` }); }
     if (u.pathname === '/v1/subscriptions/sub_e2e') return j(200, { id: 'sub_e2e', customer: 'cus_e2e', status: 'active', metadata: { org_id: stripeState.org }, current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400, items: { data: [{ id: 'si_e2e', quantity: stripeState.seats, price: { id: stripeState.price } }] } });
@@ -46,7 +59,8 @@ const BASE = `http://localhost:${port}`;
 const server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], {
   cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'],
   env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, AUTH_MODE: 'dev', NODE_ENV: 'test', CONGRESS_API_KEY: 'k', CONGRESS_API_BASE: `${M}/v3`, ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: M,
-    STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: 'whsec_e2e', STRIPE_PRICE_TEAM: 'price_team', STRIPE_PRICE_FIRM: 'price_firm', STRIPE_API_BASE: M, PUBLIC_URL: BASE, PRICE_LABEL_TEAM: 'per seat, monthly', PRICE_LABEL_FIRM: 'per seat, with SSO', SALES_EMAIL: 'sales@headcount.test' },
+    STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: 'whsec_e2e', STRIPE_PRICE_TEAM: 'price_team', STRIPE_PRICE_FIRM: 'price_firm', STRIPE_API_BASE: M, PUBLIC_URL: BASE, PRICE_LABEL_TEAM: 'per seat, monthly', PRICE_LABEL_FIRM: 'per seat, with SSO', SALES_EMAIL: 'sales@headcount.test',
+    OPENSTATES_API_KEY: 'os', OPENSTATES_API_BASE: M, FEDREG_API_BASE: `${M}/fr`, LDA_API_BASE: `${M}/lda`, GEOCODER_BASE: `${M}/geo`, MONITOR: 'off' },
 });
 await new Promise((resolve) => server.stdout.on('data', (d) => { if (String(d).includes('Headcount on')) resolve(); }));
 async function stripeHook(event) {
@@ -313,6 +327,92 @@ try {
   await bob.page.waitForFunction(() => /Capitol Strategies<\/b> requires single sign-on/.test(document.querySelector('#banner').innerHTML), null, { timeout: 15000 });
   log('ok  single sign-on: Dana joined through the firm\'s identity provider; Bob is asked to use it');
 
+  // ===== The Monitor =====
+  await alice.page.click('[data-page=monitor]');
+  await alice.page.click('[data-x=newWatch]');
+  await alice.page.fill('#mw_query', 'broadband'); await alice.page.fill('#mw_pri', 'Rural broadband grants for co-ops'); await alice.page.fill('#mw_states', 'FL');
+  await alice.page.click('#mwGo');
+  await alice.page.waitForFunction(() => MON.items && MON.items.length === 2 && page === 'monitor', null, { timeout: 20000 });
+  const mon = await alice.page.locator('#monitorPage').innerText();
+  assert.match(mon, /H\.R\. 1234: Rural Broadband Access Act/); assert.match(mon, /HB 77: Broadband Infrastructure Grants/); assert.match(mon, /Directly about rural broadband grants\./);
+  await shot(alice.page, 'monitor', true);
+  await alice.page.locator('.item:has-text("H.R. 1234") [data-x=lobbying]').click();
+  await alice.page.waitForFunction(() => /Rural Telecom Coalition/.test(document.querySelector('#drawer').textContent));
+  assert.match(await alice.page.locator('#drawer').innerText(), /Akin Strategies/);
+  await alice.page.keyboard.press('Escape');
+  log('ok  Monitor: a watch over Congress and Florida found and scored bills; who is lobbying on H.R. 1234');
+
+  // A campaign from a bill, with the Florida Senate loaded live, and an action page
+  await alice.page.locator('.item:has-text("HB 77") [data-x=itemCampaign]').click();
+  await alice.page.waitForFunction(() => S.cloud && /^HB 77/.test(S.campaign.bill) && page === 'count');
+  await settle(alice.page);
+  await alice.page.click('.tools [data-act=setup]');
+  await alice.page.click('#drawer summary:has-text("Load any state legislature")');
+  await alice.page.selectOption('#os_state', 'FL'); await alice.page.selectOption('#os_chamber', 'upper'); await alice.page.click('[data-x=osRoster]');
+  await alice.page.waitForFunction(() => document.querySelector('#s_preset') && document.querySelector('#s_preset').value === 'os-fl-upper');
+  await alice.page.click('[data-act=preset]'); await alice.page.click('[data-act=preset]');
+  await alice.page.waitForFunction(() => S.members.length === 2 && S.campaign.juris && S.campaign.juris.state === 'FL');
+  await settle(alice.page);
+  assert.equal(await alice.page.evaluate(() => contact(S.members[0]).email), 'simon.corey@flsenate.gov');
+  await alice.page.click('#moreMenu summary'); await alice.page.click('[data-x=actionCenter]');
+  await alice.page.waitForSelector('#acForm');
+  assert.equal(await alice.page.inputValue('#ac_juris'), 'st-upper'); assert.equal(await alice.page.inputValue('#ac_state'), 'FL');
+  await alice.page.click('#acGo');
+  await alice.page.waitForFunction(() => ACT.data && ACT.data.action && ACT.data.action.active);
+  const actUrl = await alice.page.evaluate(() => ACT.data.action.url);
+  const supporter = await person('Supporter', 'google');
+  await supporter.page.goto(actUrl);
+  await supporter.page.waitForFunction(() => /^Tell your legislators/.test(document.querySelector('#title').textContent));
+  await supporter.page.fill('#address', '100 Main St, Tallahassee, FL 32301'); await supporter.page.click('#where button');
+  await supporter.page.waitForSelector('#letter:not([hidden])');
+  assert.match(await supporter.page.locator('#members').innerText(), /Corey Simon/);
+  await supporter.page.fill('#name', 'Pat Voter'); await supporter.page.fill('#email', 'pat@example.net'); await supporter.page.check('#optin');
+  await shot(supporter.page, 'action-page', true);
+  await supporter.page.click('#sendBtn');
+  await supporter.page.waitForSelector('#done:not([hidden])');
+  assert.match(await supporter.page.locator('#done').innerText(), /on its way to Corey Simon/);
+  const letter = (await outbox()).find((x) => x.kind === 'constituent' && x.to_addr === 'simon.corey@flsenate.gov');
+  assert.ok(letter); assert.equal(letter.reply_to, 'pat@example.net');
+  await alice.page.keyboard.press('Escape'); await alice.page.click('#moreMenu summary'); await alice.page.click('[data-x=actionCenter]');
+  await alice.page.waitForFunction(() => /1 supporter took action/.test(document.querySelector('#drawer').textContent));
+  await alice.page.keyboard.press('Escape'); await alice.page.click('[data-page=count]');
+  await alice.page.waitForFunction(() => /1 constituent letter/.test(document.querySelector('#rows').textContent));
+  log('ok  campaign started from a Monitor bill; Florida Senate loaded live; a supporter found their senator and the letter went out');
+
+  // ===== Contacts and bulk outreach =====
+  await alice.page.click('[data-page=contacts]');
+  await alice.page.waitForFunction(() => CRM.contacts !== null);
+  await alice.page.click('[data-x=newContact]');
+  await alice.page.fill('#ct_name', 'Dana Lee'); await alice.page.fill('#ct_org', 'NTIA'); await alice.page.fill('#ct_email', 'dana@ntia.example'); await alice.page.fill('#ct_tags', 'agency');
+  await alice.page.click('#ctForm .primary');
+  await alice.page.waitForFunction(() => CRM.contacts.length === 1);
+  await alice.page.click('[data-x=importContacts]');
+  await alice.page.fill('#im_text', 'name,organization,email,tags\nSam Roe,Gulf Co-op,sam@coop.example,coalition');
+  await alice.page.click('#imForm .primary');
+  await alice.page.waitForFunction(() => CRM.contacts && CRM.contacts.length === 2);
+  await alice.page.keyboard.press('Escape');
+  await alice.page.check('#ct_all'); await alice.page.click('[data-x=bulkMail]');
+  await alice.page.fill('#bm_subject', 'Coalition letter for {organization}');
+  const sentBefore = alice.rec.filter((x) => x.who === 'gmail').length;
+  await alice.page.click('#bmGo');
+  await alice.page.waitForFunction(() => /2 emails sent and logged/.test(document.querySelector('#toast').textContent), null, { timeout: 15000 });
+  const sends = alice.rec.filter((x) => x.who === 'gmail').slice(sentBefore);
+  assert.equal(sends.length, 2);
+  const bulkRaw = Buffer.from(JSON.parse(sends[0].body).raw, 'base64url').toString();
+  assert.match(bulkRaw, /Subject: Coalition letter for (NTIA|Gulf Co-op)/);
+  await alice.page.waitForFunction(() => CRM.contacts && CRM.contacts.every((c) => c.lastTouch));
+  await alice.page.click('[data-x=openContact] >> nth=0');
+  await alice.page.waitForFunction(() => /Coalition letter for/.test(document.querySelector('#ctTimeline').textContent));
+  await alice.page.keyboard.press('Escape');
+  await shot(alice.page, 'contacts', true);
+  log('ok  contacts: added, imported, emailed one by one from Gmail, and logged on each contact');
+
+  // ===== Installable =====
+  const mf = await fetch(`${BASE}/manifest.webmanifest`);
+  assert.match(mf.headers.get('content-type'), /manifest\+json/); assert.equal((await mf.json()).start_url, '/app');
+  assert.equal((await fetch(`${BASE}/sw.js`)).status, 200);
+  log('ok  installable: manifest and offline service worker');
+
   // Carol deletes her account
   await carol.page.click('#acct [data-act=account]'); await carol.page.click('#drawer details.sect summary:has-text("Delete my account")'); await carol.page.click('[data-act=delAccount]'); await carol.page.click('[data-act=delAccount]');
   await carol.page.waitForFunction(() => ME === null);
@@ -339,7 +439,7 @@ try {
 
   // Layout checks
   await alice.page.setViewportSize({ width: 390, height: 844 });
-  for (const pg of ['count', 'brief', 'portfolio', 'workspace']) {
+  for (const pg of ['count', 'brief', 'portfolio', 'monitor', 'contacts', 'workspace']) {
     await alice.page.click(`[data-page=${pg}]`);
     assert.equal(await alice.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `no sideways scroll on ${pg}`);
   }

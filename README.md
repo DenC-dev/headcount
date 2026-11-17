@@ -9,6 +9,12 @@ Whip counts, meeting requests and bill briefs for lobbying firms, government aff
 - **Portfolio.** Every campaign in the workspace on one page: client, odds and their weekly change, the count against the number needed, the next vote, meetings booked and requested, and overdue follow-ups.
 - **Clients.** Keep the organizations you represent, assign each campaign to one, and filter the portfolio and reports by client.
 - **Lobbying activity report.** Every contact the team logged in a quarter, grouped by client and issue, with chambers contacted and who made the contact, plus a CSV of every contact. A worksheet to help prepare disclosure reports such as the LD-2.
+- **The Monitor.** Saved searches over new and updated bills in Congress and all 50 state legislatures, Federal Register proposed rules, final rules and notices, and SAM.gov contract opportunities. The server checks each watch every few hours, Claude scores what it finds against the team's stated priorities (keyword scoring without Claude), and people get alerts right away or in their digest. Track a bill to hear when its status changes; start a campaign from any bill in one click.
+- **Who else is lobbying.** For a federal bill, the lobbying disclosure filings (LDA.gov) that name it: clients, firms and reported amounts. For a contract notice, who has won that kind of work at that agency (USAspending.gov).
+- **Action center.** A public page for each campaign where supporters enter their address, see which of the campaign's legislators represent them (Census geocoder), and send them a letter by email or call. Every letter shows beside that member in the whip count; supporters who ask for updates can be exported.
+- **Stakeholder contacts.** Agency staff, coalition partners, client contacts and reporters, with tags, owners, notes and a shared interaction history. Import a spreadsheet; send personalized emails one by one from your own Gmail or Outlook, logged on each contact.
+- **Every legislature.** Load the current members of any state senate, house or assembly from Open States, with emails and capitol and district offices.
+- **Installable.** Add the app to a phone's home screen; it opens without a signal.
 - **Email notifications and digests.** A daily or weekly digest at each person's chosen hour (position changes, odds movement, contacts logged, upcoming votes and meetings, overdue follow-ups), plus emails when someone assigns you a follow-up, adds you to a campaign or invites you to a workspace, and billing notices for owners. Everyone controls their own email settings, and every email has a one-click unsubscribe.
 - **Single sign-on for firms.** On the Firm plan, link the firm's SAML or OIDC identity provider (Okta, Microsoft Entra ID, Google Workspace, OneLogin and others) to its verified email domain, and optionally require it for all staff. People signing in through it join the workspace automatically.
 - **Website.** A product site with pricing, security, privacy and terms pages and a demo request form, served by the same server. The app itself lives at `/app`.
@@ -111,6 +117,8 @@ What each plan allows lives in `server/plans.js`:
 | Briefs drafted with Claude, per month | 5 | 40 per seat | 100 per seat |
 | Activity report, activity log, email-domain joining | no | yes | yes |
 | Single sign-on (SAML or OIDC) | no | no | yes |
+| Monitor watches | 2 | 25 | unlimited |
+| Action center | no | yes | yes |
 
 These limits are a starting point, not a recommendation: change them to fit your pricing.
 
@@ -118,7 +126,19 @@ These limits are a starting point, not a recommendation: change them to fit your
 
 On Team and Firm, a workspace admin can add the firm's email domain and verify it with a DNS TXT record. People who then sign in with a verified address at that domain can join as members without an invitation (each uses a seat). Public email services such as gmail.com cannot be claimed. Microsoft accounts often do not report a verified email address, so colleagues signing in that way may still need an invitation.
 
-### 7. Email: notifications and digests
+### 7. The Monitor, intelligence and the action center
+
+- **Federal bills** come from Congress.gov (`CONGRESS_API_KEY`, step 3). Congress.gov has no keyword search, so the Monitor reads every bill updated since its last check and matches titles.
+- **State bills and state rosters** come from Open States (`OPENSTATES_API_KEY`, step 3). Free Open States keys have a daily request limit; a watch over many states uses one request per state per check.
+- **Regulations** come from the Federal Register API, which needs no key.
+- **Contract opportunities** need a free SAM.gov API key: sign in at SAM.gov, open your profile and request a public API key, then set `SAM_API_KEY`. Without it, contract watches report that they are not set up.
+- **Lobbying disclosures** come from LDA.gov. It works without a key at a low rate limit; register at https://lda.gov/api/register/ and set `LDA_API_KEY` for more.
+- **Contract award history** comes from USAspending.gov, and **districts for action pages** from the U.S. Census geocoder. Neither needs a key.
+- **Scoring:** with `ANTHROPIC_API_KEY` set, the Monitor sends each new item's title, summary and the watch's priorities to Claude (`claude-opus-5-5`, low effort, structured output) in batches of 25. Scoring counts against a daily cap of five times `AI_DAILY_LIMIT`; past it, and without a key, items are scored by keyword.
+- `MONITOR_INTERVAL_MS` sets how often each watch is checked (default every 6 hours). `MONITOR=off` stops scheduled checks; people can still check a watch by hand.
+- Action pages live at `/act/<id>`. Letters go to each legislator's published email through your SMTP service (step 8), from `EMAIL_FROM` with the supporter as Reply-To. Members of Congress do not publish email addresses, so for them the page offers the office phone and the member's contact form instead. A supporter can send once a day per page.
+
+### 8. Email: notifications and digests
 
 Headcount sends its own email (digests, notifications, invitations, billing notices and demo requests) through any SMTP service: Amazon SES, Postmark, SendGrid, Mailgun, or your Google Workspace or Microsoft 365 relay. Meeting requests are different: they go out from each person's own Gmail or Outlook.
 
@@ -129,9 +149,9 @@ Headcount sends its own email (digests, notifications, invitations, billing noti
 
 Emails wait in a queue in the database and are retried with growing gaps for about eight hours, so a slow mail service never holds up the app. Digests go out at each person's chosen hour in their own time zone (8 a.m. by default): weekly on Mondays unless they pick daily, and only when something happened. `DIGEST_INTERVAL_MS` sets how often the server checks for digests that are due (default every 10 minutes). Every notification and digest carries `List-Unsubscribe` headers for one-click unsubscribe in Gmail and Outlook. `EMAIL_MODE=off` stops all email; without `SMTP_URL` no email is sent.
 
-Demo requests from the website are saved in the `leads` table and emailed to `SALES_EMAIL` when email is set up.
+Demo requests from the website are saved in the `leads` table and emailed to `SALES_EMAIL` when email is set up. Constituent letters from action pages go out through the same service, so check your provider's sending limits before a big push.
 
-### 8. Single sign-on for firms
+### 9. Single sign-on for firms
 
 Single sign-on runs through Identity Platform, so Headcount never handles passwords or SAML assertions itself. For each firm on the Firm plan:
 
@@ -141,13 +161,13 @@ Single sign-on runs through Identity Platform, so Headcount never handles passwo
 
 People then choose **Sign in with single sign-on** and enter their work email; Headcount finds the firm by the domain and sends them to their identity provider. Anyone signing in through the provider with an address at the domain joins the workspace as a member. When single sign-on is required, members and admins who signed in another way are asked to sign in again through it; owners keep their usual sign-in so a broken provider cannot lock the firm out, and guests from client organizations are not affected. People who sign in with single sign-on can still connect Gmail or Outlook for meeting requests; the app links that account to theirs the first time they send.
 
-### 9. The website
+### 10. The website
 
 The site in `site/` is served at `/`, with `/pricing`, `/security`, `/privacy` and `/terms`. Pages are plain HTML with a few placeholders the server fills in (plan table, prices from `PRICE_LABEL_TEAM` and `PRICE_LABEL_FIRM`, trial length, `SALES_EMAIL`). Set `SITE=off` to send `/` straight to the app, for example for a firm's own copy.
 
 Before launch, finish `site/privacy.html` and `site/terms.html`: they are templates and need your organization's name, contact details and a lawyer's review. Check the claims on `site/security.html` against how you actually host it.
 
-### 10. Hosting
+### 11. Hosting
 
 - Run `npm start` (or the Dockerfile) behind HTTPS. Set `PUBLIC_URL`, and `TRUST_PROXY=1` when a proxy or load balancer sits in front.
 - Data lives in one SQLite file under `DATA_DIR`, so the host needs a persistent disk: a small VM, or a platform with attached volumes. Cloud Run's own filesystem is not persistent. Back up the file regularly.
@@ -163,6 +183,7 @@ docker run -p 3000:3000 -v headcount-data:/data --env-file .env headcount
 ## How it works
 
 - `server/` is a small Node.js server with no web framework: Identity Platform token checks (`auth.js`), SQLite storage and permissions (`db.js`), bill lookup (`bills.js`) and drafting (`ai.js`).
+- The Monitor is `server/monitor.js`; the public data sources it and the intelligence panels use are in `server/sources.js`; the action center is `server/act.js` with its public page in `public/act.html`; stakeholder contacts are `server/crm.js`. In the browser, `public/intel.js` holds the Monitor, contacts, action center and roster screens.
 - Email is in `server/mail.js` (queue, SMTP sending, signed unsubscribe links) and `server/notify.js` (what each notification and digest says, and when it goes out).
 - `site/` is the website; `public/` is the app.
 - `public/` is plain HTML, CSS and JavaScript with no build step. `cloud.js` handles sign-in, the server API, and the Google and Microsoft calendar and email calls; `app.js` is the app.
@@ -178,4 +199,7 @@ docker run -p 3000:3000 -v headcount-data:/data --env-file .env headcount
 - Members of Congress do not publish direct email addresses; add schedulers and staff yourself.
 - Teams links need a work or school Microsoft account; for personal accounts the invitation goes out without one.
 - Pasted bill text and drafting requests are sent to Anthropic; bill numbers are sent to Congress.gov or Open States. Notification and digest emails, which name campaigns, members and teammates, go through your SMTP provider.
+- Monitor scores are a reading aid. Check anything important against the source before acting on it.
+- The lobbying disclosure panel shows filings that mention the bill number in their specific issues. Filers write bill numbers inconsistently, and filings are due 20 days after each quarter, so it can miss recent or loosely described activity.
+- Action pages store each supporter's name, email and address, send the address to the Census geocoder, and email the letter (with name and address) to the matched offices. The campaign sees supporters' email addresses only when they ask for updates.
 - Digest contents follow campaign permissions: a closed campaign appears only in the digests of people added to it, and guests see only their own campaigns.

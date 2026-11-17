@@ -76,7 +76,7 @@ const SECURITY = {
   'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
 };
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.webmanifest': 'application/manifest+json' };
 const SITE = path.resolve(here, '..', 'site');
 const SITE_PAGES = { '/': 'index.html', '/pricing': 'pricing.html', '/security': 'security.html', '/terms': 'terms.html', '/privacy': 'privacy.html' };
 const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -108,6 +108,10 @@ function siteVars() {
     ['Guests (clients, partners)', P.free.guests, `${P.team.guestsPerSeat} per seat`, inf(P.firm.guests)],
     ['Briefs drafted with Claude, per month', P.free.drafts, `${P.team.draftsPerSeat} per seat`, `${P.firm.draftsPerSeat} per seat`],
     ['Vote counts, meeting requests, bill briefs', 'Yes', 'Yes', 'Yes'],
+    ['Monitor watches: bills, rules, contract notices', P.free.watches, inf(P.team.watches), inf(P.firm.watches)],
+    ['Who is lobbying on a bill; contract award history', 'Yes', 'Yes', 'Yes'],
+    ['Stakeholder contacts and email outreach', 'Yes', 'Yes', 'Yes'],
+    ['Action center for constituent letters', 'No', 'Yes', 'Yes'],
     ['Portfolio and clients', 'Yes', 'Yes', 'Yes'],
     ['Lobbying activity report', 'No', 'Yes', 'Yes'],
     ['Activity log', 'No', 'Yes', 'Yes'],
@@ -336,6 +340,6 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   createServer().listen(config.port, () => {
-    console.log(`Headcount on http://localhost:${config.port} | sign-in: ${config.authMode}${config.authMode === 'dev' ? ' (LOCAL TESTING ONLY)' : ''} | federal bills: ${config.congressKey ? 'on' : 'off'} | state bills: ${config.openStatesKey ? 'on' : 'off'} | drafting: ${config.aiEnabled ? 'on' : 'off'} | billing: ${config.billing ? 'on' : 'off (every workspace unlimited)'}`);
+    console.log(`Headcount on http://localhost:${config.port} | sign-in: ${config.authMode}${config.authMode === 'dev' ? ' (LOCAL TESTING ONLY)' : ''} | federal bills: ${config.congressKey ? 'on' : 'off'} | state bills: ${config.openStatesKey ? 'on' : 'off'} | drafting: ${config.aiEnabled ? 'on' : 'off'} | contracts: ${config.samKey ? 'on' : 'off'} | monitor: ${config.monitorOff ? 'manual' : 'scheduled'} | billing: ${config.billing ? 'on' : 'off (every workspace unlimited)'}`);
   });
 }

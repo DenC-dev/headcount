@@ -174,14 +174,16 @@ async function loadRosters() {
   } catch (_) { /* presets stay unavailable */ }
 }
 function contact(m) {
-  const r = (m.ref && DIR[m.ref]) || {};
+  const r = (m.ref && DIR[m.ref]) || m.c || {};
   return { phone: m.phone || r.ph || '', email: m.email || r.em || '', office: r.of || '', dphone: r.dph || '', doffice: r.dof || '', url: r.url || '', form: r.cf || '' };
 }
 function loadPreset(key, cmteIdx, backed) {
   const p = ROSTERS[key], cm = p.committees[cmteIdx], on = new Set(cm ? cm.m : []), titles = (cm && cm.t) || {};
   const start = (party) => (!backed ? 2 : party === backed ? 3 : party === 'I' ? 2 : 1);
-  S.members = p.members.map((m) => ({ id: 'p' + m.k, ref: m.k, name: m.n, party: m.p, district: m.d, cmte: on.has(m.k), role: titles[m.k] || '', pos: start(m.p), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [] }));
-  Object.assign(S.campaign, { chamber: p.chamber, committee: cm ? cm.name : '', rule: 'majority' });
+  const live = Boolean(p.juris && p.source === 'Open States' && /^os-/.test(key));
+  S.members = p.members.map((m) => ({ id: 'p' + m.k, ref: m.k, name: m.n, party: m.p, district: m.d, cmte: on.has(m.k), role: titles[m.k] || '', pos: start(m.p), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], ...(live ? { c: { ph: m.ph || '', of: m.of || '', em: m.em || '', dph: m.dph || '', dof: m.dof || '', url: m.url || '' } } : {}) }));
+  const juris = p.juris || { ushouse: { level: 'us', chamber: 'lower' }, ussenate: { level: 'us', chamber: 'upper' }, flhouse: { level: 'state', state: 'FL', chamber: 'lower' }, flsenate: { level: 'state', state: 'FL', chamber: 'upper' } }[key] || null;
+  Object.assign(S.campaign, { chamber: p.chamber, committee: cm ? cm.name : '', rule: 'majority', juris });
   if (S.example) S.campaign.bill = 'Your bill';
   S.preset = { label: p.label, asOf: p.asOf, stale: !!p.stale, vacant: p.seats - p.members.length };
   S.plan = []; S.trend = []; S.tasks = S.tasks.filter((t) => !t.mid); S.meetings = []; S.brief = blankBrief();
@@ -190,6 +192,7 @@ function loadPreset(key, cmteIdx, backed) {
 // ---------- workspace: campaigns in this browser, or in your account ----------
 let S = exampleState();
 let view = 'floor', page = 'count', openId = null, renderTimer = null;
+const PAGES = ['portfolio', 'count', 'brief', 'monitor', 'contacts', 'workspace'];
 let BOOK = { v: 2, active: 'ex', list: [{ id: 'ex', name: S.campaign.bill }] };
 let ME = null, ROLE = 'owner', PEOPLE = {}, JOIN = null;
 const ACCOUNT = { list: [], loaded: false };
@@ -490,12 +493,14 @@ async function onSignedIn() {
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })();
   if (tz && PREFS && PREFS.tz !== tz) CLOUD.api('PATCH', '/api/me/prefs', { tz }).then((x) => { PREFS = x; }).catch(() => {});
   if (location.hash === '#email') setTimeout(() => accountDrawer(true), 0);
+  const jump = { '#monitor': 'monitor', '#contacts': 'contacts' }[location.hash];
   if (JOIN && JOIN.info) return acceptJoin();
   const blocked = ORGS.filter((o) => o.ssoRequired), open = ORGS.filter((o) => !o.ssoRequired);
   SSO_NEEDED = blocked.length ? blocked.map((o) => o.name).join(' and ') : null;
   const want = lsGet(LASTORG), oid = open.some((o) => o.id === want) ? want : open[0] && open[0].id;
   if (oid) await loadOrg(oid, { quiet: true });
   if (!ORG) { page = SSO_NEEDED ? 'count' : 'workspace'; return render(); }
+  if (jump && ORG.role !== 'guest') { page = jump; return render(); }
   if (!S.cloud) {
     const last = lsGet(LAST);
     if (last && ACCOUNT.list.some((e) => e.id === last)) return cloudOpen(last);
@@ -645,7 +650,7 @@ function renderRows() {
   const list = S.members.filter((m) => (!fp || m.pos === +fp) && group(m) && (!q || `${m.name} ${m.district} ${m.interests} ${m.party} ${m.role || ''}`.toLowerCase().includes(q))).sort(sorts[so] || sorts.pos);
   $('#rowCount').textContent = list.length === S.members.length ? '' : `Showing ${list.length} of ${S.members.length} members`;
   $('#rows').innerHTML = list.length ? list.map((m) => `<tr>
-    <td><button class="who" data-open="${esc(m.id)}">${esc(m.name)}</button><div class="meta">${esc(m.party)}-${esc(m.district)}${m.role ? ` · ${esc(m.role)}` : m.cmte ? ' · committee' : ''}${contact(m).phone ? ` · <span class="tel">${esc(contact(m).phone)}</span>` : ''}${m.staffers.length ? ` · ${m.staffers.length} staff` : ''}</div></td>
+    <td><button class="who" data-open="${esc(m.id)}">${esc(m.name)}</button><div class="meta">${esc(m.party)}-${esc(m.district)}${m.role ? ` · ${esc(m.role)}` : m.cmte ? ' · committee' : ''}${contact(m).phone ? ` · <span class="tel">${esc(contact(m).phone)}</span>` : ''}${m.staffers.length ? ` · ${m.staffers.length} staff` : ''}${typeof actCount === 'function' ? actCount(m) : ''}</div></td>
     <td style="white-space:nowrap"><span class="dot b${m.pos}"></span><select data-pos="${esc(m.id)}" aria-label="Position of ${esc(m.name)}">${[4, 3, 2, 1, 0].map((p) => `<option value="${p}" ${m.pos === p ? 'selected' : ''}>${POS[p]}</option>`).join('')}</select></td>
     <td><span class="pips" aria-label="${m.mov} of 5">${'●'.repeat(m.mov)}<i>${'●'.repeat(5 - m.mov)}</i></span></td>
     <td class="meta">${esc(lastTouch(m))}</td></tr>`).join('') : `<tr><td colspan="4" class="note">${S.members.length ? 'No members match.' : 'No members yet.'}</td></tr>`;
@@ -752,7 +757,7 @@ function briefPanelHtml() {
 }
 function renderBrief() {
   const b = S.brief, ro = !canEditNow(), cfg = CLOUD.config || {};
-  const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft analysis with Claude</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}</div>`;
+  const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft analysis with Claude</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}${typeof intelBriefButtons === 'function' ? intelBriefButtons(b) : ''}</div>`;
   const empty = `<div class="brief" style="text-align:center"><h2 style="font-size:22px">No brief for this bill yet</h2><p class="note" style="margin:0 auto">Look up the bill to fill in its sponsors, status and official summary, then add your summary, talking points and likely objections. Every meeting brief and meeting request for this campaign uses it.</p></div>`;
   $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty);
   if (briefPanel === 'lookup' && $('#lk_j')) $('#lk_j').value = guessJurisdiction();
@@ -1082,6 +1087,7 @@ function contactBlock(m) {
     (c.dphone || c.doffice) && ['District office', `${esc(c.doffice)}${c.dphone ? ` <span class="tel">${esc(c.dphone)}</span> ${copyBtn(c.dphone)}` : ''}`],
     (safe(c.url) || safe(c.form)) && ['Online', [safe(c.url) && `<a href="${esc(c.url)}" target="_blank" rel="noopener">Official page</a>`, safe(c.form) && `<a href="${esc(c.form)}" target="_blank" rel="noopener">Contact form</a>`].filter(Boolean).join(' · ')],
   ].filter(Boolean);
+  if (typeof actCount === 'function' && actCount(m)) rows.push(['Constituents', esc(actCount(m).replace(/^ · /, '')) + ' through the action center']);
   return rows.length ? `<span class="label">Contact</span><dl class="kv">${rows.map((r) => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>` : '';
 }
 function staffLines(s) {
@@ -1445,11 +1451,13 @@ function renderAcct() {
   else el.innerHTML = '';
 }
 function render() {
-  const c = S.campaign, cfg = CLOUD.config || {}, campaignPage = page === 'count' || page === 'brief';
+  const c = S.campaign, cfg = CLOUD.config || {}, campaignPage = page === 'count' || page === 'brief', team = signedIn() && ORG && ORG.role !== 'guest';
+  if ((page === 'monitor' || page === 'contacts') && !team && signedIn() && ORG) page = 'portfolio';
   renderSwitcher();
   $('.camp').hidden = !campaignPage;
   ['pgPortfolio', 'pgWorkspace'].forEach((id) => { $('#' + id).hidden = !signedIn(); });
-  ['portfolio', 'count', 'brief', 'workspace'].forEach((k) => { $('#pg' + k[0].toUpperCase() + k.slice(1)).setAttribute('aria-pressed', page === k); });
+  ['pgMonitor', 'pgContacts'].forEach((id) => { $('#' + id).hidden = !team; });
+  PAGES.forEach((k) => { $('#pg' + k[0].toUpperCase() + k.slice(1)).setAttribute('aria-pressed', page === k); });
   if (campaignPage) {
     const nd = needs(S);
     $('#hBill').textContent = c.bill || (SYNC.loading ? 'Loading' : 'Untitled campaign');
@@ -1457,7 +1465,7 @@ function render() {
     $('#hSub').textContent = `${camp && camp.visibility === 'team' ? 'Closed · ' : ''}${dirOf(S) < 0 ? 'Working to defeat' : 'Working to pass'}${clientOf() ? ` for ${clientOf()}` : ''} · ${c.chamber || 'Chamber not set'} · ${nd.n} members, ${nd.needF} to pass`;
     $('#hDates').textContent = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]} ${inDays(x[1])} (${fmtDay(x[1])})`).concat((() => { const n = S.tasks.filter((t) => !t.done && t.due && dayDiff(t.due) < 0).length; return n ? [`${n} follow-up${n > 1 ? 's' : ''} overdue`] : []; })()).join(' · ');
   } else {
-    $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : ORG ? `${ORG.name} settings` : 'Workspace';
+    $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : page === 'monitor' ? 'Monitor' : page === 'contacts' ? 'Contacts' : ORG ? `${ORG.name} settings` : 'Workspace';
     $('#hSub').textContent = ORG ? `${ORG.plan.label} · ${ROLE_LABEL[ORG.role]}${ORG.role === 'guest' ? ': you see only the campaigns you were added to' : ''}` : '';
     $('#hDates').textContent = '';
   }
@@ -1481,8 +1489,10 @@ function render() {
   const w = $('#warn'), ro = campaignPage && S.cloud && ROLE === 'viewer'; w.hidden = !(ro || (campaignPage && S.preset && S.preset.stale));
   if (ro) w.textContent = 'You have view-only access to this campaign. Ask its owner to make you an editor to change it.';
   else if (!w.hidden) w.textContent = `This ${S.preset.label} roster predates the November 3, 2026 election. Florida legislators take office on election day, so check each member against the official site before relying on it.`;
-  ['portfolio', 'count', 'brief', 'workspace'].forEach((k) => { $('#' + k + 'Page').hidden = page !== k; });
+  PAGES.forEach((k) => { $('#' + k + 'Page').hidden = page !== k; });
   if (page === 'brief') renderBrief();
+  else if (page === 'monitor') { if (typeof renderMonitor === 'function') renderMonitor(); }
+  else if (page === 'contacts') { if (typeof renderContacts === 'function') renderContacts(); }
   else if (page === 'portfolio') renderPortfolio();
   else if (page === 'workspace') renderWorkspace();
   else {
@@ -1605,6 +1615,7 @@ function setupDrawer() {
   ${ro ? '' : `<details class="sect"${S.example || !S.members.length ? ' open' : ''}><summary>Roster</summary>
   ${S.preset ? `<p class="note">Current roster: ${esc(S.preset.label)}, retrieved ${esc(S.preset.asOf)}${S.preset.vacant > 0 ? `, ${S.preset.vacant} seat${S.preset.vacant > 1 ? 's' : ''} not listed` : ''}.</p>` : ''}
   ${ROSTERS ? `<select id="s_preset" aria-label="Preset roster"><option value="">Load a preset chamber</option>${Object.entries(ROSTERS).map(([k, p]) => `<option value="${k}">${esc(p.label)} (${p.members.length})</option>`).join('')}</select><div id="s_presetBox" style="display:flex;flex-direction:column;gap:10px"></div>` : '<p class="note">Preset rosters could not be loaded.</p>'}
+  ${typeof rosterLoaderHtml === 'function' ? rosterLoaderHtml() : ''}
   <div class="btnrow"><span class="note">Set</span><select id="b_party" aria-label="Party"><option value="D">every Democrat</option><option value="R">every Republican</option><option value="I">every independent</option></select><span class="note">to</span><select id="b_pos" aria-label="Position">${[4, 3, 2, 1, 0].map((p) => `<option value="${p}">${POS[p]}</option>`).join('')}</select><button class="btn" data-act="bulk">Apply</button></div>
   <details><summary class="note">Paste your own roster</summary>
   <p class="note">One member per line: name, party (D/R/I), district, committee (y/n), position, phone, email. Only the name is required. This replaces every current member and their history.</p>
@@ -1653,6 +1664,7 @@ function accountDrawer(scrollToEmail) {
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Digest<select id="pf_digest"><option value="daily" ${pr.digest === 'daily' ? 'selected' : ''}>Every morning</option><option value="weekly" ${pr.digest === 'weekly' ? 'selected' : ''}>Monday mornings</option><option value="off" ${pr.digest === 'off' ? 'selected' : ''}>No digest</option></select></label>
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Send it at<select id="pf_hour">${[6, 7, 8, 9, 10, 11, 12].map((h) => `<option value="${h}" ${pr.digestHour === h ? 'selected' : ''}>${h <= 12 ? h : h - 12}${h < 12 ? ' a.m.' : ' p.m.'}</option>`).join('')}</select></label>
     <p class="note">The digest covers position changes, contacts logged, votes and meetings coming up, and your overdue follow-ups, in your time zone${pr.tz ? ` (${esc(pr.tz)})` : ''}.</p>
+    <label class="note" style="display:flex;flex-direction:column;gap:4px">Monitor alerts<select id="pf_monitor"><option value="instant" ${pr.monitor === 'instant' ? 'selected' : ''}>Email me as soon as something relevant appears</option><option value="digest" ${pr.monitor !== 'instant' && pr.monitor !== 'off' ? 'selected' : ''}>Include them in my digest</option><option value="off" ${pr.monitor === 'off' ? 'selected' : ''}>Only show them in the app</option></select></label>
     <label class="check"><input type="checkbox" id="pf_assigned" ${pr.notifyAssigned ? 'checked' : ''}> Email me when someone assigns me a follow-up</label>
     <label class="check"><input type="checkbox" id="pf_added" ${pr.notifyAdded ? 'checked' : ''}> Email me when someone adds me to a campaign</label>
   </details>` : ''}
@@ -1883,8 +1895,8 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'orgSel') { if (t.value === '__new') { t.value = ORG ? ORG.id : ''; return newOrgDrawer(); } return switchOrg(t.value); }
   if (t.dataset.orgrole) { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/members/${encodeURIComponent(t.dataset.orgrole)}`, { role: t.value }); toast('Role changed'); } catch (err) { fail(err); } WS.members = null; await loadOrg(ORG.id, { quiet: true }); return render(); }
   if (t.id === 'pf_client') { WS.filter.client = t.value; return renderPortfolio(); }
-  if (['pf_digest', 'pf_hour', 'pf_assigned', 'pf_added'].includes(t.id)) {
-    const patch = { pf_digest: { digest: t.value }, pf_hour: { digestHour: +t.value }, pf_assigned: { notifyAssigned: t.checked }, pf_added: { notifyAdded: t.checked } }[t.id];
+  if (['pf_digest', 'pf_hour', 'pf_assigned', 'pf_added', 'pf_monitor'].includes(t.id)) {
+    const patch = { pf_digest: { digest: t.value }, pf_monitor: { monitor: t.value }, pf_hour: { digestHour: +t.value }, pf_assigned: { notifyAssigned: t.checked }, pf_added: { notifyAdded: t.checked } }[t.id];
     try { PREFS = await CLOUD.api('PATCH', '/api/me/prefs', patch); toast('Email settings saved'); } catch (err) { fail(err); }
     return;
   }
