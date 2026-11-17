@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 330" role="img" aria-labelledby="t d">
+<title id="t">A 41-seat chamber, colored by position</title>
+<desc id="d">Eleven yes, eight leaning yes, seven undecided, five leaning no and ten no. Nineteen of the twenty-one votes needed.</desc>
+<circle class="seat p4 cmte" cx="32.9" cy="277.9" r="17"/>
+<circle class="seat p4" cx="108.2" cy="278.4" r="17"/>
+<circle class="seat p4" cx="184.3" cy="277.0" r="17"/>
+<circle class="seat p4 cmte" cx="40.2" cy="234.2" r="17"/>
+<circle class="seat p4" cx="117.8" cy="236.3" r="17"/>
+<circle class="seat p4" cx="54.6" cy="192.3" r="17"/>
+<circle class="seat p4 cmte" cx="136.6" cy="197.3" r="17"/>
+<circle class="seat p4" cx="75.6" cy="153.4" r="17"/>
+<circle class="seat p4" cx="201.9" cy="234.4" r="17"/>
+<circle class="seat p4 cmte" cx="102.8" cy="118.5" r="17"/>
+<circle class="seat p4" cx="163.5" cy="163.5" r="17"/>
+<circle class="seat p3" cx="135.4" cy="88.5" r="17"/>
+<circle class="seat p3" cx="234.4" cy="201.9" r="17"/>
+<circle class="seat p3" cx="197.3" cy="136.6" r="17"/>
+<circle class="seat p3 cmte" cx="172.4" cy="64.3" r="17"/>
+<circle class="seat p3" cx="236.3" cy="117.8" r="17"/>
+<circle class="seat p3" cx="213.0" cy="46.5" r="17"/>
+<circle class="seat p3" cx="277.0" cy="184.3" r="17"/>
+<circle class="seat p3 cmte" cx="255.9" cy="35.7" r="17"/>
+<circle class="seat p2" cx="278.4" cy="108.2" r="17"/>
+<circle class="seat p2" cx="300.0" cy="32.0" r="17"/>
+<circle class="seat p2" cx="321.6" cy="108.2" r="17"/>
+<circle class="seat p2 cmte" cx="344.1" cy="35.7" r="17"/>
+<circle class="seat p2" cx="323.0" cy="184.3" r="17"/>
+<circle class="seat p2" cx="387.0" cy="46.5" r="17"/>
+<circle class="seat p2" cx="363.7" cy="117.8" r="17"/>
+<circle class="seat p1" cx="427.6" cy="64.3" r="17"/>
+<circle class="seat p1 cmte" cx="402.7" cy="136.6" r="17"/>
+<circle class="seat p1" cx="365.6" cy="201.9" r="17"/>
+<circle class="seat p1" cx="464.6" cy="88.5" r="17"/>
+<circle class="seat p1" cx="436.5" cy="163.5" r="17"/>
+<circle class="seat p0 cmte" cx="497.2" cy="118.5" r="17"/>
+<circle class="seat p0" cx="398.1" cy="234.4" r="17"/>
+<circle class="seat p0" cx="524.4" cy="153.4" r="17"/>
+<circle class="seat p0" cx="463.4" cy="197.3" r="17"/>
+<circle class="seat p0 cmte" cx="545.4" cy="192.3" r="17"/>
+<circle class="seat p0" cx="482.2" cy="236.3" r="17"/>
+<circle class="seat p0" cx="559.8" cy="234.2" r="17"/>
+<circle class="seat p0" cx="415.7" cy="277.0" r="17"/>
+<circle class="seat p0" cx="491.8" cy="278.4" r="17"/>
+<circle class="seat p0" cx="567.1" cy="277.9" r="17"/>
+<text class="hub" x="300" y="268" text-anchor="middle">19<tspan class="hubsmall" dx="4">/ 21</tspan></text>
+<text class="hubnote" x="300" y="296" text-anchor="middle">yes and lean yes / needed</text>
+</svg>

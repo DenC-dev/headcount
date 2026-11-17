@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Take action</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/site/site.css">
+  <link rel="stylesheet" href="/act.css">
+</head>
+<body>
+  <main class="narrow act" id="main">
+    <p class="eyebrow" id="org">Take action</p>
+    <h1 id="title">Loading</h1>
+    <div id="intro" class="lede"></div>
+
+    <form id="where" class="lead step" novalidate>
+      <h2 class="wide">1. Find your legislators</h2>
+      <label class="wide">Your home address<input id="address" name="address" autocomplete="street-address" placeholder="123 Main St, Springfield, IL 62701" required></label>
+      <p class="wide fine">Your address is used to find who represents you, and is included in your letter so the office knows you are a constituent.</p>
+      <button class="button" type="submit">Find my legislators</button>
+      <p class="status wide" id="whereMsg" role="status"></p>
+    </form>
+
+    <section id="who" hidden>
+      <h2>Your legislators on this issue</h2>
+      <ul id="members" class="members"></ul>
+    </section>
+
+    <form id="letter" class="lead step" hidden novalidate>
+      <h2 class="wide">2. Send your letter</h2>
+      <label>Your name<input id="name" autocomplete="name" required></label>
+      <label>Your email<input id="email" type="email" autocomplete="email" required></label>
+      <label class="wide">Subject<input id="subject"></label>
+      <label class="wide">Letter (make it your own: personal letters carry more weight)<textarea id="message" rows="12"></textarea></label>
+      <label class="wide check"><input type="checkbox" id="optin"> Keep me updated about this campaign</label>
+      <label class="hp" aria-hidden="true">Website<input id="website" tabindex="-1" autocomplete="off"></label>
+      <button class="button" type="submit" id="sendBtn">Send my letter</button>
+      <p class="status wide" id="sendMsg" role="status"></p>
+    </form>
+
+    <section id="done" hidden>
+      <h2>Thank you</h2>
+      <p id="doneText"></p>
+      <div id="calls"></div>
+    </section>
+  </main>
+  <script src="/act.js"></script>
+</body>
+</html>

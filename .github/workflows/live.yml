@@ -1,0 +1,129 @@
+# Every morning: checks the real public data services Headcount depends on
+# (Congress.gov, Open States, the Federal Register, SAM.gov, LDA.gov,
+# USAspending.gov and the Census geocoder), publishes the results on the
+# project website's status page, and opens an issue when a check fails
+# (closing it again when everything passes).
+#
+# Add the keys as repository secrets: CONGRESS_API_KEY, OPENSTATES_API_KEY,
+# SAM_API_KEY and, optionally, LDA_API_KEY. A check without its key is skipped.
+# Set the repository variable LIVE_AI to 1 (and the ANTHROPIC_API_KEY secret)
+# to also check Claude scoring, which is billed.
+name: Live checks and website
+
+on:
+  schedule:
+    - cron: '17 11 * * *' # every day at 11:17 UTC, early morning in the U.S.
+  push:
+    branches: [main]
+    paths:
+      - 'pages/**'
+      - 'site/img/**'
+      - 'site/site.css'
+      - 'scripts/build-pages.mjs'
+      - 'scripts/live-report.mjs'
+      - 'server/sources.js'
+      - 'test/live.mjs'
+      - '.github/workflows/live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  issues: write
+
+concurrency:
+  group: live-and-pages
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      code: ${{ steps.live.outputs.code }}
+      pages: ${{ steps.pages.outputs.base_url != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Check the real data sources
+        id: live
+        env:
+          CONGRESS_API_KEY: ${{ secrets.CONGRESS_API_KEY }}
+          OPENSTATES_API_KEY: ${{ secrets.OPENSTATES_API_KEY }}
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
+          LDA_API_KEY: ${{ secrets.LDA_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LIVE_AI: ${{ vars.LIVE_AI }}
+          LIVE_NO_DEMO: '1'
+          LIVE_JSON: ${{ runner.temp }}/live.json
+          LIVE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          npm run test:live
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Open, update or close the alert issue
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.live.outputs.code }}
+          LIVE_JSON: ${{ runner.temp }}/live.json
+        run: |
+          label=live-checks
+          gh label create "$label" --color B23A48 --description "Daily checks against the real data sources" 2>/dev/null || true
+          num=$(gh issue list --state open --label "$label" --json number --jq '.[0].number')
+          node scripts/live-report.mjs > "$RUNNER_TEMP/report.md"
+          if [ "$CODE" != "0" ]; then
+            if [ -n "$num" ]; then gh issue comment "$num" --body-file "$RUNNER_TEMP/report.md"
+            else gh issue create --title "Live data source checks are failing" --label "$label" --body-file "$RUNNER_TEMP/report.md"; fi
+          elif [ -n "$num" ]; then
+            gh issue close "$num" --comment "All live checks pass again. $(head -n 1 "$RUNNER_TEMP/report.md")"
+          fi
+
+      - name: Find the website address
+        id: pages
+        continue-on-error: true # GitHub Pages is not turned on yet
+        uses: actions/configure-pages@v5
+
+      - name: Build the website
+        if: steps.pages.outputs.base_url != ''
+        env:
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          LIVE_JSON: ${{ runner.temp }}/live.json
+        run: node scripts/build-pages.mjs
+
+      - name: Upload the website
+        if: steps.pages.outputs.base_url != ''
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.pages == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  verdict:
+    needs: [check, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail the run when a live check failed, so GitHub notifies the owner
+        env:
+          CODE: ${{ needs.check.outputs.code }}
+        run: |
+          if [ "$CODE" != "0" ]; then echo "::error::One or more live data source checks failed. See the issue labelled live-checks."; exit 1; fi
+          echo "All live checks passed or were skipped."

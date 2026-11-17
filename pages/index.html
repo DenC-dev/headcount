@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Headcount: open-source vote counts and outreach for government affairs</title>
+<meta name="description" content="Headcount is an open-source web app for lobbyists, advocates and government affairs teams: whip counts with live odds, meeting requests, bill briefs, monitoring of bills, rules and contracts, an action center and a contacts CRM.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+{{header}}
+<main id="main">
+<section class="hero"><div class="wrap">
+  <div>
+    <p class="eyebrow">Open source · Apache 2.0</p>
+    <h1>Know the count. Work the room. <em>Run it yourself.</em></h1>
+    <p class="lede">Headcount is a web app for lobbyists, advocates and government affairs teams: a seat-by-seat whip count with live odds, meeting requests from your own inbox, a brief for every bill, a monitor for bills, rules and contracts, a grassroots action center and a shared contacts list. The code is public. Host it for your team, or build on it.</p>
+    <div class="ctas"><a class="button" href="{{repo}}">Get the code</a><a class="button ghost" href="#run">Run it in two minutes</a></div>
+    <p class="fine" id="srcLine"><a href="./status.html">Data source status</a></p>
+  </div>
+  <div class="chamber" aria-hidden="true">{{hemicycle}}</div>
+</div></section>
+
+<section class="band" id="features"><div class="wrap">
+  <p class="eyebrow">What it does</p>
+  <h2>From the first count to the quarterly report</h2>
+  <div class="feature">
+    <div class="copy"><h3>The count, and what it means</h3><p>Every seat in the chamber, colored by position, with the exact odds of clearing committee and the floor, and a ranked list of the members whose movement would change the outcome most.</p>
+      <ul><li>U.S. House, U.S. Senate and any state chamber</li><li>Simple majority, three-fifths or two-thirds</li><li>Pass or defeat, committee and floor counted separately</li></ul></div>
+    <div class="shot"><img src="img/count.png" alt="A vote count: the chamber colored by position, 18 of 21 votes needed, and 50 percent odds of passage" width="1280" height="820" loading="lazy"></div>
+  </div>
+  <div class="feature flip">
+    <div class="copy"><h3>Meetings that actually get scheduled</h3><p>The request goes out from your own Gmail or Outlook with open times from your calendar. When the scheduler answers, the invitation goes out with a Meet or Teams link, and replies are tracked.</p>
+      <ul><li>Calendar and email access stays in the browser</li><li>A follow-up is set for every request</li><li>Works without an account through your email app</li></ul></div>
+    <div class="shot"><img src="img/request.png" alt="A meeting request to a senator's scheduler with three open times from the calendar" width="1280" height="820" loading="lazy"></div>
+  </div>
+  <div class="feature">
+    <div class="copy"><h3>A brief for every bill</h3><p>Look up a federal or state bill to fill in sponsors, status and the official summary, then add talking points and objections yourself or have Claude draft them, clearly marked for checking.</p>
+      <ul><li>See who else is lobbying on a federal bill</li><li>Prints cleanly as a leave-behind</li></ul></div>
+    <div class="shot"><img src="img/brief.png" alt="A bill brief with sponsors, status, the position and the summary" width="1280" height="820" loading="lazy"></div>
+  </div>
+  <div class="feature flip">
+    <div class="copy"><h3>Every campaign and client on one page</h3><p>The portfolio shows each campaign's client, odds and weekly change, the next vote, meetings and overdue follow-ups, for the whole firm.</p>
+      <ul><li>Workspaces with owners, admins, members and client guests</li><li>Lobbying activity report for disclosure work</li></ul></div>
+    <div class="shot"><img src="img/portfolio.png" alt="A portfolio of four campaigns with clients, odds, counts and next votes" width="1280" height="820" loading="lazy"></div>
+  </div>
+  <div class="grid3">
+    <div class="card"><h3>The Monitor</h3><p>Saved searches over new bills in Congress and all 50 states, Federal Register rules and SAM.gov contract notices, ranked against your priorities, with alerts when something matters or a tracked bill moves.</p></div>
+    <div class="card"><h3>Action center</h3><p>A public page per campaign: supporters enter their address, find which of your targets represent them, and write or call. Each letter shows beside that member in the count.</p></div>
+    <div class="card"><h3>Contacts</h3><p>Agency staff, coalition partners and client contacts with tags, owners and a shared history, and personal emails sent from your own inbox, logged on each contact.</p></div>
+    <div class="card"><h3>For firms</h3><p>Single sign-on with SAML or OIDC, joining by verified email domain, an activity log, email digests and per-seat billing through Stripe when you want to sell it.</p></div>
+    <div class="card"><h3>Plain to run</h3><p>A small Node.js server and one SQLite file. No web framework, no build step, no separate database. Every setting is an environment variable.</p></div>
+    <div class="card"><h3>Yours to change</h3><p>Plan limits, prices, rosters and data sources are ordinary files. Change what each plan allows in one place, or turn billing off for a single firm's copy.</p></div>
+  </div>
+</div></section>
+
+<section class="band" id="run"><div class="wrap">
+  <p class="eyebrow">Run it</p>
+  <h2>On your computer in two minutes</h2>
+  <p class="intro">You need Node.js 22.13 or later. The development server uses a test sign-in that accepts any name, so you can try teams and invitations right away.</p>
+  <pre class="code"><code>git clone {{repo}}.git
+cd headcount
+npm install
+npm run dev</code></pre>
+  <p class="intro">Then open <code>http://localhost:3000</code>. For a real deployment, run the Docker image behind HTTPS with a persistent disk:</p>
+  <pre class="code"><code>docker build -t headcount .
+docker run -p 3000:3000 -v headcount-data:/data --env-file .env headcount</code></pre>
+  <p class="intro">The <a href="{{repo}}#set-it-up-for-real-users">setup guide</a> covers sign-in with Google Cloud Identity Platform, calendar and email access, email delivery, single sign-on, billing and the data source keys.</p>
+</div></section>
+
+<section class="band" id="data"><div class="wrap">
+  <p class="eyebrow">Built on public data</p>
+  <h2>Checked against the real sources every day</h2>
+  <p class="intro">Headcount reads public records directly from the government and nonprofit services that publish them. A daily check runs the app's own code against each one and publishes the result on the <a href="./status.html">status page</a>.</p>
+  <div class="tablewrap"><table class="plans sources">
+    <thead><tr><th>Source</th><th>Used for</th><th>Key</th><th>Today</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Congress.gov</th><td>Federal bills for briefs and the Monitor</td><td>Free</td><td data-src="Congress.gov">…</td></tr>
+      <tr><th scope="row">Open States</th><td>Bills and legislators in every state</td><td>Free</td><td data-src="Open States">…</td></tr>
+      <tr><th scope="row">Federal Register</th><td>Proposed rules, final rules and notices</td><td>None</td><td data-src="Federal Register">…</td></tr>
+      <tr><th scope="row">SAM.gov</th><td>Federal contract opportunities</td><td>Free</td><td data-src="SAM.gov">…</td></tr>
+      <tr><th scope="row">LDA.gov</th><td>Who else is lobbying on a bill</td><td>Optional</td><td data-src="LDA.gov">…</td></tr>
+      <tr><th scope="row">USAspending.gov</th><td>Who wins similar contracts</td><td>None</td><td data-src="USAspending">…</td></tr>
+      <tr><th scope="row">U.S. Census geocoder</th><td>Supporters' districts on action pages</td><td>None</td><td data-src="Census">…</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid3 tested">
+    <div class="card"><h3>Every push</h3><p>Server tests for permissions, billing, email and every data source, against local stand-ins.</p></div>
+    <div class="card"><h3>Every push</h3><p>An end-to-end test drives the whole app in a real browser with several people, from sign-in to single sign-on.</p></div>
+    <div class="card"><h3>Every day</h3><p>Live checks against the real services above. A failure opens an issue on GitHub; recovery closes it.</p></div>
+  </div>
+</div></section>
+</main>
+{{footer}}
+</body>
+</html>

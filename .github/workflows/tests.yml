@@ -1,0 +1,48 @@
+# Runs the server tests and the end-to-end test in a real browser on every
+# push and pull request. Everything outside the app is a local stand-in, so no
+# keys or secrets are needed.
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Server tests
+        run: npm test
+      - name: Install a browser for the end-to-end test
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: End-to-end test
+        env:
+          SHOTS: ${{ runner.temp }}/screenshots
+        run: |
+          mkdir -p "$SHOTS"
+          npm run e2e
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: ignore
+          retention-days: 7

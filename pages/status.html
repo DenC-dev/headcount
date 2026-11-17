@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Data source status · Headcount</title>
+<meta name="description" content="Daily checks of the public data services Headcount relies on: Congress.gov, Open States, the Federal Register, SAM.gov, LDA.gov, USAspending.gov and the Census geocoder.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+{{header}}
+<main id="main" class="statuspage"><div class="wrap">
+  <p class="eyebrow">Status</p>
+  <h1>Data sources</h1>
+  <p class="intro">Every morning, a check runs Headcount's own code against each public service it reads from and confirms the answers still have the shape the app expects. This page shows the latest results and the last 60 days.</p>
+  <div class="summary" id="summary" role="status"><span class="dot"></span><span>Loading the latest results</span></div>
+  <noscript><p class="intro">Turn on JavaScript to see the results, or read <a href="status.json">status.json</a>.</p></noscript>
+  <h2>Latest checks</h2>
+  <div class="tablewrap"><table class="plans checks"><thead><tr><th>Check</th><th>Result</th><th>Details</th></tr></thead><tbody id="checks"></tbody></table></div>
+  <h2>Last 60 days</h2>
+  <p class="fine">Each square is one daily run. <span class="key st-ok"></span> passed <span class="key st-fail"></span> failed <span class="key st-skip"></span> skipped, usually because the key is not set</p>
+  <div id="history" class="history"></div>
+  <h2>What a failure means</h2>
+  <p class="intro">Usually that a service changed its format or address, rejected a key, or was down for a while. Each failure opens an issue in the <a href="{{repo}}/issues?q=label%3Alive-checks">repository</a>, and passing again closes it. To run the same checks yourself, use <code>npm run test:live</code>.</p>
+</div></main>
+{{footer}}
+</body>
+</html>
