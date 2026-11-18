@@ -70,7 +70,7 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
     if (!org || !items.length) return 0;
     let n = 0;
     for (const m of store.q.members.all(org.id)) {
-      if (m.role === 'guest' || !m.email || store.getPrefs(m.id).monitor !== 'instant' || store.ssoBlocked(org, m.id, m.role)) continue;
+      if (m.role === 'guest' || !m.email || store.getPrefs(m.id).monitor !== 'instant' || store.blocked(org, m.id, m.role)) continue;
       const fresh = items.filter((i) => i.state !== 'tracked'), moved = items.filter((i) => i.state === 'tracked');
       const lines = (list) => list.map((i) => `${describeItem(i)}${i.reason && i.state !== 'tracked' ? `. ${i.reason}` : ''}`);
       const blocks = [];
@@ -112,7 +112,7 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
   function digestFor(u, since, today, period) {
     const sections = []; const totals = { moves: 0, overdue: 0, contacts: 0, votes: 0 };
     for (const o of store.q.userOrgs.all(u.id)) {
-      if (store.ssoBlocked(o, u.id, o.my_role)) continue;
+      if (store.blocked(o, u.id, o.my_role)) continue;
       for (const c of store.q.orgCampaigns.all(o.id)) {
         if (c.archived || !store.campaignRole(c.id, u.id)) continue;
         const s = c.summary ? JSON.parse(c.summary) : {};
@@ -147,7 +147,7 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
     if (monitor && u.monitor !== 'off') {
       const sinceMs = Date.parse(`${since}T00:00:00Z`);
       for (const o of store.q.userOrgs.all(u.id)) {
-        if (o.my_role === 'guest' || store.ssoBlocked(o, u.id, o.my_role)) continue;
+        if (o.my_role === 'guest' || store.blocked(o, u.id, o.my_role)) continue;
         const found = monitor.forDigest(o.id, sinceMs);
         if (!found.length) continue;
         totals.monitor = (totals.monitor || 0) + found.length;

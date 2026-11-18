@@ -5,19 +5,19 @@ const INF = Number.POSITIVE_INFINITY;
 export const PLANS = {
   free: {
     label: 'Free', seats: 2, campaigns: 3, watches: 2, guestsPerSeat: 0, guests: 3, draftsPerSeat: 0, drafts: 5,
-    features: { activityReport: false, audit: false, domain: false, sso: false, actionCenter: false },
+    features: { activityReport: false, audit: false, domain: false, sso: false, actionCenter: false, require2fa: false },
   },
   team: {
     label: 'Team', seats: null, campaigns: INF, watches: 25, guestsPerSeat: 5, guests: null, draftsPerSeat: 40, drafts: null,
-    features: { activityReport: true, audit: true, domain: true, sso: false, actionCenter: true },
+    features: { activityReport: true, audit: true, domain: true, sso: false, actionCenter: true, require2fa: true },
   },
   firm: {
     label: 'Firm', seats: null, campaigns: INF, watches: INF, guestsPerSeat: null, guests: INF, draftsPerSeat: 100, drafts: null,
-    features: { activityReport: true, audit: true, domain: true, sso: true, actionCenter: true },
+    features: { activityReport: true, audit: true, domain: true, sso: true, actionCenter: true, require2fa: true },
   },
   unlimited: {
     label: 'Unlimited', seats: INF, campaigns: INF, watches: INF, guests: INF, drafts: INF,
-    features: { activityReport: true, audit: true, domain: true, sso: true, actionCenter: true },
+    features: { activityReport: true, audit: true, domain: true, sso: true, actionCenter: true, require2fa: true },
   },
 };
 

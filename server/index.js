@@ -252,6 +252,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id), recoveryLeft: accounts.recoveryLeft(x.user.id) }; }],
     ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
+    ['PATCH', `/api/workspaces/${W}/security`, async (m, x) => store.setSecurity(m[1], x.user.id, await x.body())],
     // Server settings, for the operator
     ['GET', '/api/settings', (m, x) => { needOperator(x.user); return { ...settings.view(), status: { email: mail.enabled, ai: aiOn(), billing: Boolean(config.billing), auth: config.authMode, webhook: config.publicUrl ? `${config.publicUrl}/api/stripe/webhook` : '', backups: backupDir ? fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort().slice(-1)[0] || null : null : null } }; }],
     ['GET', '/api/settings/customers', (m, x) => { needOperator(x.user); return store.customers(); }],

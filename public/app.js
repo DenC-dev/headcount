@@ -495,11 +495,12 @@ async function onSignedIn() {
   if (location.hash === '#email') setTimeout(() => accountDrawer(true), 0);
   const jump = { '#monitor': 'monitor', '#contacts': 'contacts' }[location.hash];
   if (JOIN && JOIN.info) return acceptJoin();
-  const blocked = ORGS.filter((o) => o.ssoRequired), open = ORGS.filter((o) => !o.ssoRequired);
+  const blocked = ORGS.filter((o) => o.ssoRequired), tfa = ORGS.filter((o) => o.twoFactorRequired && !o.ssoRequired), open = ORGS.filter((o) => !o.ssoRequired && !o.twoFactorRequired);
   SSO_NEEDED = blocked.length ? blocked.map((o) => o.name).join(' and ') : null;
+  TFA_NEEDED = tfa.length ? tfa.map((o) => o.name).join(' and ') : null;
   const want = lsGet(LASTORG), oid = open.some((o) => o.id === want) ? want : open[0] && open[0].id;
   if (oid) await loadOrg(oid, { quiet: true });
-  if (!ORG) { page = SSO_NEEDED ? 'count' : 'workspace'; return render(); }
+  if (!ORG) { page = SSO_NEEDED || TFA_NEEDED ? 'count' : 'workspace'; return render(); }
   if (jump && ORG.role !== 'guest') { page = jump; return render(); }
   if (!S.cloud) {
     const last = lsGet(LAST);
@@ -1152,7 +1153,7 @@ function parseRoster(text) {
     cmte: /^(y|yes|1|true)$/i.test(r[3] || ''), pos: posOf(r[4] || ''), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], phone: (r[5] || '').slice(0, 40), email: (r[6] || '').slice(0, 120) }));
 }
 // ---------- workspaces ----------
-let OPERATOR = false, ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null;
+let OPERATOR = false, ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null, TFA_NEEDED = null;
 const WS = { members: null, invites: null, audit: null, auditMore: true, report: null, lastInvite: null, loading: false, filter: { client: '', q: '', archived: false } };
 const LASTORG = 'headcount.lastOrg';
 const isAdmin = () => ORG && (ORG.role === 'owner' || ORG.role === 'admin');
@@ -1160,7 +1161,7 @@ const clientOf = (st = S) => (st.cloud && st.campaign.clientId ? (CLIENTS.find((
 const firmOf = (st = S) => (st.cloud && ORG ? ORG.name : '');
 const fmtDate = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
 const limitText = (used, max) => (max === null || max === undefined ? `${used}` : `${used} of ${max}`);
-function fail(e) { if (e && e.sso) { SSO_NEEDED = e.workspace || 'This workspace'; render(); return toast(e.message); } if (e && e.upgrade) notify(e.message, isAdmin() ? 'See plans' : '', 'gotoPlans'); else toast(e && e.message ? e.message : String(e)); }
+function fail(e) { if (e && e.twoFactor) { TFA_NEEDED = e.workspace || 'This workspace'; render(); return toast(e.message); } if (e && e.sso) { SSO_NEEDED = e.workspace || 'This workspace'; render(); return toast(e.message); } if (e && e.upgrade) notify(e.message, isAdmin() ? 'See plans' : '', 'gotoPlans'); else toast(e && e.message ? e.message : String(e)); }
 function notify(msg, label, act) {
   const t = $('#toast'); t.innerHTML = `${esc(msg)}${label ? ` <button class="btn sm" data-act="${act}">${esc(label)}</button>` : ''}`; t.hidden = false;
   clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 7000);
@@ -1347,6 +1348,19 @@ function domainPanel() {
 function upsell(title, plan, what) {
   return `<div class="panel locked"><div class="row"><span class="label">${esc(title)}</span><span class="tier">${esc(plan)}</span></div><p class="note">${esc(what)}</p>${isAdmin() && CLOUD.config.billing ? `<div><button class="btn sm primary" data-act="gotoPlans">Get ${esc(plan)}</button></div>` : `<p class="note">Part of the ${esc(plan)} plan. Ask a workspace admin.</p>`}</div>`;
 }
+function securityPanel() {
+  if (!isAdmin() || !CLOUD.config.accounts) return '';
+  if (!ORG.plan.features.require2fa) return upsell('Require two-step sign-in', 'Team', 'Everyone in the workspace signs in with a code from an authenticator app as well as a password.');
+  const s = ORG.security || {}, local = Math.max(0, (s.people || 0) - (s.elsewhere || 0));
+  return `<div class="panel"><span class="label">Two-step sign-in</span>
+    <p class="note">${s.withCode || 0} of ${local} ${local === 1 ? 'person' : 'people'} with a Headcount password ${s.withCode === 1 ? 'uses' : 'use'} two-step sign-in.${s.elsewhere ? ` ${s.elsewhere} sign${s.elsewhere === 1 ? 's' : ''} in with Google, Microsoft or single sign-on, which have their own two-step settings.` : ''}</p>
+    <label class="check"><input type="checkbox" id="sec_2fa" ${s.require2fa ? 'checked' : ''}> Require it for everyone in this workspace. People without it are asked to turn it on before they can open the workspace; guests are not affected.</label>
+    ${TWOFA.on || !CLOUD.local() ? '' : '<p class="note">Turn it on for your own account first, under Account.</p>'}</div>`;
+}
+async function setRequire2fa(box) {
+  try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/security`, { require2fa: box.checked }); ORG.security.require2fa = box.checked; toast(box.checked ? 'Two-step sign-in is now required' : 'Two-step sign-in is optional'); }
+  catch (e) { box.checked = !box.checked; fail(e); }
+}
 function ssoPanel() {
   if (!isAdmin() || !CLOUD.config.sso) return '';
   const sso = ORG.sso || {}, d = ORG.domain, support = CLOUD.config.supportEmail;
@@ -1417,7 +1431,7 @@ function drawWorkspace(fromLoad) {
   const el = $('#workspacePage');
   if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to set up a workspace for your team. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'Workspaces need accounts, which are not set up on this server.'}</div>`; return; }
   if (!ORG) { el.innerHTML = onboardingHtml(); return; }
-  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${ssoPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
+  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${securityPanel()}${ssoPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
   if (!fromLoad) loadWs();
 }
 async function runReport(form) {
@@ -1452,7 +1466,7 @@ function renderSwitcher() {
   const opt = (v, label, sel) => `<option value="${esc(v)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
   const os = $('#orgSel');
   os.hidden = !signedIn();
-  if (signedIn()) os.innerHTML = (ORG ? '' : '<option value="">No workspace yet</option>') + ORGS.map((o) => opt(o.id, o.name + (o.ssoRequired ? ' (single sign-on)' : o.role === 'guest' ? ' (guest)' : ''), ORG && o.id === ORG.id)).join('') + '<option value="__new">New workspace…</option>';
+  if (signedIn()) os.innerHTML = (ORG ? '' : '<option value="">No workspace yet</option>') + ORGS.map((o) => opt(o.id, o.name + (o.ssoRequired ? ' (single sign-on)' : o.twoFactorRequired ? ' (two-step sign-in)' : o.role === 'guest' ? ' (guest)' : ''), ORG && o.id === ORG.id)).join('') + '<option value="__new">New workspace…</option>';
   if (signedIn() && ORG) {
     const acct = ACCOUNT.list.filter((e) => !e.archived || (S.cloud && e.id === S.id)); if (S.cloud && !acct.some((e) => e.id === S.id)) acct.unshift({ id: S.id, name: c.bill, role: ROLE, people: 1 });
     const tag = (e) => (e.role === 'viewer' ? ' (view only)' : e.client ? ` · ${e.client}` : '');
@@ -1501,6 +1515,7 @@ function render() {
     banner = JOIN.error ? `<span>${esc(JOIN.error)}</span>`
       : JOIN.info ? `<span><b>${esc(JOIN.info.invitedBy)}</b> invited you to ${JOIN.kind === 'org' ? 'join' : 'work on'} ${what} as ${role}.${signedIn() ? '' : ' Sign in to accept.'}</span>${signedIn() ? '<button class="btn sm primary" data-act="joinNow">Accept</button>' : '<button class="btn sm primary" data-act="signin">Sign in to accept</button>'}` : '<span>Checking your invitation</span>';
   } else if (cfg.authError) banner = `<span>${esc(cfg.authError)}</span>`;
+  else if (signedIn() && TFA_NEEDED && !SSO_NEEDED) banner = `<span><b>${esc(TFA_NEEDED)}</b> requires two-step sign-in. Turn it on for your account to open its campaigns.</span><button class="btn sm primary" data-act="tfaSetup">Turn it on</button>`;
   else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's identity provider to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
@@ -1741,7 +1756,11 @@ async function twoFactorAct(a) {
   }
   if (a === 'tfCopy') { try { await navigator.clipboard.writeText(LOC.codes.join('\n')); toast('Copied'); } catch (_) { toast('Select the codes and copy them'); } }
   if (a === 'tfDownload') download('headcount-recovery-codes.txt', `Headcount recovery codes for ${CLOUD.user.email}\nEach works once.\n\n${LOC.codes.join('\n')}\n`, 'text/plain');
-  if (a === 'tfDone') { LOC.codes = null; accountDrawer(); $('#tfSect').open = true; }
+  if (a === 'tfDone') {
+    LOC.codes = null;
+    if (TFA_NEEDED) { TFA_NEEDED = null; closeDrawer(); return onSignedIn(); } // the workspace that asked for it opens now
+    accountDrawer(); $('#tfSect').open = true;
+  }
 }
 async function twoFactorForm(id) {
   if (id === 'tfOnForm') {
@@ -1879,6 +1898,7 @@ document.addEventListener('click', async (e) => {
     case 'locMode': return localSignInDrawer(t.dataset.m);
     case 'hideGetting': lsSet('headcount.gs.' + ORG.id, 1); return renderPortfolio();
     case 'tfStart': case 'tfCopy': case 'tfDownload': case 'tfDone': return twoFactorAct(a);
+    case 'tfaSetup': accountDrawer(); $('#tfSect').open = true; return TWOFA.on ? null : twoFactorAct('tfStart');
     case 'signoutAll': await flushNow(); await CLOUD.signOutEverywhere(); return toast('Signed out on every device');
     case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'This server cannot send email yet'); } catch (err) { fail(err); } return;
     case 'ssoSwitch': await flushNow(); await CLOUD.signOut(); SSO_NEEDED = null; return signInDrawer('sso');
@@ -2006,6 +2026,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'campSel') return switchTo(t.value);
+  if (t.id === 'sec_2fa') return setRequire2fa(t);
   if (t.id === 'orgSel') { if (t.value === '__new') { t.value = ORG ? ORG.id : ''; return newOrgDrawer(); } return switchOrg(t.value); }
   if (t.dataset.orgrole) { try { await CLOUD.api('PATCH', `/api/workspaces/${ORG.id}/members/${encodeURIComponent(t.dataset.orgrole)}`, { role: t.value }); toast('Role changed'); } catch (err) { fail(err); } WS.members = null; await loadOrg(ORG.id, { quiet: true }); return render(); }
   if (t.id === 'pf_client') { WS.filter.client = t.value; return renderPortfolio(); }

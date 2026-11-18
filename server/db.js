@@ -110,7 +110,7 @@ export function openDb(file, cfg = {}) {
   const prefCols = new Set(db.prepare('PRAGMA table_info(user_prefs)').all().map((c) => c.name));
   if (!prefCols.has('monitor')) db.exec("ALTER TABLE user_prefs ADD COLUMN monitor TEXT NOT NULL DEFAULT 'digest'");
   const orgCols = new Set(db.prepare('PRAGMA table_info(orgs)').all().map((c) => c.name));
-  for (const [col, def] of Object.entries({ sso_provider: 'TEXT', sso_required: 'INTEGER NOT NULL DEFAULT 0', trial_notice: 'INTEGER NOT NULL DEFAULT 0' })) if (!orgCols.has(col)) db.exec(`ALTER TABLE orgs ADD COLUMN ${col} ${def}`);
+  for (const [col, def] of Object.entries({ sso_provider: 'TEXT', sso_required: 'INTEGER NOT NULL DEFAULT 0', trial_notice: 'INTEGER NOT NULL DEFAULT 0', require_2fa: 'INTEGER NOT NULL DEFAULT 0' })) if (!orgCols.has(col)) db.exec(`ALTER TABLE orgs ADD COLUMN ${col} ${def}`);
   // Columns added in version 2; older databases get them here.
   const have = new Set(db.prepare('PRAGMA table_info(campaigns)').all().map((c) => c.name));
   const add = { org_id: 'TEXT REFERENCES orgs(id) ON DELETE CASCADE', client_id: 'TEXT', visibility: "TEXT NOT NULL DEFAULT 'org'", archived: 'INTEGER NOT NULL DEFAULT 0', summary: 'TEXT', created_by: 'TEXT' };
@@ -228,6 +228,7 @@ class Store {
       record: p('SELECT data FROM records WHERE campaign_id = ? AND kind = ? AND rid = ?'),
       userOrgs: p('SELECT o.*, m.role AS my_role FROM org_members m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = ?'),
       setSso: p('UPDATE orgs SET sso_provider = ?, sso_required = ? WHERE id = ?'),
+      setRequire2fa: p('UPDATE orgs SET require_2fa = ? WHERE id = ?'),
       orgBySso: p('SELECT * FROM orgs WHERE sso_provider = ?'),
     };
     this.notify = () => {};
@@ -276,10 +277,17 @@ class Store {
     const u = this.q.user.get(uid); return !u || u.provider !== org.sso_provider;
   }
   ssoError(org) { return new HttpError(403, `${org.name} requires single sign-on. Sign in with your firm's SSO to continue.`, { sso: true, workspace: org.name }); }
+  // Two-step sign-in, when a workspace requires it, applies to people with
+  // built-in accounts; Google, Microsoft and single sign-on bring their own.
+  has2fa(uid) { try { const r = this.db.prepare('SELECT totp_secret FROM accounts WHERE id = ?').get(uid); return Boolean(r && r.totp_secret); } catch (_) { return false; } }
+  tfaBlocked(org, uid, role) { return Boolean(org && org.require_2fa && role && role !== 'guest' && String(uid).startsWith('loc:') && !this.has2fa(uid)); }
+  tfaError(org) { return new HttpError(403, `${org.name} requires two-step sign-in. Turn it on under Account to continue.`, { twoFactor: true, workspace: org.name }); }
+  blocked(org, uid, role) { return this.ssoBlocked(org, uid, role) || this.tfaBlocked(org, uid, role); }
   needOrg(oid, uid, min) {
     const r = this.orgRole(oid, uid), org = this.q.org.get(oid);
     if (!r || !org) throw new HttpError(404, 'Workspace not found, or you are not a member.');
     if (this.ssoBlocked(org, uid, r)) throw this.ssoError(org);
+    if (this.tfaBlocked(org, uid, r)) throw this.tfaError(org);
     if (ORANK[r] < ORANK[min]) throw new HttpError(403, min === 'owner' ? 'Only a workspace owner can do that.' : min === 'admin' ? 'Only workspace admins can do that.' : 'Guests cannot do that.');
     return r;
   }
@@ -295,7 +303,7 @@ class Store {
   }
 
   listOrgs(uid) {
-    return this.q.myOrgs.all(uid).map((o) => ({ id: o.id, name: o.name, role: o.my_role, plan: effectivePlan(o, this.cfg).key, ssoRequired: this.ssoBlocked(o, uid, o.my_role) }));
+    return this.q.myOrgs.all(uid).map((o) => ({ id: o.id, name: o.name, role: o.my_role, plan: effectivePlan(o, this.cfg).key, ssoRequired: this.ssoBlocked(o, uid, o.my_role), twoFactorRequired: this.tfaBlocked(o, uid, o.my_role) }));
   }
   createOrg(uid, name) {
     const n = clean(name, 80);
@@ -329,8 +337,25 @@ class Store {
       setup: role === 'guest' ? null : { clients: this.count('clients', oid), invites: this.count('org_invites', oid), watches: this.count('watches', oid), contacts: this.count('contacts', oid) },
       domain: o.domain ? { name: o.domain, verified: Boolean(o.domain_verified), join: Boolean(o.domain_join), token: admin ? o.domain_token : undefined } : null,
       sso: admin || o.sso_provider ? { provider: admin ? o.sso_provider || '' : undefined, required: Boolean(o.sso_required), enabled: Boolean(o.sso_provider) } : null,
+      security: { require2fa: Boolean(o.require_2fa), ...(admin ? this.tfaCounts(oid) : {}) },
       billing: { enabled: Boolean(this.cfg.billing), customer: admin ? Boolean(o.stripe_customer) : undefined, subscription: admin ? Boolean(o.stripe_subscription) : undefined },
     };
+  }
+  // How many people use two-step sign-in, for admins deciding to require it.
+  tfaCounts(oid) {
+    try {
+      const r = this.db.prepare(`SELECT COUNT(*) AS people, SUM(CASE WHEN m.user_id NOT LIKE 'loc:%' THEN 1 ELSE 0 END) AS elsewhere, SUM(CASE WHEN a.totp_secret IS NOT NULL THEN 1 ELSE 0 END) AS withCode
+        FROM org_members m LEFT JOIN accounts a ON a.id = m.user_id WHERE m.org_id = ? AND m.role != 'guest'`).get(oid);
+      return { people: r.people, withCode: r.withCode || 0, elsewhere: r.elsewhere || 0 };
+    } catch (_) { return { people: this.q.seatsUsed.get(oid).n, withCode: 0, elsewhere: 0 }; }
+  }
+  setSecurity(oid, uid, { require2fa }) {
+    this.needOrg(oid, uid, 'admin'); this.feature(oid, 'require2fa', 'Requiring two-step sign-in');
+    const on = Boolean(require2fa);
+    if (on && String(uid).startsWith('loc:') && !this.has2fa(uid)) throw new HttpError(400, 'Turn on two-step sign-in for your own account first, under Account.');
+    this.q.setRequire2fa.run(on ? 1 : 0, oid);
+    this.log(oid, uid, 'security.updated', on ? 'two-step sign-in required' : 'two-step sign-in optional');
+    return { ok: true, require2fa: on };
   }
   renameOrg(oid, uid, name) {
     this.needOrg(oid, uid, 'admin');
@@ -457,7 +482,7 @@ class Store {
   }
   need(cid, uid, min) {
     const c = this.q.campaign.get(cid), org = c && c.org_id ? this.q.org.get(c.org_id) : null;
-    if (org && this.ssoBlocked(org, uid, this.orgRole(org.id, uid))) throw this.ssoError(org);
+    if (org) { const or = this.orgRole(org.id, uid); if (this.ssoBlocked(org, uid, or)) throw this.ssoError(org); if (this.tfaBlocked(org, uid, or)) throw this.tfaError(org); }
     const r = this.campaignRole(cid, uid);
     if (!r) throw new HttpError(404, 'Campaign not found, or you do not have access to it.');
     if (CRANK[r] < CRANK[min]) throw new HttpError(403, min === 'owner' ? 'Only the campaign owner or a workspace admin can do that.' : 'You have view-only access to this campaign.');

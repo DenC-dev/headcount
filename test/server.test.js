@@ -207,7 +207,7 @@ test('Stripe checkout, signed webhooks, seats and cancellation', async () => {
   // Forged and stale webhooks are refused.
   const ev = { id: 'evt_1', type: 'checkout.session.completed', data: { object: { client_reference_id: W, customer: 'cus_1', subscription: 'sub_1' } } };
   const s1 = signed(ev);
-  assert.equal((await hook(s1.raw, s1.sig.replace(/v1=./, 'v1=0'))).status, 400);
+  assert.equal((await hook(s1.raw, s1.sig.replace(/v1=(.)/, (_, c) => 'v1=' + (c === '0' ? '1' : '0')))).status, 400);
   assert.equal((await hook(s1.raw, `t=${Math.floor(Date.now() / 1000) - 900},v1=${crypto.createHmac('sha256', 'whsec_1').update(`${Math.floor(Date.now() / 1000) - 900}.${s1.raw}`).digest('hex')}`)).status, 400);
   mocks.sub = subscription(W, 5);
   assert.equal((await hook(s1.raw, s1.sig)).status, 200);
@@ -751,5 +751,43 @@ test('two-step sign-in: authenticator codes, one use each, recovery codes, a res
     assert.equal((await post('/api/auth/2fa/disable', { password: 'tess newer password', code: nr.body.recovery[0] }, after.body.token)).status, 200);
     const plain = await post('/api/auth/login', { email: 'tess@firm.test', password: 'tess newer password' });
     assert.match(plain.body.token, /^s\./, 'off again: the password is enough');
+  } finally { mods.config.trustProxy = false; }
+});
+
+test('a workspace can require two-step sign-in: Team plan, the admin first, members blocked until they turn it on', async () => {
+  const { totp } = await import('../server/accounts.js');
+  mods.config.trustProxy = true;
+  try {
+    const H = { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.78' };
+    const call = (method, p, b, token) => fetch(base + p, { method, headers: { ...H, ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: b ? JSON.stringify(b) : undefined }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+    const uma = (await call('POST', '/api/auth/signup', { name: 'Uma Owner', email: 'uma@firm.test', password: 'uma long password', workspace: 'Uma Strategies' })).body.token;
+    const vic = (await call('POST', '/api/auth/signup', { name: 'Vic Member', email: 'vic@firm.test', password: 'vic long password' })).body.token;
+    const UW = (await call('GET', '/api/me', null, uma)).body.workspaces[0].id;
+    const inv = await call('POST', `/api/workspaces/${UW}/invites`, { role: 'member' }, uma);
+    assert.equal((await call('POST', `/api/workspace-invites/${inv.body.code}`, {}, vic)).status, 200);
+    let info = (await call('GET', `/api/workspaces/${UW}`, null, uma)).body;
+    assert.deepEqual(info.security, { require2fa: false, people: 2, withCode: 0, elsewhere: 0 });
+    assert.equal((await call('GET', `/api/workspaces/${UW}`, null, vic)).body.security.people, undefined, 'counts are for admins');
+    // Members cannot change it; the admin needs it on first
+    assert.equal((await call('PATCH', `/api/workspaces/${UW}/security`, { require2fa: true }, vic)).status, 403);
+    const first = await call('PATCH', `/api/workspaces/${UW}/security`, { require2fa: true }, uma);
+    assert.equal(first.status, 400); assert.match(first.body.error, /your own account first/);
+    const st = await call('POST', '/api/auth/2fa/start', {}, uma), secret = st.body.secret.replace(/ /g, '');
+    assert.equal((await call('POST', '/api/auth/2fa/enable', { code: totp(secret) }, uma)).status, 200);
+    assert.equal((await call('PATCH', `/api/workspaces/${UW}/security`, { require2fa: true }, uma)).status, 200);
+    info = (await call('GET', `/api/workspaces/${UW}`, null, uma)).body;
+    assert.equal(info.security.require2fa, true); assert.equal(info.security.withCode, 1);
+    // Vic is blocked from the workspace and told why, until Vic turns it on
+    const me = (await call('GET', '/api/me', null, vic)).body.workspaces.find((w) => w.id === UW);
+    assert.equal(me.twoFactorRequired, true);
+    const blocked = await call('GET', `/api/workspaces/${UW}`, null, vic);
+    assert.equal(blocked.status, 403); assert.equal(blocked.body.twoFactor, true); assert.equal(blocked.body.workspace, 'Uma Strategies');
+    const vs = await call('POST', '/api/auth/2fa/start', {}, vic);
+    assert.equal((await call('POST', '/api/auth/2fa/enable', { code: totp(vs.body.secret.replace(/ /g, '')) }, vic)).status, 200);
+    assert.equal((await call('GET', `/api/workspaces/${UW}`, null, vic)).status, 200);
+    assert.equal((await call('GET', '/api/me', null, vic)).body.workspaces.find((w) => w.id === UW).twoFactorRequired, false);
+    // The change is in the audit log
+    const audit = await call('GET', `/api/workspaces/${UW}/audit`, null, uma);
+    assert.ok(JSON.stringify(audit.body).includes('two-step sign-in required'));
   } finally { mods.config.trustProxy = false; }
 });

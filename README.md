@@ -114,7 +114,7 @@ Everything below except Identity Platform can also be set in the app, under Serv
 
 ### 1. Sign-in
 
-Headcount has built-in accounts (email and password) and needs nothing set up for them: the first account on a server becomes its operator and manages Server settings, and the operator chooses whether anyone can sign up or only people with an invitation. Password reset and email confirmation work once email is connected. Anyone can turn on two-step sign-in under Account: an authenticator app code at each new sign-in, with ten one-time recovery codes; the secret is encrypted at rest, and a password reset by email still asks for the code. `OPERATOR_EMAIL` makes a verified account with that address an operator too.
+Headcount has built-in accounts (email and password) and needs nothing set up for them: the first account on a server becomes its operator and manages Server settings, and the operator chooses whether anyone can sign up or only people with an invitation. Password reset and email confirmation work once email is connected. Anyone can turn on two-step sign-in under Account: an authenticator app code at each new sign-in, with ten one-time recovery codes; the secret is encrypted at rest, and a password reset by email still asks for the code. On Team and Firm, a workspace admin can require it for everyone in the workspace (Workspace, Two-step sign-in); people without it are asked to turn it on before the workspace opens, and the change is in the audit log. `OPERATOR_EMAIL` makes a verified account with that address an operator too.
 
 Sign-in with Google and Microsoft accounts, sending from Gmail and Outlook, and single sign-on need Google Cloud Identity Platform instead:
 
