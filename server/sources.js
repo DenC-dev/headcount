@@ -231,14 +231,62 @@ export async function stateRoster(cfg, state, chamber) {
 
 // ---------- districts for an address ----------
 const FIPS = { '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN', '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS', '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND', '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI', '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI', '56': 'WY', '72': 'PR' };
-export const normDistrict = (d) => String(d == null ? '' : d).toLowerCase().replace(/district|no\.|#/g, '').replace(/\s+/g, ' ').trim().replace(/^0+(?=\d)/, '');
-export async function districtsFor(cfg, address) {
-  const a = clip(address, 200);
-  if (a.length < 8) throw new HttpError(400, 'Enter your full street address, city and state or ZIP code.');
-  const p = new URLSearchParams({ address: a, benchmark: 'Public_AR_Current', vintage: 'Current_Current', layers: 'all', format: 'json' });
-  const body = await getJson(`${cfg.geocoderBase}/geographies/onelineaddress?${p}`, { name: 'The Census address lookup' });
-  const hit = body && body.result && (body.result.addressMatches || [])[0];
-  if (!hit) throw new HttpError(404, 'That address was not found. Check the street and ZIP code, and use a home address rather than a P.O. box.');
+// District names are written differently by the Census and by Open States
+// ("1st Middlesex" and "First Middlesex", "&" and "and", "003" and "3"), so
+// both sides are reduced to the same plain form before they are compared.
+const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10, eleventh: 11, twelfth: 12, thirteenth: 13, fourteenth: 14, fifteenth: 15, sixteenth: 16, seventeenth: 17, eighteenth: 18, nineteenth: 19, twentieth: 20 };
+export const normDistrict = (d) => String(d == null ? '' : d).toLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/\b(state senate|state house|senate|house of representatives|house|assembly|legislative|district|dist|no|number)\b\.?/g, ' ')
+  .replace(/[#.,'’()/-]/g, ' ')
+  .replace(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)\b/g, (w) => String(ORDINALS[w]))
+  .replace(/\b(\d+)(st|nd|rd|th)\b/g, '$1')
+  .replace(/\b0+(?=\d)/g, '')
+  .replace(/\s+/g, ' ').trim();
+
+// Apartment, suite and unit numbers trip the Census lookup, which matches
+// buildings, not units: "100 Main St Apt 4B" is found as "100 Main St".
+const UNIT = /(?:,?\s*\b(?:apt|apartment|unit|ste|suite|fl|floor|rm|room|bldg|building|lot|spc|space|trlr|trailer|dept)\b\.?\s*#?\s*[\w-]+|,?\s*#\s*[\w-]+)\s*$/i;
+export const stripUnit = (street) => { let t = String(street || '').trim(); for (let i = 0; i < 2; i++) t = t.replace(UNIT, '').trim(); return t.replace(/,\s*$/, ''); };
+const tidy = (s) => String(s || '').replace(/\./g, ' ').replace(/\s+,/g, ',').replace(/\s+/g, ' ').trim();
+// One line for letters and records, whichever way the address arrived.
+export function addressLine(input) {
+  if (input && typeof input === 'object') return clip([input.street, input.city, [input.state, input.zip].filter(Boolean).join(' ')].map((x) => clip(x, 120)).filter(Boolean).join(', '), 200);
+  return clip(input, 200);
+}
+
+// Finds the districts for a home address, given either separate fields
+// (street, city, state, ZIP: what browsers fill in) or one line. Formatting
+// should never be why a constituent is turned away, so it tries the address
+// as given, then without a unit number, then with fewer fields, before
+// saying it could not be found.
+export async function districtsFor(cfg, input) {
+  const parts = input && typeof input === 'object' ? { street: tidy(clip(input.street, 120)), city: tidy(clip(input.city, 80)), state: clip(input.state, 30), zip: (String(input.zip || '').match(/\d{5}/) || [''])[0] } : null;
+  const line = parts ? '' : clip(input, 200);
+  if (parts ? !parts.street || !(parts.zip || (parts.city && parts.state)) : line.length < 8) throw new HttpError(400, 'Enter your street address, and your ZIP code or your city and state.');
+  const tries = [];
+  if (parts) {
+    const bare = stripUnit(parts.street);
+    tries.push(['address', { street: parts.street, city: parts.city, state: parts.state, zip: parts.zip }]);
+    if (bare !== parts.street) tries.push(['address', { street: bare, city: parts.city, state: parts.state, zip: parts.zip }]);
+    if (parts.zip) tries.push(['address', { street: bare, zip: parts.zip }]);
+    if (parts.city && parts.state) tries.push(['address', { street: bare, city: parts.city, state: parts.state }]);
+  } else {
+    const a = tidy(line), segs = a.split(','), bare = [stripUnit(segs[0]), ...segs.slice(1)].join(',');
+    tries.push(['onelineaddress', { address: a }]);
+    if (bare !== a) tries.push(['onelineaddress', { address: bare }]);
+  }
+  const seen = new Set();
+  let hit = null;
+  for (const [kind, q] of tries) {
+    const params = Object.fromEntries(Object.entries(q).filter(([, v]) => v));
+    const key = kind + JSON.stringify(params); if (seen.has(key)) continue; seen.add(key);
+    const p = new URLSearchParams({ ...params, benchmark: 'Public_AR_Current', vintage: 'Current_Current', layers: 'all', format: 'json' });
+    const body = await getJson(`${cfg.geocoderBase}/geographies/${kind}?${p}`, { name: 'The Census address lookup' });
+    hit = body && body.result && (body.result.addressMatches || [])[0];
+    if (hit) break;
+  }
+  if (!hit) throw new HttpError(404, 'We could not find that address. Check the street number and ZIP code, and use a home address rather than a P.O. box.', { notFound: true });
   const g = hit.geographies || {}, layer = (re) => { const k = Object.keys(g).find((x) => re.test(x)); return k ? (g[k] || [])[0] : null; };
   const stRec = layer(/^States$/i), cdRec = layer(/Congressional Districts/i), up = layer(/Legislative Districts - Upper/i), low = layer(/Legislative Districts - Lower/i);
   const state = (stRec && stRec.STUSAB) || FIPS[(stRec || cdRec || up || low || {}).STATE] || '';
@@ -248,5 +296,9 @@ export async function districtsFor(cfg, address) {
     const n = Number.parseInt(code ? code[1] : cdRec.BASENAME, 10);
     cd = !n || n === 98 ? 'AL' : String(n);
   }
-  return { matched: hit.matchedAddress || a, state, cd, upper: up ? normDistrict(up.BASENAME || up.SLDU) : '', lower: low ? normDistrict(low.BASENAME || low.SLDL) : '' };
+  // Every way the Census names each district, so a target written either way matches.
+  const names = (rec, code) => (rec ? [...new Set([rec.BASENAME, rec.NAME, rec[code]].filter(Boolean).map(normDistrict).filter(Boolean))] : []);
+  const upperNames = names(up, 'SLDU'), lowerNames = names(low, 'SLDL');
+  return { matched: hit.matchedAddress || addressLine(input), state, cd, upper: upperNames[0] || '', lower: lowerNames[0] || '', upperNames, lowerNames,
+    label: { upper: up ? clip(up.NAME || `State Senate district ${up.BASENAME || up.SLDU}`, 80) : '', lower: low ? clip(low.NAME || `State House district ${low.BASENAME || low.SLDL}`, 80) : '' } };
 }

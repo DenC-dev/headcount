@@ -19,14 +19,24 @@
 
     <form id="where" class="lead step" novalidate>
       <h2 class="wide">1. Find your legislators</h2>
-      <label class="wide">Your home address<input id="address" name="address" autocomplete="street-address" placeholder="123 Main St, Springfield, IL 62701" required></label>
-      <p class="wide fine">Your address is used to find who represents you, and is included in your letter so the office knows you are a constituent.</p>
-      <button class="button" type="submit">Find my legislators</button>
+      <p class="wide fine">Your home address finds who represents you, and goes in your letter so the office knows you are a constituent. Tap the street box and your phone or browser can fill in your saved address.</p>
+      <label class="wide">Street address<input id="street" name="address-line1" autocomplete="address-line1" placeholder="123 Main St, Apt 4" required></label>
+      <label>City<input id="city" name="city" autocomplete="address-level2" required></label>
+      <label>State<select id="state" name="state" autocomplete="address-level1" required><option value="">Choose</option></select></label>
+      <label>ZIP code<input id="zip" name="postal-code" autocomplete="postal-code" inputmode="numeric" maxlength="10" required></label>
+      <div class="wide"><button class="button" type="submit">Find my legislators</button></div>
       <p class="status wide" id="whereMsg" role="status"></p>
     </form>
 
+    <section id="pick" hidden>
+      <h2>Choose your legislator</h2>
+      <p class="fine">If your address will not come up, pick the legislator who represents you. Your letter includes your address as you typed it, so the office can check it.</p>
+      <div class="pickrow"><select id="pickMember"></select><button class="button" type="button" id="pickGo">Continue</button></div>
+    </section>
+
     <section id="who" hidden>
       <h2>Your legislators on this issue</h2>
+      <p class="fine" id="matched"></p>
       <ul id="members" class="members"></ul>
     </section>
 

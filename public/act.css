@@ -13,3 +13,6 @@
 .members span { color: var(--muted); font-size: 14px; }
 .calls { display: grid; gap: 8px; margin-top: 10px; }
 .calls a { font-weight: 600; }
+.pickrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.pickrow select { flex: 1 1 240px; min-width: 0; }
+#matched { margin-top: 6px; }

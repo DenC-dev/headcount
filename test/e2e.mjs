@@ -40,7 +40,8 @@ const mock = http.createServer((req, res) => {
       { id: 'ocd-person/aaaa-1111', name: 'Corey Simon', party: 'Republican', current_role: { district: '3' }, email: 'simon.corey@flsenate.gov', offices: [{ classification: 'capitol', address: '404 S. Monroe St., Tallahassee, FL 32399', voice: '850-487-5003' }] },
       { id: 'ocd-person/bbbb-2222', name: 'Ana Ruiz', party: 'Democratic', current_role: { district: '12' }, email: 'ruiz.ana@flsenate.gov', offices: [] }] });
     if (u.pathname === '/lda/filings/') return j(200, { results: [{ filing_uuid: 'f1', filing_year: 2026, filing_period_display: '3rd Quarter', income: '50000.00', registrant: { name: 'Akin Strategies' }, client: { name: 'Rural Telecom Coalition' }, lobbying_activities: [{ description: 'H.R.1234, Rural Broadband Access Act', government_entities: [{ name: 'HOUSE OF REPRESENTATIVES' }] }], dt_posted: '2026-10-20T10:00:00' }] });
-    if (u.pathname === '/geo/geographies/onelineaddress') return j(200, { result: { addressMatches: [{ matchedAddress: '100 MAIN ST, TALLAHASSEE, FL, 32301', geographies: { States: [{ STUSAB: 'FL' }], '119th Congressional Districts': [{ CD119: '02' }], '2024 State Legislative Districts - Upper': [{ BASENAME: '3' }], '2024 State Legislative Districts - Lower': [{ BASENAME: '8' }] } }] } });
+    if (u.pathname === '/geo/geographies/address' && /\bapt\b/i.test(u.searchParams.get('street') || '')) return j(200, { result: { addressMatches: [] } });
+    if (u.pathname === '/geo/geographies/onelineaddress' || u.pathname === '/geo/geographies/address') return j(200, { result: { addressMatches: [{ matchedAddress: '100 MAIN ST, TALLAHASSEE, FL, 32301', geographies: { States: [{ STUSAB: 'FL' }], '119th Congressional Districts': [{ CD119: '02' }], '2024 State Legislative Districts - Upper': [{ BASENAME: '3' }], '2024 State Legislative Districts - Lower': [{ BASENAME: '8' }] } }] } });
     if (u.pathname === '/fr/documents.json') return j(200, { results: [] });
     if (u.pathname === '/v1/customers') return j(200, { id: 'cus_e2e' });
     if (u.pathname === '/v1/checkout/sessions') { const f = new URLSearchParams(body); stripeState.org = f.get('client_reference_id'); stripeState.seats = +f.get('line_items[0][quantity]'); stripeState.price = f.get('line_items[0][price]'); stripeState.success = f.get('success_url'); return j(200, { id: 'cs_e2e', url: `${M}/checkout` }); }
@@ -383,8 +384,12 @@ try {
   const supporter = await person('Supporter', 'google');
   await supporter.page.goto(actUrl);
   await supporter.page.waitForFunction(() => /^Tell your legislators/.test(document.querySelector('#title').textContent));
-  await supporter.page.fill('#address', '100 Main St, Tallahassee, FL 32301'); await supporter.page.click('#where button');
+  // Filled in the way a browser fills a saved address, with an apartment number the Census lookup does not know
+  assert.equal(await supporter.page.inputValue('#state'), 'FL', 'the form starts on the campaign state');
+  await supporter.page.fill('#street', '100 Main St Apt 2'); await supporter.page.fill('#city', 'Tallahassee'); await supporter.page.fill('#zip', '32301');
+  await supporter.page.click('#where button');
   await supporter.page.waitForSelector('#letter:not([hidden])');
+  assert.match(await supporter.page.locator('#matched').innerText(), /We found 100 MAIN ST, TALLAHASSEE, FL, 32301/);
   assert.match(await supporter.page.locator('#members').innerText(), /Corey Simon/);
   await supporter.page.fill('#name', 'Pat Voter'); await supporter.page.fill('#email', 'pat@example.net'); await supporter.page.check('#optin');
   await shot(supporter.page, 'action-page', true);

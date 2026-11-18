@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { HttpError, clean } from './db.js';
-import { districtsFor, normDistrict } from './sources.js';
+import { districtsFor, normDistrict, addressLine } from './sources.js';
 
 // The action center: a public page for each campaign where supporters enter
 // their address, find their own legislators among the campaign's targets, and
@@ -82,8 +82,18 @@ export function makeActionCenter(cfg, store, mail) {
   function publicView(id) {
     const a = q.byId.get(String(id || ''));
     if (!a || !a.active) throw new HttpError(404, 'This action page is not available.');
-    const org = store.q.org.get(a.org_id);
-    return { title: a.title, intro: a.intro || '', subject: a.subject || '', letter: a.letter || '', callScript: a.call_script || '', org: org ? org.name : '', canEmail: mail.enabled };
+    const org = store.q.org.get(a.org_id), juris = a.juris ? JSON.parse(a.juris) : null;
+    return { title: a.title, intro: a.intro || '', subject: a.subject || '', letter: a.letter || '', callScript: a.call_script || '', org: org ? org.name : '', canEmail: mail.enabled,
+      // The state to start the address form on, and the legislators to pick from if an address cannot be found
+      state: juris && juris.level === 'state' ? juris.state || '' : '',
+      members: JSON.parse(a.targets).map((t) => ({ id: t.id, name: t.name, title: t.title, district: t.district })) };
+  }
+  // Which districts an address is in, in words, for when none are on the campaign.
+  function whereYouAre(a, d) {
+    const juris = a.juris ? JSON.parse(a.juris) : null;
+    if (juris && juris.level === 'us') return juris.chamber === 'upper' ? `${d.state}` : `${d.state} congressional district ${d.cd === 'AL' ? 'at large' : d.cd}`;
+    if (juris && juris.level === 'state') return juris.chamber === 'lower' ? d.label.lower || (d.lower ? `House district ${d.lower}` : '') : d.label.upper || (d.upper ? `Senate district ${d.upper}` : '');
+    return '';
   }
   function match(a, d) {
     const juris = a.juris ? JSON.parse(a.juris) : null, targets = JSON.parse(a.targets);
@@ -94,8 +104,8 @@ export function makeActionCenter(cfg, store, mail) {
     }
     if (juris && juris.level === 'state') {
       if (juris.state && juris.state !== d.state) return [];
-      const want = juris.chamber === 'lower' ? d.lower : d.upper;
-      return want ? targets.filter((t) => normDistrict(t.district) === want) : [];
+      const want = new Set(juris.chamber === 'lower' ? d.lowerNames || [d.lower] : d.upperNames || [d.upper]);
+      return want.size ? targets.filter((t) => want.has(normDistrict(t.district))) : [];
     }
     return [];
   }
@@ -103,14 +113,25 @@ export function makeActionCenter(cfg, store, mail) {
     const a = q.byId.get(String(id || ''));
     if (!a || !a.active) throw new HttpError(404, 'This action page is not available.');
     const d = await districtsFor(cfg, address), mine = match(a, d);
-    return { address: d.matched, districts: d, members: mine.map((t) => ({ id: t.id, name: t.name, title: t.title, party: t.party, district: t.district, email: Boolean(t.email) && mail.enabled, phone: t.phone, form: t.form })) };
+    return { address: d.matched, districts: d, where: mine.length ? '' : whereYouAre(a, d), members: mine.map((t) => ({ id: t.id, name: t.name, title: t.title, party: t.party, district: t.district, email: Boolean(t.email) && mail.enabled, phone: t.phone, form: t.form })) };
   }
   async function send(id, b) {
     const a = q.byId.get(String(id || ''));
     if (!a || !a.active) throw new HttpError(404, 'This action page is not available.');
     const name = clean(b.name, 120), email = clean(b.email, 160);
     if (!name || !isEmail(email)) throw new HttpError(400, 'Add your name and email address. Offices reply to constituents by email.');
-    const d = await districtsFor(cfg, b.address), mine = match(a, d);
+    // If the address truly cannot be found, the person may pick their own
+    // legislator; the office sees the address as they typed it and can check it.
+    let d, mine, unverified = false;
+    try { d = await districtsFor(cfg, b.address); mine = match(a, d); }
+    catch (e) {
+      if (!(e.extra && e.extra.notFound) || !b.memberId) throw e;
+      const pick = JSON.parse(a.targets).find((t) => t.id === String(b.memberId));
+      if (!pick) throw new HttpError(400, 'Choose your legislator from the list.');
+      const typed = addressLine(b.address);
+      if (typed.length < 8) throw new HttpError(400, 'Enter your home address, so the office knows you live in the district.');
+      d = { matched: typed, state: (b.address && b.address.state) || '' }; mine = [pick]; unverified = true;
+    }
     if (!mine.length) throw new HttpError(400, 'None of the legislators this campaign is asking to act represent that address.');
     const subject = clean(b.subject, 160) || a.subject || a.title, message = String(b.message || '').trim().slice(0, 6000) || a.letter;
     const edited = message !== a.letter;
@@ -119,7 +140,7 @@ export function makeActionCenter(cfg, store, mail) {
     for (const t of mine) {
       if (!t.email || !mail.enabled) continue;
       const salutation = `Dear ${t.title || (a.juris && JSON.parse(a.juris).chamber === 'upper' ? 'Senator' : 'Representative')} ${t.name.split(' ').slice(-1)[0]},`;
-      const body = `${salutation}\n\n${message.replace(/^dear [^\n]*\n+/i, '')}\n\n${name}\n${d.matched}\n${email}\n\n--\nSent by a constituent through ${org ? org.name : 'an advocacy'} action page on Headcount. Reply to this email to reach ${name} directly.`;
+      const body = `${salutation}\n\n${message.replace(/^dear [^\n]*\n+/i, '')}\n\n${name}\n${d.matched}\n${email}\n\n--\n${unverified ? 'The address above is as the sender typed it; it could not be matched automatically.\n' : ''}Sent by a constituent through ${org ? org.name : 'an advocacy'} action page on Headcount. Reply to this email to reach ${name} directly.`;
       if (mail.queue({ to: t.email, kind: 'constituent', replyTo: email, subject, text: body, dedupe: `act:${a.id}:${t.id}:${email.toLowerCase()}:${new Date().toISOString().slice(0, 10)}` })) emailed++;
     }
     q.respond.run(a.id, a.org_id, Date.now(), name, email.toLowerCase(), d.matched, d.state, JSON.stringify(mine.map((t) => t.id)), emailed, b.optin ? 1 : 0, edited ? 1 : 0);

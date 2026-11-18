@@ -91,6 +91,12 @@ await run('Census: districts for a Florida address', null, async () => {
   check(/^\d+$/.test(d.cd) && /^\d+$/.test(d.upper) && /^\d+$/.test(d.lower), `districts incomplete: ${JSON.stringify(d)}`);
   return `FL congressional ${d.cd}, senate ${d.upper}, house ${d.lower}`;
 });
+await run('Census: separate address fields with an office number, as browsers fill them in', null, async () => {
+  const d = await src.districtsFor(cfg, { street: '400 S Monroe St Suite 100', city: 'Tallahassee', state: 'FL', zip: '32399' });
+  check(d.state === 'FL' && /^\d+$/.test(d.upper) && /^\d+$/.test(d.lower), `districts incomplete: ${JSON.stringify(d)}`);
+  check(d.upperNames.length > 0 && Boolean(d.label.upper), `district names missing: ${JSON.stringify(d)}`);
+  return `${d.matched}: ${d.label.upper}, ${d.label.lower}`;
+});
 await run('Census: an at-large district', null, async () => {
   const d = await src.districtsFor(cfg, '1600 Pennsylvania Ave NW, Washington, DC 20500');
   check(d.state === 'DC' && d.cd === 'AL', `expected DC at-large, got ${JSON.stringify(d)}`);

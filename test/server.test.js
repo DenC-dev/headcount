@@ -83,6 +83,12 @@ const mock = http.createServer((req, res) => {
       { filing_uuid: 'f2', filing_year: 2026, filing_period_display: '3rd Quarter', income: '10000.00', registrant: { name: 'Other LLC' }, client: { name: 'Unrelated Co' }, lobbying_activities: [{ description: 'H.R. 12345, something else' }], dt_posted: '2026-10-21T10:00:00' },
     ] });
     if (u.pathname === '/usa/search/spending_by_category/recipient/') return j(200, { results: [{ name: 'ACME NETWORKS', amount: 3000000 }, { name: 'BETA FIBER', amount: 1000000 }] });
+    if (u.pathname === '/geo/geographies/address') {
+      const sp = u.searchParams; mocks.geo.push('S:' + ['street', 'city', 'state', 'zip'].map((k) => sp.get(k) || '').join('|'));
+      // Like the Census: units and unknown streets are not found
+      if (/nowhere|\bapt\b|#/i.test(sp.get('street') || '')) return j(200, { result: { addressMatches: [] } });
+      return j(200, { result: { addressMatches: [{ matchedAddress: '100 MAIN ST, TALLAHASSEE, FL, 32301', geographies: { States: [{ STUSAB: 'FL', STATE: '12' }], '119th Congressional Districts': [{ CD119: '02', BASENAME: '2', STATE: '12' }], '2024 State Legislative Districts - Upper': [{ SLDU: '003', BASENAME: '3', NAME: 'State Senate District 3', STATE: '12' }], '2024 State Legislative Districts - Lower': [{ SLDL: '008', BASENAME: '8', STATE: '12' }] } }] } });
+    }
     if (u.pathname === '/geo/geographies/onelineaddress') {
       mocks.geo.push(u.searchParams.get('address'));
       if (/nowhere/i.test(u.searchParams.get('address'))) return j(200, { result: { addressMatches: [] } });
@@ -965,4 +971,49 @@ test('Stripe events: checkout tagging, renewals, disputes, refunds and fraud war
   mocks.stripe.length = 0;
   assert.equal((await send({ id: 'evt_as1', type: 'checkout.session.async_payment_succeeded', data: { object: { id: 'cs_2', client_reference_id: W, customer: 'cus_1', subscription: 'sub_1', payment_status: 'paid' } } })).status, 200);
   assert.ok(mocks.stripe.some((x) => x.path === '/v1/subscriptions/sub_1' && x.method === 'GET'));
+});
+
+// ---------- action center addresses ----------
+test('action center addresses: filled-in fields, unit numbers, district spellings, and a way through when an address is not found', async () => {
+  const { normDistrict, stripUnit } = await import('../server/sources.js');
+  // District names written differently by different sources
+  assert.equal(normDistrict('1st Middlesex'), normDistrict('First Middlesex'));
+  assert.equal(normDistrict('Berkshire, Hampden, Franklin & Hampshire'), normDistrict('Berkshire, Hampden, Franklin and Hampshire'));
+  assert.equal(normDistrict('District 003'), '3'); assert.equal(normDistrict('State Senate District 12'), '12'); assert.equal(normDistrict('3A'), '3a'); assert.equal(normDistrict('Grafton 12'), 'grafton 12');
+  assert.equal(stripUnit('100 Main St Apt 4B'), '100 Main St'); assert.equal(stripUnit('100 Main St, Suite 200'), '100 Main St'); assert.equal(stripUnit('100 Main St #4'), '100 Main St'); assert.equal(stripUnit('12 Unity Way'), '12 Unity Way');
+  // A Florida Senate campaign whose targets spell their districts differently
+  const targets = [{ id: 's3', name: 'Corey Simon', district: 'District 003', email: 'simon.corey@flsenate.gov' }, { id: 's12', name: 'Ana Ruiz', district: '12', email: 'ruiz@flsenate.gov' }];
+  const id = ok(await api('mona', 'PUT', `/api/campaigns/${MC}/action`, { title: 'Back rural broadband', letter: 'Please vote yes on SB 214.', juris: { level: 'state', state: 'FL', chamber: 'upper' }, targets, active: true })).action.id;
+  const pub = await (await fetch(`${base}/api/act/${id}`)).json();
+  assert.equal(pub.state, 'FL', 'the form starts on the campaign state');
+  assert.deepEqual(pub.members.map((m) => m.id), ['s3', 's12']); assert.equal(pub.members[0].email, undefined, 'no office emails on the public page');
+  mods.config.trustProxy = true; // its own address, so the earlier letters do not count against this test's limit
+  const post = (p, b) => fetch(`${base}/api/act/${id}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.80' }, body: JSON.stringify(b) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  try {
+  // Filled-in fields with an apartment number: found by trying again without it
+  mocks.geo.length = 0;
+  const look = await post('/lookup', { address: { street: '100 Main St Apt 4B', city: 'Tallahassee', state: 'FL', zip: '32301-1234' } });
+  assert.equal(look.status, 200); assert.deepEqual(look.body.members.map((m) => m.name), ['Corey Simon']);
+  assert.equal(look.body.address, '100 MAIN ST, TALLAHASSEE, FL, 32301');
+  assert.deepEqual(mocks.geo, ['S:100 Main St Apt 4B|Tallahassee|FL|32301', 'S:100 Main St|Tallahassee|FL|32301']);
+  // Found, but in a district the campaign is not asking: say which one
+  ok(await api('mona', 'PUT', `/api/campaigns/${MC}/action`, { title: 'Back rural broadband', letter: 'Please vote yes on SB 214.', juris: { level: 'state', state: 'FL', chamber: 'upper' }, targets: [targets[1]], active: true }));
+  const other = await post('/lookup', { address: { street: '100 Main St', city: 'Tallahassee', state: 'FL', zip: '32301' } });
+  assert.deepEqual(other.body.members, []); assert.equal(other.body.where, 'State Senate District 3');
+  ok(await api('mona', 'PUT', `/api/campaigns/${MC}/action`, { title: 'Back rural broadband', letter: 'Please vote yes on SB 214.', juris: { level: 'state', state: 'FL', chamber: 'upper' }, targets, active: true }));
+  // Not found at all: marked so the page can offer the list, never "you are not in the district"
+  const lost = await post('/lookup', { address: { street: '1 Nowhere Rd', city: 'Nowhere', state: 'FL', zip: '32399' } });
+  assert.equal(lost.status, 404); assert.equal(lost.body.notFound, true); assert.doesNotMatch(lost.body.error, /represent/);
+  assert.equal((await post('/lookup', { address: { street: '', city: 'Tallahassee', state: 'FL', zip: '' } })).status, 400);
+  // ...and they can pick their legislator; the office is told the address was not matched
+  assert.equal((await post('/send', { name: 'Lee Rural', email: 'lee@example.net', address: { street: '1 Nowhere Rd', city: 'Nowhere', state: 'FL', zip: '32399' }, memberId: 'nobody' })).status, 400);
+  const picked = await post('/send', { name: 'Lee Rural', email: 'lee@example.net', address: { street: '1 Nowhere Rd', city: 'Nowhere', state: 'FL', zip: '32399' }, memberId: 's12' });
+  assert.equal(picked.status, 200); assert.deepEqual(picked.body.emailed, ['Ana Ruiz']);
+  const note = emailsTo('ruiz@flsenate.gov', 'constituent').at(-1);
+  assert.match(note.text_body, /Lee Rural\n1 Nowhere Rd, Nowhere, FL 32399/); assert.match(note.text_body, /could not be matched automatically/);
+  // A picked legislator does not override an address that can be found
+  const real = await post('/send', { name: 'Sam Town', email: 'sam@example.net', address: { street: '100 Main St', city: 'Tallahassee', state: 'FL', zip: '32301' }, memberId: 's12' });
+  assert.deepEqual(real.body.emailed, ['Corey Simon']);
+  assert.doesNotMatch(emailsTo('simon.corey@flsenate.gov', 'constituent').at(-1).text_body, /could not be matched/);
+  } finally { mods.config.trustProxy = false; }
 });
