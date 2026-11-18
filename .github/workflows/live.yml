@@ -100,7 +100,7 @@ jobs:
         env:
           SITE_URL: ${{ steps.pages.outputs.base_url }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-          APP_URL: ${{ vars.APP_URL }} # your Headcount server, for Sign in; set it after deploying
+          APP_URL: ${{ vars.APP_URL || 'https://headcount-i3d8.onrender.com' }} # your Headcount server, for Sign in; the APP_URL repository variable overrides it
           LIVE_JSON: ${{ runner.temp }}/live.json
         run: node scripts/build-pages.mjs
 
