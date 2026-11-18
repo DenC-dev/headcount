@@ -73,6 +73,7 @@ function drawSettings(open) {
       ${field('priceLabelTeam', 'Team price, as shown', { ph: '$45 per seat a month' })}${field('priceLabelFirm', 'Firm price, as shown', { ph: '$75 per seat a month' })}
       ${field('salesEmail', 'Sales email (gets demo requests)', { ph: 'sales@yourfirm.com' })}${field('supportEmail', 'Support email', { ph: 'help@yourfirm.com' })}
       <div class="wide"><button class="btn primary">Save</button></div></form></details>
+  ${o('customers', false)}<summary>Customers</summary><div id="svCustomers"><p class="note">Opening this loads every workspace on this server.</p></div></details>
   ${o('backups', false)}<summary>Backups</summary>
     <p class="note">Headcount saves a copy of everything once a day and keeps the last seven${st.backups ? `; the latest is <code>${esc(st.backups)}</code>` : ''}. Download a copy to keep somewhere else, too.</p>
     <div class="btnrow"><button class="btn" data-x="svBackup">Download a backup now</button></div></details>`);
@@ -106,8 +107,22 @@ document.addEventListener('click', async (e) => {
     catch (err) { msg.innerHTML = `<span class="bad">${esc(err.message)}</span> Save your settings first if you changed them.`; }
     return;
   }
+  if (x === 'svCustomersCsv') return csvDownload(`headcount-customers-${today()}.csv`, [['Workspace', 'Plan', 'People', 'Campaigns', 'Owner', 'Created', 'Paying'], ...(SET.customers || []).map((w) => [w.name, w.plan, w.people, w.campaigns, w.owner, new Date(w.created).toISOString().slice(0, 10), w.paying ? 'yes' : 'no'])]);
   if (x === 'svBackup') { try { await CLOUD.download('/api/settings/backup', `headcount-backup-${today()}.db`); toast('Backup downloaded'); } catch (err) { fail(err); } }
 });
+document.addEventListener('toggle', async (e) => {
+  const box = e.target.querySelector && e.target.querySelector('#svCustomers');
+  if (!box || !e.target.open || box.dataset.loaded) return;
+  box.dataset.loaded = '1'; box.innerHTML = '<p class="note">Loading</p>';
+  try {
+    const r = await CLOUD.api('GET', '/api/settings/customers'), t = r.totals;
+    const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    box.innerHTML = `<p class="note">${n(t.workspaces, 'workspace', 'workspaces')} · ${n(t.people, 'person', 'people')} · ${t.paying} paying · ${t.trials} on a trial</p>
+      <div class="tablewrap"><table class="custtable"><thead><tr><th>Workspace</th><th>Plan</th><th class="num">People</th><th class="num">Campaigns</th></tr></thead><tbody>${r.workspaces.map((w) => `<tr><td><b>${esc(w.name)}</b><div class="meta">${esc(w.owner)} · since ${esc(fmtDate(w.created))}</div></td><td>${esc(w.plan)}${w.paying ? ' <span class="status ok">Paying</span>' : ''}${w.trialEnds ? `<div class="meta">trial ends ${esc(fmtDate(w.trialEnds))}</div>` : ''}</td><td class="num">${w.people}</td><td class="num">${w.campaigns}</td></tr>`).join('') || '<tr><td colspan="4" class="note">No workspaces yet.</td></tr>'}</tbody></table></div>
+      <div class="btnrow"><button class="btn sm" data-x="svCustomersCsv">Download as CSV</button></div>`;
+    SET.customers = r.workspaces;
+  } catch (err) { box.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+}, true);
 document.addEventListener('change', (e) => {
   if (e.target.id !== 'sv_preset') return;
   const p = EMAIL_PRESETS[e.target.value];

@@ -211,3 +211,15 @@ a.brand { text-decoration: none; }
 .panel.locked { border-style: dashed; }
 .srcrow { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
 .srcrow .btnrow label { flex: 1 1 220px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+
+/* getting started */
+.getting { display: flex; flex-direction: column; gap: 10px; }
+.gbar { height: 6px; border-radius: 999px; background: var(--soft); overflow: hidden; }
+.gbar i { display: block; height: 100%; background: var(--yes); border-radius: 999px; }
+.gsteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.gsteps li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.gsteps b { display: block; font-weight: 600; }
+.gcheck { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); }
+.gsteps li.done .gcheck { background: var(--yes); border-color: var(--yes); }
+.gsteps li.done b { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.custtable td { vertical-align: top; } .custtable .meta { overflow-wrap: anywhere; }

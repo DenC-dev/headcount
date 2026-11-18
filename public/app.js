@@ -1204,6 +1204,24 @@ function summaryOf(st) {
   };
 }
 
+// ---------- getting started ----------
+// A short checklist for a new workspace, until it is done or hidden.
+function gettingStarted() {
+  if (!ORG || ORG.role === 'guest' || !ORG.setup || lsGet('headcount.gs.' + ORG.id)) return '';
+  const st = ORG.setup, steps = [
+    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Load the chamber and mark where each member stands.', '<button class="btn sm" data-act="newCamp">New campaign</button>'],
+    [st.clients > 0, 'Add the clients you represent', 'Every campaign, report and watch can be filed under a client.', '<button class="btn sm" data-page="workspace">Add a client</button>'],
+    [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Counts, meetings and briefs update for everyone within seconds.', '<button class="btn sm" data-page="workspace">Invite</button>'],
+    [st.watches > 0, 'Watch for new bills and rules', 'The Monitor checks Congress, the states, the Federal Register and SAM.gov for you.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>'],
+    [st.contacts > 0, 'Bring in your contacts', 'Agency staff, coalition partners and client contacts, with a shared history.', '<button class="btn sm" data-page="contacts">Add contacts</button>'],
+  ];
+  const done = steps.filter((x) => x[0]).length;
+  if (done === steps.length) return '';
+  return `<div class="panel getting"><div class="row"><span class="label">Getting started · ${done} of ${steps.length}</span><button class="btn sm" data-act="hideGetting">Hide</button></div>
+    <div class="gbar" aria-hidden="true"><i style="width:${Math.round((done / steps.length) * 100)}%"></i></div>
+    <ol class="gsteps">${steps.map(([ok, t, d, btn]) => `<li class="${ok ? 'done' : ''}"><span class="gcheck" aria-hidden="true"></span><div><b>${t}</b><span class="note">${d}</span></div>${ok ? '<span class="status ok">Done</span>' : btn}</li>`).join('')}</ol></div>`;
+}
+
 // ---------- portfolio ----------
 function renderPortfolio() {
   const el = $('#portfolioPage');
@@ -1235,7 +1253,7 @@ function renderPortfolio() {
       <td class="num">${overdue ? `<span class="bad"><b>${overdue} overdue</b></span>` : ''}${s.openTasks ? `<div class="meta">${s.openTasks} open</div>` : ''}</td>
       <td class="meta">${esc(fmtDate(c.updatedAt))}</td></tr>`;
   };
-  el.innerHTML = `
+  el.innerHTML = `${gettingStarted()}
     ${upcoming.length ? `<div class="panel"><span class="label">Coming up</span><ul class="moves">${upcoming.slice(0, 8).map((u) => `<li><span class="when">${esc(u.day ? fmtDay(u.when.slice(0, 10)) : fmtWhen(u.when))}</span> · <button class="linkbtn" data-opencamp="${esc(u.id)}">${esc(u.label)}</button></li>`).join('')}</ul></div>` : ''}
     <div class="panel">
       <div class="row"><span class="label">Campaigns in ${esc(ORG.name)}</span>${ORG.role !== 'guest' ? '<button class="btn sm primary" data-act="newCamp">New campaign</button>' : ''}</div>
@@ -1657,9 +1675,11 @@ function localSignInDrawer(mode) {
   ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts on this server need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
   <form id="locForm" class="form" data-mode="${m}">
     ${m === 'signup' ? field('loc_name', 'Your name', 'text', 'name') : ''}
+    ${m === 'signup' && !JOIN ? field('loc_org', 'Firm or team name', 'text', 'organization', 'maxlength="80" placeholder="For example, Capitol Strategies"') : ''}
     ${m !== 'reset' ? field('loc_email', m === 'signup' ? 'Work email' : 'Email', 'email', 'email') : ''}
     ${m === 'signin' || m === 'signup' || m === 'reset' ? field('loc_pw', m === 'signin' ? 'Password' : 'New password (at least 10 characters)', 'password', m === 'signin' ? 'current-password' : 'new-password', 'minlength="10"') : ''}
     <div class="wide"><button class="btn primary">${{ signin: 'Sign in', signup: first ? 'Create account and continue' : 'Create account', forgot: 'Email me a reset link', reset: 'Save and sign in' }[m]}</button></div>
+    ${m === 'signup' ? '<p class="note wide">By creating an account you agree to the <a href="/terms" target="_blank" rel="noopener">terms</a> and the <a href="/privacy" target="_blank" rel="noopener">privacy policy</a>.</p>' : ''}
     <p class="note wide" id="locMsg" role="status"></p>
   </form>
   ${first || m === 'reset' ? '' : `<p class="note">${m === 'signin' ? `New here? <button class="linkbtn" data-act="locMode" data-m="signup">Create an account</button> · <button class="linkbtn" data-act="locMode" data-m="forgot">Forgot your password?</button>` : `Already have an account? <button class="linkbtn" data-act="locMode" data-m="signin">Sign in</button>`}</p>`}`);
@@ -1669,7 +1689,7 @@ async function submitLocal(form) {
   btn.disabled = true; msg.textContent = '';
   try {
     if (m === 'signin') await CLOUD.signInLocal(v('loc_email'), v('loc_pw'));
-    else if (m === 'signup') await CLOUD.signUpLocal({ name: v('loc_name'), email: v('loc_email'), password: v('loc_pw'), invite: JOIN ? JOIN.code : undefined });
+    else if (m === 'signup') await CLOUD.signUpLocal({ name: v('loc_name'), email: v('loc_email'), password: v('loc_pw'), workspace: JOIN ? undefined : v('loc_org'), invite: JOIN ? JOIN.code : undefined });
     else if (m === 'forgot') { const r = await CLOUD.resetRequest(v('loc_email')); msg.textContent = r.email ? 'If that address has an account, a reset link is on its way. It works for one hour.' : 'This server cannot send email yet, so ask whoever runs your Headcount to reset your password.'; btn.disabled = false; return; }
     else if (m === 'reset') { await CLOUD.resetPassword(LOC.reset, v('loc_pw')); LOC.reset = null; history.replaceState(null, '', '/app'); toast('Password changed. You are signed in.'); }
     if (CLOUD.config.accounts) CLOUD.config.accounts.setup = false;
@@ -1809,6 +1829,7 @@ document.addEventListener('click', async (e) => {
     case 'newCamp': return newCampDrawer();
     case 'signin': return signInDrawer();
     case 'locMode': return localSignInDrawer(t.dataset.m);
+    case 'hideGetting': lsSet('headcount.gs.' + ORG.id, 1); return renderPortfolio();
     case 'signoutAll': await flushNow(); await CLOUD.signOutEverywhere(); return toast('Signed out on every device');
     case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'This server cannot send email yet'); } catch (err) { fail(err); } return;
     case 'ssoSwitch': await flushNow(); await CLOUD.signOut(); SSO_NEEDED = null; return signInDrawer('sso');

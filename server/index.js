@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { promises as dns } from 'node:dns';
-import { openDb, HttpError } from './db.js';
+import { openDb, HttpError, clean } from './db.js';
 import { makeBilling } from './billing.js';
 import { forJson, PLANS } from './plans.js';
 import { makeMailer, htmlEmail } from './mail.js';
@@ -254,6 +254,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
     // Server settings, for the operator
     ['GET', '/api/settings', (m, x) => { needOperator(x.user); return { ...settings.view(), status: { email: mail.enabled, ai: aiOn(), billing: Boolean(config.billing), auth: config.authMode, webhook: config.publicUrl ? `${config.publicUrl}/api/stripe/webhook` : '', backups: backupDir ? fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort().slice(-1)[0] || null : null : null } }; }],
+    ['GET', '/api/settings/customers', (m, x) => { needOperator(x.user); return store.customers(); }],
     ['PUT', '/api/settings', async (m, x) => { needOperator(x.user); const r = settings.save(await x.body()); return r; }],
     ['POST', '/api/settings/test-email', async (m, x) => {
       needOperator(x.user); limit('testmail:' + x.user.id, 4);
@@ -364,7 +365,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
       const ua = String(req.headers['user-agent'] || ''), ip = clientIp(req);
       if (p === '/api/auth/signup' && m === 'POST') {
         limit('signup:' + ip, 10);
-        const r = await accounts.signup(await readJson(req, 10_000), ua);
+        const b = await readJson(req, 10_000), r = await accounts.signup(b, ua);
+        // Sign-up names the firm, so a new customer starts in their own workspace.
+        if (!b.invite && clean(b.workspace, 80)) { try { store.createOrg(r.user.id, b.workspace); } catch (e) { console.error('Could not create the first workspace:', e.message); } }
         const origin = String(req.headers.origin || '');
         if (r.operator && !config.publicUrl && /^https?:\/\/[^\s/]+$/.test(origin)) settings.save({ publicUrl: origin });
         accountMail('verify', r.user, r.verifyToken);

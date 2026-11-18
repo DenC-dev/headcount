@@ -317,6 +317,8 @@ test('drafting is metered per workspace and sends a structured request', async (
   assert.match(sent.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
   assert.equal(sent.body.output_config.format.type, 'json_schema');
   assert.equal(ok(await api('alice', 'GET', `/api/workspaces/${W}`)).usage.drafts, 1);
+  const setup = ok(await api('alice', 'GET', `/api/workspaces/${W}`)).setup;
+  assert.ok(setup && ['clients', 'invites', 'watches', 'contacts'].every((k) => Number.isInteger(setup[k])), 'getting-started counts');
   mocks.claudeReply = { ...mocks.claudeReply, content: [], stop_reason: 'refusal' };
   await new Promise((res) => setTimeout(res, 1100));
   const refused = await api('alice', 'POST', '/api/bills/draft', { campaignId: C1, bill: { officialSummary: 'x' } });
@@ -606,8 +608,12 @@ test('built-in accounts: sign up, operator, sign in, confirm email, reset, sign 
   assert.equal(m1.body.operator, true); assert.equal(m1.body.local, true); assert.equal(m1.body.user.email, 'olivia@firm.test'); assert.equal(m1.body.user.emailVerified, false); assert.equal(m1.body.user.session, undefined);
   assert.equal((await post('/api/auth/signup', { name: 'Dup', email: 'olivia@firm.test', password: 'another long one' })).status, 409);
   // A second person is not the operator
-  const pat = await post('/api/auth/signup', { name: 'Pat Partner', email: 'pat@firm.test', password: 'partner password 1' });
+  const pat = await post('/api/auth/signup', { name: 'Pat Partner', email: 'pat@firm.test', password: 'partner password 1', workspace: '  Partner   Strategies ' });
   assert.equal(pat.body.operator, false); assert.equal((await me(pat.body.token)).body.operator, false);
+  // Naming the firm at sign-up starts them in their own workspace, as its owner
+  const patWs = (await me(pat.body.token)).body.workspaces;
+  assert.equal(patWs.length, 1); assert.equal(patWs[0].name, 'Partner Strategies'); assert.equal(patWs[0].role, 'owner');
+  assert.equal((await me(first.body.token)).body.workspaces.length, 0, 'no name, no workspace');
   // Sign in
   assert.equal((await post('/api/auth/login', { email: 'olivia@firm.test', password: 'wrong password!!' })).status, 401);
   const login = await post('/api/auth/login', { email: 'OLIVIA@firm.test', password: 'correct horse battery' });
@@ -682,4 +688,9 @@ test('server settings: operator only, secrets encrypted and hidden, applied live
   const b = await fetch(base + '/api/settings/backup', { headers: { Authorization: 'Bearer ' + op } });
   assert.equal(b.status, 200); assert.equal(Buffer.from(await b.arrayBuffer()).subarray(0, 15).toString(), 'SQLite format 3');
   assert.equal((await fetch(base + '/api/settings/backup', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403);
+  // Customers: every workspace on the server, operator only
+  const c = await fetch(base + '/api/settings/customers', { headers: { Authorization: 'Bearer ' + op } }).then((r) => r.json());
+  assert.ok(c.totals.workspaces >= 1 && c.workspaces.length === c.totals.workspaces);
+  assert.ok(c.workspaces.every((w) => typeof w.name === 'string' && typeof w.plan === 'string' && Number.isInteger(w.people)));
+  assert.equal((await fetch(base + '/api/settings/customers', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403);
 });

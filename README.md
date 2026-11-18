@@ -12,7 +12,7 @@ Open source under the Apache License 2.0. Project website and data source status
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/DenC-dev/headcount)
 
 1. Press the button and sign in to Render. It builds Headcount with a small disk for your data (a paid Render instance, a few dollars a month).
-2. Open the address Render gives you. The first account you create runs the server.
+2. Open the address Render gives you and create your account. The first account runs the server, and the firm you name becomes its first workspace, with a getting-started checklist on the Portfolio page.
 3. Follow the "Finish setting up" banner to Server settings: connect email (Gmail, Microsoft 365, SendGrid, Postmark or Amazon SES), paste free data source keys, and optionally add Claude and Stripe. Each has a test button. Nothing needs restarting.
 
 ### Free and premium
@@ -225,7 +225,7 @@ Before launch, finish `site/privacy.html` and `site/terms.html`: they are templa
 ### 11. Hosting
 
 - If the server reaches the internet through an outbound proxy (`HTTPS_PROXY`), start it with `NODE_USE_ENV_PROXY=1`, or Node's fetch will not use the proxy and every data source will look unreachable.
-- Headcount saves a copy of its database every day in `DATA_DIR/backups` and keeps the last seven. The operator can also download a backup from Server settings.
+- Headcount saves a copy of its database every day in `DATA_DIR/backups` and keeps the last seven. The operator can also download a backup from Server settings, where Customers lists every workspace on the server with its plan, size and owner (and downloads as a spreadsheet).
 - `render.yaml` describes the Render setup behind the Deploy button: Node 22, a 1 GB disk at `/var/data`, and a generated `APP_SECRET`. Render's address is picked up automatically as the public URL.
 - Run `npm start` (or the Dockerfile) behind HTTPS. Set `PUBLIC_URL`, and `TRUST_PROXY=1` when a proxy or load balancer sits in front.
 - Data lives in one SQLite file under `DATA_DIR`, so the host needs a persistent disk: a small VM, or a platform with attached volumes. Cloud Run's own filesystem is not persistent. Back up the file regularly.

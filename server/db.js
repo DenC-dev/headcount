@@ -309,12 +309,24 @@ class Store {
       return { id: oid, name: n, role: 'owner' };
     });
   }
+  count(table, oid) { try { return this.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE org_id = ?`).get(oid).n; } catch (_) { return 0; } }
+  // For the server operator: every workspace, its plan and size.
+  customers() {
+    const rows = this.db.prepare(`SELECT o.id, o.name, o.plan, o.status, o.seats, o.trial_ends, o.created_at, o.stripe_subscription,
+      (SELECT COUNT(*) FROM org_members m WHERE m.org_id = o.id AND m.role != 'guest') AS people,
+      (SELECT COUNT(*) FROM campaigns c WHERE c.org_id = o.id AND c.archived = 0) AS campaigns,
+      (SELECT u.email FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = o.id AND m.role = 'owner' ORDER BY m.added_at LIMIT 1) AS owner
+      FROM orgs o ORDER BY o.created_at DESC LIMIT 1000`).all();
+    const list = rows.map((o) => { const p = this.plan(o.id); return { name: o.name, plan: p.label, key: p.key, people: o.people, campaigns: o.campaigns, owner: o.owner || '', created: o.created_at, trialEnds: p.key === 'trial' ? o.trial_ends : null, paying: Boolean(o.stripe_subscription) && ['active', 'trialing', 'past_due'].includes(o.status) }; });
+    return { workspaces: list, totals: { workspaces: list.length, people: this.db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM org_members WHERE role != 'guest'").get().n, paying: list.filter((x) => x.paying).length, trials: list.filter((x) => x.key === 'trial').length } };
+  }
   orgInfo(oid, uid) {
     const role = this.needOrg(oid, uid, 'guest'), o = this.q.org.get(oid), p = this.plan(oid);
     const admin = ORANK[role] >= ORANK.admin;
     return {
       id: o.id, name: o.name, role, plan: p,
       usage: { seats: this.q.seatsUsed.get(oid).n, guests: this.q.guestsUsed.get(oid).n, campaigns: this.q.activeCampaigns.get(oid).n, drafts: this.usage(oid, 'draft') },
+      setup: role === 'guest' ? null : { clients: this.count('clients', oid), invites: this.count('org_invites', oid), watches: this.count('watches', oid), contacts: this.count('contacts', oid) },
       domain: o.domain ? { name: o.domain, verified: Boolean(o.domain_verified), join: Boolean(o.domain_join), token: admin ? o.domain_token : undefined } : null,
       sso: admin || o.sso_provider ? { provider: admin ? o.sso_provider || '' : undefined, required: Boolean(o.sso_required), enabled: Boolean(o.sso_provider) } : null,
       billing: { enabled: Boolean(this.cfg.billing), customer: admin ? Boolean(o.stripe_customer) : undefined, subscription: admin ? Boolean(o.stripe_subscription) : undefined },
