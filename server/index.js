@@ -270,7 +270,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
       if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this Headcount, so they cannot be changed here.');
       const b = await x.body();
       const r = await setupStripe({ base: config.stripeBase, key: String(b.key || '').trim() || settings.read('stripeKey'), publicUrl: config.publicUrl,
-        team: readDollars(b.team, 'the Team plan'), firm: readDollars(b.firm, 'the Firm plan', true), tax: b.tax === true });
+        team: readDollars(b.team, 'the Team plan'), firm: readDollars(b.firm, 'the Firm plan', true), taxMode: b.taxMode || 'managed' });
       const old = settings.read('stripeWebhookId');
       settings.save(r.settings);
       if (old && old !== r.settings.stripeWebhookId) removeStripeHook({ base: config.stripeBase, key: r.settings.stripeKey, id: old });

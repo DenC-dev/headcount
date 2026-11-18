@@ -38,6 +38,8 @@ export const config = {
   // Billing turns on when Stripe is configured. Without it every workspace is unlimited,
   // which suits a firm running its own copy.
   stripeKey: env.STRIPE_SECRET_KEY || '',
+  // managed (Stripe is the seller of record), stripe_tax, or none; empty leaves it to the Stripe account
+  stripeTax: ['managed', 'stripe_tax', 'none'].includes(env.STRIPE_TAX_MODE) ? env.STRIPE_TAX_MODE : '',
   stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
   stripePriceTeam: env.STRIPE_PRICE_TEAM || '',
   stripePriceFirm: env.STRIPE_PRICE_FIRM || '',

@@ -39,6 +39,18 @@ async function stripe(cfg, method, path, params) {
 
 // Prices made by Headcount's Stripe setup say which plan they are for, so a
 // subscriber stays on the right plan after the operator changes prices.
+// How sales tax is handled at checkout. Managed Payments makes Stripe the
+// seller of record: it calculates, collects and files indirect tax, screens
+// for fraud and answers buyers' questions. Stripe Tax leaves the seller
+// responsible, so it is only turned on once a registration exists. Saying
+// "no" to Managed Payments explicitly matters: some accounts default to it.
+export function taxParams(cfg) {
+  if (cfg.stripeTax === 'managed') return { managed_payments: { enabled: 'true' } };
+  if (cfg.stripeTax === 'stripe_tax') return { managed_payments: { enabled: 'false' }, automatic_tax: { enabled: 'true' }, customer_update: { address: 'auto', name: 'auto' }, tax_id_collection: { enabled: 'true' } };
+  if (cfg.stripeTax === 'none') return { managed_payments: { enabled: 'false' } };
+  return {};
+}
+
 export const planForPrice = (cfg, price) => {
   const tag = price && price.metadata && price.metadata.headcount_plan;
   if (tag === 'firm' || tag === 'team') return tag;
@@ -67,8 +79,7 @@ export function makeBilling(cfg, store) {
       line_items: { 0: { price, quantity: n } },
       subscription_data: { metadata: { org_id: oid } },
       allow_promotion_codes: 'true', integration_identifier: CHECKOUT_TAG,
-      // Sales tax, only once the operator has turned it on (which checks for a registration)
-      ...(cfg.stripeTax === 'on' ? { automatic_tax: { enabled: 'true' }, customer_update: { address: 'auto', name: 'auto' }, tax_id_collection: { enabled: 'true' } } : {}),
+      ...taxParams(cfg),
       success_url: `${cfg.publicUrl}/app?billing=done`, cancel_url: `${cfg.publicUrl}/app?billing=cancelled`,
     });
     store.log(oid, user.id, 'billing.checkout_started', null, { seats: n });

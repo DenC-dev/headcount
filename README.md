@@ -26,7 +26,7 @@ Open source under the Apache License 2.0. Project website and data source status
 | Action center, activity report and log, guests | no | no | yes | yes |
 | Single sign-on | no | no | no | yes |
 
-Plans and prices are charged through Stripe once you connect it under Admin settings, Payments: paste your Stripe secret key, choose your prices, and Headcount creates the plans, prices, webhook and customer billing page in your Stripe account (run it again to change prices). Without Stripe, a server gives every workspace every feature, which suits a firm running its own copy.
+Plans and prices are charged through Stripe once you connect it under Admin settings, Payments: paste your Stripe key (a restricted key is safer; the screen lists its permissions), choose your prices and how sales tax is handled, and Headcount creates the plans, prices, webhook and customer billing page in your Stripe account (run it again to change prices). Sales tax: Managed Payments (the default) makes Stripe the seller of record, handling indirect tax, fraud screening and buyers' payment questions; or use Stripe Tax yourself (needs an active registration), or none. Hosts that configure Stripe by environment can set `STRIPE_TAX_MODE` to `managed`, `stripe_tax` or `none`. Disputes, refunds and early fraud warnings are emailed to whoever runs Headcount. Without Stripe, a server gives every workspace every feature, which suits a firm running its own copy.
 
 Whip counts, meeting requests and bill briefs for lobbying firms, government affairs teams and advocacy groups, sold per seat.
 

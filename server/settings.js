@@ -19,7 +19,7 @@ const F = {
   stripeKey: { env: ['STRIPE_SECRET_KEY'], secret: true, max: 300 }, stripeWebhookSecret: { env: ['STRIPE_WEBHOOK_SECRET'], secret: true, max: 300 },
   stripePriceTeam: { env: ['STRIPE_PRICE_TEAM'], max: 120 }, stripePriceFirm: { env: ['STRIPE_PRICE_FIRM'], max: 120 },
   priceLabelTeam: { env: ['PRICE_LABEL_TEAM'], max: 80 }, priceLabelFirm: { env: ['PRICE_LABEL_FIRM'], max: 80 },
-  stripeWebhookId: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripePortalConfig: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripeAccount: { env: ['STRIPE_SECRET_KEY'], max: 200 }, stripeTax: { env: ['STRIPE_SECRET_KEY'], values: ['on'] },
+  stripeWebhookId: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripePortalConfig: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripeAccount: { env: ['STRIPE_SECRET_KEY'], max: 200 }, stripeTax: { env: ['STRIPE_SECRET_KEY', 'STRIPE_TAX_MODE'], values: ['managed', 'stripe_tax', 'none'] },
   salesEmail: { env: ['SALES_EMAIL'], max: 160 }, supportEmail: { env: ['SUPPORT_EMAIL'], max: 160 },
 };
 const fromEnv = (k) => F[k].env && F[k].env.some((e) => ENV0[e]);

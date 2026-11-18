@@ -29,7 +29,8 @@ const mock = http.createServer((req, res) => {
       mocks.stripe.push({ method: req.method, path: u.pathname, auth: req.headers.authorization, version: req.headers['stripe-version'], form: new URLSearchParams(body) });
       if (u.pathname === '/v1/charges/ch_1') return j(200, { id: 'ch_1', object: 'charge', customer: 'cus_1', amount: 22500, currency: 'usd' });
       if (u.pathname === '/v1/customers') return j(200, { id: 'cus_1' });
-      if (u.pathname === '/v1/checkout/sessions') return j(200, { id: 'cs_1', url: 'https://checkout.stripe.com/c/pay/cs_1' });
+      if (u.pathname === '/v1/checkout/sessions') return j(200, { id: 'cs_1', url: 'https://checkout.stripe.com/c/pay/cs_1', managed_payments: { enabled: new URLSearchParams(body).get('managed_payments[enabled]') === 'true' } });
+      if (u.pathname === '/v1/checkout/sessions/cs_1/expire') return j(200, { id: 'cs_1', status: 'expired' });
       if (u.pathname === '/v1/billing_portal/sessions') return j(200, { url: 'https://billing.stripe.com/p/session/1' });
       if (u.pathname === '/v1/subscriptions/sub_1') return j(200, mocks.sub);
       // What Headcount's one-step Stripe setup uses
@@ -874,7 +875,7 @@ test('connecting Stripe from one key: plans, prices, webhook and billing page ma
   assert.equal(S.hooks.length, 1); assert.equal(S.hooks[0].url, 'https://hc.example.org/api/stripe/webhook'); assert.deepEqual(S.hooks[0].events, HOOK_EVENTS);
   assert.equal(S.portals.length, 1); assert.equal(S.portals[0].cancelMode, 'at_period_end'); assert.equal(S.portals[0].returnUrl, 'https://hc.example.org/app');
   assert.deepEqual(r.settings, { stripeKey: key, stripeWebhookSecret: S.hooks[0].secret, stripeWebhookId: S.hooks[0].id, stripePortalConfig: 'bpc_1', stripePriceTeam: 'price_1', stripePriceFirm: 'price_2',
-    priceLabelTeam: '$45 per person a month', priceLabelFirm: '$75 per person a month', stripeAccount: 'Capitol Strategies (test mode)', stripeTax: '' });
+    priceLabelTeam: '$45 per person a month', priceLabelFirm: '$75 per person a month', stripeAccount: 'Capitol Strategies (test mode)', stripeTax: 'managed' });
   // Again, with a new Team price: nothing is duplicated, the webhook is replaced
   const r2 = await setupStripe({ base: sbase, key, publicUrl, team: 55, firm: 75 });
   assert.equal(S.products.length, 2); assert.equal(S.prices.length, 3); assert.equal(S.portals.length, 1); assert.equal(S.hooks.length, 1);
@@ -908,12 +909,26 @@ test('Stripe best practices: a pinned API version, restricted keys, sales tax on
   for (const e of ['invoice.paid', 'charge.dispute.created', 'charge.refunded', 'radar.early_fraud_warning.created', 'checkout.session.async_payment_succeeded']) assert.ok(hook.events.includes(e), e);
   assert.deepEqual(hook.events, HOOK_EVENTS);
   // Sales tax: refused until Stripe knows where you are registered
-  await assert.rejects(setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, tax: true }), /Tax, then Registrations/);
+  await assert.rejects(setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, taxMode: 'stripe_tax' }), /Tax, then Registrations/);
   S.taxRegs = [{ id: 'taxreg_1', status: 'active', country: 'US' }];
-  const t = await setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, tax: true });
-  assert.equal(t.settings.stripeTax, 'on');
+  const t = await setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, taxMode: 'stripe_tax' });
+  assert.equal(t.settings.stripeTax, 'stripe_tax');
   assert.ok(S.prices.filter((p) => p.unit_amount === 4500).every((p) => p.tax_behavior === 'exclusive'), 'tax is added on top of the price');
   S.taxRegs = [];
+  // Managed Payments (the default): checked with a checkout that is opened and closed at once
+  mocks.stripe.length = 0;
+  const m = await setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45 });
+  assert.equal(m.settings.stripeTax, 'managed');
+  const probe = mocks.stripe.find((x) => x.path === '/v1/checkout/sessions');
+  assert.equal(probe.form.get('managed_payments[enabled]'), 'true'); assert.equal(probe.form.get('mode'), 'subscription');
+  assert.ok(mocks.stripe.some((x) => x.path === '/v1/checkout/sessions/cs_1/expire'), 'the check is closed straight away');
+  await assert.rejects(setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, taxMode: 'vat' }), /Choose how sales tax/);
+  // What each choice sends at checkout
+  const { taxParams } = await import('../server/billing.js');
+  assert.deepEqual(taxParams({ stripeTax: 'managed' }), { managed_payments: { enabled: 'true' } });
+  assert.deepEqual(taxParams({ stripeTax: 'none' }), { managed_payments: { enabled: 'false' } });
+  assert.equal(taxParams({ stripeTax: 'stripe_tax' }).automatic_tax.enabled, 'true'); assert.equal(taxParams({ stripeTax: 'stripe_tax' }).managed_payments.enabled, 'false');
+  assert.deepEqual(taxParams({ stripeTax: '' }), {}, 'set by the host: the Stripe account decides');
 });
 
 test('Stripe events: checkout tagging, renewals, disputes, refunds and fraud warnings reach the right people', async () => {

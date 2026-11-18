@@ -236,3 +236,8 @@ ol.howto { margin: 4px 0; padding-left: 20px; display: grid; gap: 8px; font-size
 ol.howto code, .callout code { font: 600 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 details.adv > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 details.adv[open] > summary { margin-bottom: 8px; }
+.form fieldset.taxpick { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.form fieldset.taxpick legend { padding: 0; margin-bottom: 4px; }
+.taxpick label.check { align-items: flex-start; gap: 10px; }
+.taxpick label.check > input { margin-top: 3px; flex: none; }
+.taxpick label.check b { display: block; font-weight: 600; }

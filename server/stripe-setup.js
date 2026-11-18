@@ -29,7 +29,9 @@ export function readDollars(v, what, optional) {
   return Math.round(n * 100) / 100;
 }
 
-export async function setupStripe({ base, key, publicUrl, team, firm, tax = false, fetchImpl = fetch }) {
+export const TAX_MODES = ['managed', 'stripe_tax', 'none'];
+export async function setupStripe({ base, key, publicUrl, team, firm, taxMode = 'managed', fetchImpl = fetch }) {
+  if (!TAX_MODES.includes(taxMode)) throw new HttpError(400, 'Choose how sales tax is handled.');
   const k = String(key || '').trim();
   if (!/^(sk|rk)_(test|live)_[A-Za-z0-9]{10,}$/.test(k)) throw new HttpError(400, 'That does not look like a Stripe key. A restricted key starts with rk_test_ or rk_live_, and a secret key with sk_test_ or sk_live_.');
   const url = String(publicUrl || '').replace(/\/+$/, '');
@@ -58,7 +60,7 @@ export async function setupStripe({ base, key, publicUrl, team, firm, tax = fals
 
   // Sales tax: Stripe calculates nothing until it knows where you are
   // registered, so refuse to turn it on before that.
-  if (tax) {
+  if (taxMode === 'stripe_tax') {
     const regs = await list('/v1/tax/registrations?status=active&limit=1');
     if (!regs.length) throw new HttpError(400, 'Stripe Tax does not know where you collect sales tax yet. In Stripe, open Tax, then Registrations, add each state (or country) where you are registered, then turn this on again.');
   }
@@ -77,7 +79,7 @@ export async function setupStripe({ base, key, publicUrl, team, firm, tax = fals
       .find((p) => p.unit_amount === cents && p.currency === 'usd' && p.recurring && p.recurring.interval === 'month' && (p.recurring.usage_type || 'licensed') === 'licensed');
     const price = existing || await call('POST', '/v1/prices', { product: prod.id, unit_amount: cents, currency: 'usd', recurring: { interval: 'month' }, tax_behavior: 'exclusive', nickname: `${plan === 'team' ? 'Team' : 'Firm'}, per person per month`, metadata: { headcount_plan: plan } });
     // Sales tax is added on top of the price; older prices may not say so yet.
-    if (tax && existing && (existing.tax_behavior || 'unspecified') === 'unspecified') await call('POST', `/v1/prices/${encodeURIComponent(existing.id)}`, { tax_behavior: 'exclusive' });
+    if (taxMode === 'stripe_tax' && existing && (existing.tax_behavior || 'unspecified') === 'unspecified') await call('POST', `/v1/prices/${encodeURIComponent(existing.id)}`, { tax_behavior: 'exclusive' });
     prices[plan] = { id: price.id, dollars };
   }
 
@@ -102,13 +104,23 @@ export async function setupStripe({ base, key, publicUrl, team, firm, tax = fals
     });
   }
 
+  // Managed Payments: make sure Stripe accepts it for these plans now, with a
+  // checkout that is opened and closed at once, rather than at a customer's checkout.
+  if (taxMode === 'managed') {
+    const any = prices.team || prices.firm;
+    let probe;
+    try { probe = await call('POST', '/v1/checkout/sessions', { mode: 'subscription', line_items: { 0: { price: any.id, quantity: 1 } }, managed_payments: { enabled: 'true' }, success_url: `${url}/app?billing=done`, cancel_url: `${url}/app?billing=cancelled`, metadata: { headcount_probe: '1' } }); }
+    catch (e) { throw new HttpError(400, `Stripe would not turn on Managed Payments for this account (${e.message.replace(/^Stripe said: /, '').replace(/\. Try again.*$/, '')}). Choose "I handle sales tax" or "No sales tax", or check Managed Payments in your Stripe settings.`); }
+    await call('POST', `/v1/checkout/sessions/${encodeURIComponent(probe.id)}/expire`).catch(() => {});
+  }
+
   return {
     account, live, detailsSubmitted: acct.details_submitted !== false, chargesEnabled: acct.charges_enabled !== false,
     settings: {
       stripeKey: k, stripeWebhookSecret: hook.secret, stripeWebhookId: hook.id, stripePortalConfig: portal.id,
       stripePriceTeam: prices.team ? prices.team.id : '', stripePriceFirm: prices.firm ? prices.firm.id : '',
       priceLabelTeam: prices.team ? priceLabel(prices.team.dollars) : '', priceLabelFirm: prices.firm ? priceLabel(prices.firm.dollars) : '',
-      stripeAccount: `${account}${live ? '' : ' (test mode)'}`, stripeTax: tax ? 'on' : '',
+      stripeAccount: `${account}${live ? '' : ' (test mode)'}`, stripeTax: taxMode,
     },
   };
 }
