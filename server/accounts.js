@@ -1,11 +1,14 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
+import qrcode from 'qrcode-generator';
 import { HttpError, clean } from './db.js';
 
 // Built-in accounts: email and password, so Headcount runs without setting up
 // Google Cloud. Passwords are hashed with scrypt; sessions are random tokens
 // stored only as hashes and expire after 30 days without use. The first
 // account on a server becomes its operator, who manages the server settings.
+// Two-step sign-in uses an authenticator app (TOTP, RFC 6238) with one-time
+// recovery codes; its secret is encrypted at rest like the server settings.
 
 const scrypt = promisify(crypto.scrypt);
 const SESSION_DAYS = 30;
@@ -27,7 +30,34 @@ async function checkPassword(pw, stored) {
 }
 const DUMMY = 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$' + Buffer.alloc(64).toString('base64url');
 
-export function makeAccounts(cfg, store) {
+// ---------- authenticator codes ----------
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32(buf) { let bits = 0, v = 0, out = ''; for (const b of buf) { v = (v << 8) | b; bits += 8; while (bits >= 5) { out += B32[(v >>> (bits - 5)) & 31]; bits -= 5; } } if (bits) out += B32[(v << (5 - bits)) & 31]; return out; }
+function unbase32(s) { let bits = 0, v = 0; const out = []; for (const c of String(s).toUpperCase().replace(/[^A-Z2-7]/g, '')) { v = (v << 5) | B32.indexOf(c); bits += 5; if (bits >= 8) { out.push((v >>> (bits - 8)) & 255); bits -= 8; } } return Buffer.from(out); }
+export function totp(secret, step = Math.floor(Date.now() / 30000)) {
+  const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(step));
+  const h = crypto.createHmac('sha1', unbase32(secret)).update(msg).digest(), o = h[19] & 15;
+  return String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, '0');
+}
+// The step a code matches, allowing one step of clock drift either way.
+function matchStep(secret, code, after = -1) {
+  const c = String(code || '').replace(/\s/g, ''), now = Math.floor(Date.now() / 30000);
+  if (!/^\d{6}$/.test(c)) return null;
+  for (const s of [now, now - 1, now + 1]) if (s > after && crypto.timingSafeEqual(Buffer.from(totp(secret, s)), Buffer.from(c))) return s;
+  return null;
+}
+function qrSvg(text) {
+  const q = qrcode(0, 'M'); q.addData(text); q.make();
+  const n = q.getModuleCount(); let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + 4} ${r + 4}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 8} ${n + 8}" shape-rendering="crispEdges" role="img" aria-label="QR code for your authenticator app"><rect width="100%" height="100%" fill="#fff"/><path fill="#000" d="${d}"/></svg>`;
+}
+// Recovery codes avoid letters and digits people mix up (i, l, o, 0, 1).
+const RC = 'abcdefghjkmnpqrstuvwxyz23456789';
+const recoveryCodes = () => Array.from({ length: 10 }, () => { const s = Array.from({ length: 8 }, () => RC[crypto.randomInt(RC.length)]).join(''); return `${s.slice(0, 4)}-${s.slice(4)}`; });
+const normRecovery = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function makeAccounts(cfg, store, { seal = (v) => v, open = (v) => v } = {}) {
   const db = store.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -38,6 +68,8 @@ export function makeAccounts(cfg, store) {
       created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, agent TEXT);
     CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
   `);
+  const cols = new Set(db.prepare('PRAGMA table_info(accounts)').all().map((c) => c.name));
+  for (const [c, t] of [['totp_secret', 'TEXT'], ['totp_pending', 'TEXT'], ['totp_last', 'INTEGER NOT NULL DEFAULT -1'], ['recovery', 'TEXT']]) if (!cols.has(c)) db.exec(`ALTER TABLE accounts ADD COLUMN ${c} ${t}`);
   const p = (sql) => db.prepare(sql);
   const q = {
     count: p('SELECT COUNT(*) AS n FROM accounts'),
@@ -57,8 +89,79 @@ export function makeAccounts(cfg, store) {
     endAll: p('DELETE FROM sessions WHERE account_id = ?'),
     endOthers: p('DELETE FROM sessions WHERE account_id = ? AND id != ?'),
     sweep: p('DELETE FROM sessions WHERE expires_at < ?'),
+    setPending: p('UPDATE accounts SET totp_pending = ? WHERE id = ?'),
+    enableTotp: p('UPDATE accounts SET totp_secret = ?, totp_pending = NULL, totp_last = ?, recovery = ? WHERE id = ?'),
+    disableTotp: p('UPDATE accounts SET totp_secret = NULL, totp_pending = NULL, totp_last = -1, recovery = NULL WHERE id = ?'),
+    usedStep: p('UPDATE accounts SET totp_last = ? WHERE id = ?'),
+    setRecovery: p('UPDATE accounts SET recovery = ? WHERE id = ?'),
   };
-  const userOf = (a) => ({ id: a.id, email: a.email, emailVerified: Boolean(a.verified), name: a.name, provider: 'password' });
+  const userOf = (a) => ({ id: a.id, email: a.email, emailVerified: Boolean(a.verified), name: a.name, provider: 'password', twoFactor: Boolean(a.totp_secret) });
+
+  // ---------- second step ----------
+  // After the password, an account with two-step sign-in gets a short-lived
+  // ticket, good for five tries in five minutes, to trade for a session.
+  const tickets = new Map();
+  function ticketFor(a) {
+    const t = b64(24); tickets.set(sha(t), { id: a.id, exp: Date.now() + 5 * 60e3, tries: 0 });
+    for (const [k, v] of tickets) if (v.exp < Date.now()) tickets.delete(k);
+    return { twoFactor: true, ticket: t };
+  }
+  // Checks an authenticator code or a recovery code; uses each only once.
+  function checkSecond(a, code) {
+    const secret = open(a.totp_secret);
+    const step = matchStep(secret, code, a.totp_last);
+    if (step !== null) { q.usedStep.run(step, a.id); return 'code'; }
+    const want = normRecovery(code), list = JSON.parse(a.recovery || '[]');
+    if (want.length === 8) { const i = list.indexOf(sha(want)); if (i >= 0) { list.splice(i, 1); q.setRecovery.run(JSON.stringify(list), a.id); return 'recovery'; } }
+    return null;
+  }
+  function loginCode({ ticket, code }, agent) {
+    const k = sha(String(ticket || '')), t = tickets.get(k);
+    if (!t || t.exp < Date.now() || t.tries >= 5) { tickets.delete(k); throw new HttpError(401, 'That sign-in took too long. Enter your email and password again.'); }
+    t.tries++;
+    const a = q.byId.get(t.id);
+    if (!a || !a.totp_secret) { tickets.delete(k); throw new HttpError(401, 'Enter your email and password again.'); }
+    const how = checkSecond(a, code);
+    if (!how) throw new HttpError(400, 'That code is not right. Check the time on your phone, or use a recovery code.');
+    tickets.delete(k);
+    const left = how === 'recovery' ? JSON.parse(q.byId.get(a.id).recovery || '[]').length : undefined;
+    return { token: startSession(a, agent), user: userOf(a), recoveryLeft: left };
+  }
+  function totpStart(user) {
+    const a = q.byId.get(user.id);
+    if (!a) throw new HttpError(400, 'This account signs in another way; turn on two-step sign-in there.');
+    if (a.totp_secret) throw new HttpError(409, 'Two-step sign-in is already on.');
+    const secret = base32(crypto.randomBytes(20));
+    q.setPending.run(seal(secret), a.id);
+    const uri = `otpauth://totp/${encodeURIComponent('Headcount:' + a.email)}?secret=${secret}&issuer=Headcount&algorithm=SHA1&digits=6&period=30`;
+    return { secret: secret.replace(/(.{4})/g, '$1 ').trim(), uri, qr: qrSvg(uri) };
+  }
+  function totpEnable(user, { code }) {
+    const a = q.byId.get(user.id);
+    if (!a || !a.totp_pending) throw new HttpError(400, 'Start again: scan a new code.');
+    const step = matchStep(open(a.totp_pending), code);
+    if (step === null) throw new HttpError(400, 'That code is not right. Enter the six digits your app shows now.');
+    const codes = recoveryCodes();
+    q.enableTotp.run(a.totp_pending, step, JSON.stringify(codes.map((c) => sha(normRecovery(c)))), a.id);
+    q.endOthers.run(a.id, user.session || ''); // other devices sign in again with the new step
+    return { ok: true, recovery: codes };
+  }
+  async function totpDisable(user, { password, code }) {
+    const a = q.byId.get(user.id);
+    if (!a || !a.totp_secret) return { ok: true };
+    if (!(await checkPassword(String(password || ''), a.pw_hash))) throw new HttpError(400, 'Your password is not right.');
+    if (!checkSecond(a, code)) throw new HttpError(400, 'That code is not right.');
+    q.disableTotp.run(a.id);
+    return { ok: true };
+  }
+  function newRecovery(user, { code }) {
+    const a = q.byId.get(user.id);
+    if (!a || !a.totp_secret) throw new HttpError(400, 'Two-step sign-in is off.');
+    if (!checkSecond(a, code)) throw new HttpError(400, 'That code is not right.');
+    const codes = recoveryCodes(); q.setRecovery.run(JSON.stringify(codes.map((c) => sha(normRecovery(c)))), a.id);
+    return { recovery: codes };
+  }
+  const recoveryLeft = (uid) => { const a = q.byId.get(uid); return a && a.totp_secret ? JSON.parse(a.recovery || '[]').length : null; };
 
   function startSession(a, agent) {
     const id = b64(12), secret = b64(32), now = Date.now();
@@ -106,6 +209,7 @@ export function makeAccounts(cfg, store) {
     const a = q.byEmail.get(clean(email, 160).toLowerCase());
     const ok = await checkPassword(String(password || ''), a ? a.pw_hash : DUMMY);
     if (!a || !ok) throw new HttpError(401, 'That email and password do not match an account here.');
+    if (a.totp_secret) return ticketFor(a);
     return { token: startSession(a, agent), user: userOf(a) };
   }
   function logout(sessionId, everywhere, uid) { if (everywhere) q.endAll.run(uid); else q.endSession.run(sessionId); return { ok: true }; }
@@ -121,7 +225,9 @@ export function makeAccounts(cfg, store) {
     if (!a) throw new HttpError(400, 'That reset link has expired or was already used. Ask for a new one.');
     q.setPw.run(await hashPassword(readPassword(password, a.email)), a.id);
     q.endAll.run(a.id); q.verify.run(a.id); // receiving the email proves the address
-    return { token: startSession(q.byId.get(a.id), agent), user: userOf(q.byId.get(a.id)) };
+    const b = q.byId.get(a.id);
+    if (b.totp_secret) return ticketFor(b); // a reset email alone does not get past two-step sign-in
+    return { token: startSession(b, agent), user: userOf(b) };
   }
   function confirm(token) {
     const a = q.byToken.get(sha(String(token || '')), 'verify', Date.now());
@@ -142,5 +248,5 @@ export function makeAccounts(cfg, store) {
   const remove = (uid) => q.remove.run(uid);
   const hasAccounts = () => q.count.get().n > 0;
   setInterval(() => q.sweep.run(Date.now()), 6 * 3600e3).unref();
-  return { signup, login, logout, verify, resetRequest, reset, confirm, newVerifyToken, changePassword, rename, remove, hasAccounts, signupsOpen, isLocal: (uid) => String(uid).startsWith('loc:') };
+  return { loginCode, totpStart, totpEnable, totpDisable, newRecovery, recoveryLeft, signup, login, logout, verify, resetRequest, reset, confirm, newVerifyToken, changePassword, rename, remove, hasAccounts, signupsOpen, isLocal: (uid) => String(uid).startsWith('loc:') };
 }

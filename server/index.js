@@ -177,7 +177,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     if (config.authMode === 'dev' && d.endsWith('.test')) { const o = store.db.prepare('SELECT domain_token FROM orgs WHERE domain = ? ORDER BY created_at DESC').get(d); return o ? [[`headcount-verification=${o.domain_token}`]] : []; }
     return dns.resolveTxt(d);
   };
-  const accounts = makeAccounts(config, store);
+  const accounts = makeAccounts(config, store, { seal: settings.seal, open: settings.open });
   const authenticate = makeAuthenticator(config, accounts);
   const localAccounts = () => config.authMode === 'local' || config.authMode === 'dev';
   // Claude and Stripe can be turned on later in server settings, so these are looked up when used.
@@ -249,7 +249,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   // [method, path pattern, handler(match, ctx)]; ctx has user, url, req, body().
   const W = '([A-Za-z0-9_-]{4,40})', C = '([A-Za-z0-9_.:-]{1,64})', U = '([A-Za-z0-9_.:-]{1,140})', K = '([A-Za-z0-9_-]{8,64})';
   const routes = [
-    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id) }; }],
+    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id), recoveryLeft: accounts.recoveryLeft(x.user.id) }; }],
     ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
     // Server settings, for the operator
@@ -272,6 +272,10 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     }],
     ['POST', '/api/auth/logout', async (m, x) => accounts.logout(x.user.session, Boolean((await x.body()).everywhere), x.user.id)],
     ['POST', '/api/auth/password', async (m, x) => { limit('pw:' + x.user.id, 5); return accounts.changePassword(x.user, await x.body()); }],
+    ['POST', '/api/auth/2fa/start', (m, x) => { limit('2fa:' + x.user.id, 10); return accounts.totpStart(x.user); }],
+    ['POST', '/api/auth/2fa/enable', async (m, x) => { limit('2fa:' + x.user.id, 10); return accounts.totpEnable(x.user, await x.body()); }],
+    ['POST', '/api/auth/2fa/disable', async (m, x) => { limit('2fa:' + x.user.id, 10); return accounts.totpDisable(x.user, await x.body()); }],
+    ['POST', '/api/auth/2fa/recovery', async (m, x) => { limit('2fa:' + x.user.id, 10); return accounts.newRecovery(x.user, await x.body()); }],
     ['POST', '/api/auth/verify-email', (m, x) => { limit('verify:' + x.user.id, 3); const r = accounts.newVerifyToken(x.user.id); return { sent: Boolean(r && accountMail('verify', r.account, r.token)) }; }],
     ['PATCH', '/api/me', async (m, x) => { if (!accounts.isLocal(x.user.id)) throw new HttpError(400, 'Your name comes from the account you sign in with.'); accounts.rename(x.user.id, (await x.body()).name); return { ok: true }; }],
     ['DELETE', '/api/me', async (m, x) => { const r = store.deleteUser(x.user.id); accounts.remove(x.user.id); const billing = getBilling(); if (billing) for (const sub of r.cancel) await billing.cancel(sub); return { transferred: r.transferred, deleted: r.deleted }; }],
@@ -384,6 +388,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
         if (r) accountMail('reset', r.account, r.token);
         return send(res, 200, { ok: true, email: mail.enabled });
       }
+      if (p === '/api/auth/login/code' && m === 'POST') { limit('logincode:' + ip, 20); return send(res, 200, accounts.loginCode(await readJson(req, 10_000), ua)); }
       if (p === '/api/auth/reset' && m === 'POST') { limit('reset:' + ip, 5); return send(res, 200, await accounts.reset(await readJson(req, 10_000), ua)); }
       if (p === '/api/auth/confirm' && m === 'GET') {
         limit('preview:' + ip, 20);

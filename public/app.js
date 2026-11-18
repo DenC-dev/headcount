@@ -480,7 +480,7 @@ function goExample() { S = exampleState(); BOOK.list = BOOK.list.filter((c) => c
 async function onAuthChange(user) {
   if (user && !ME) return onSignedIn();
   if (!user && ME) {
-    ME = null; OPERATOR = false; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
+    ME = null; OPERATOR = false; TWOFA = { on: false, left: null }; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
     WS.members = WS.invites = WS.audit = WS.report = WS.lastInvite = null;
     if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
     if (page === 'portfolio' || page === 'workspace') page = 'count';
@@ -488,7 +488,7 @@ async function onAuthChange(user) {
   }
 }
 async function onSignedIn() {
-  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; OPERATOR = Boolean(r.operator); ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
+  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; OPERATOR = Boolean(r.operator); TWOFA = { on: Boolean(r.user.twoFactor), left: r.recoveryLeft }; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
   catch (e) { fail(e); return render(); }
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })();
   if (tz && PREFS && PREFS.tz !== tz) CLOUD.api('PATCH', '/api/me/prefs', { tz }).then((x) => { PREFS = x; }).catch(() => {});
@@ -1664,34 +1664,39 @@ function newCampDrawer() {
     <div class="wide"><button class="btn primary">Create campaign</button></div>
   </form>`);
 }
-let LOC = { mode: 'signin', reset: null };
+let LOC = { mode: 'signin', reset: null, ticket: null, codes: null }, TWOFA = { on: false, left: null };
 function localSignInDrawer(mode) {
   const cfg = CLOUD.config, first = cfg.accounts && cfg.accounts.setup, inviteOnly = cfg.accounts && cfg.accounts.signups === 'invite';
   LOC.mode = first ? 'signup' : mode || 'signin';
-  const m = LOC.mode, title = first ? 'Set up Headcount' : { signin: 'Sign in', signup: 'Create your account', forgot: 'Reset your password', reset: 'Choose a new password' }[m];
+  const m = LOC.mode, title = first ? 'Set up Headcount' : { signin: 'Sign in', signup: 'Create your account', forgot: 'Reset your password', reset: 'Choose a new password', code: 'Two-step sign-in' }[m];
   const field = (id, label, type, ac, extra = '') => `<label class="wide">${label}<input id="${id}" type="${type}" autocomplete="${ac}" required ${extra}></label>`;
   showDrawer(`<div class="row"><h2>${title}</h2><button class="btn sm" data-act="close">Close</button></div>
+  ${m === 'code' ? '<p class="note">Open your authenticator app and enter the six-digit code for Headcount. If you no longer have your phone, enter one of your recovery codes instead.</p>' : ''}
   ${first ? '<p class="note">You are the first person on this Headcount server, so your account will also manage its settings: email, data sources and who can sign up.</p>' : ''}
   ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts on this server need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
   <form id="locForm" class="form" data-mode="${m}">
     ${m === 'signup' ? field('loc_name', 'Your name', 'text', 'name') : ''}
     ${m === 'signup' && !JOIN ? field('loc_org', 'Firm or team name', 'text', 'organization', 'maxlength="80" placeholder="For example, Capitol Strategies"') : ''}
-    ${m !== 'reset' ? field('loc_email', m === 'signup' ? 'Work email' : 'Email', 'email', 'email') : ''}
+    ${m === 'code' ? field('loc_code', 'Code', 'text', 'one-time-code', 'inputmode="numeric" maxlength="12" autofocus') : ''}
+    ${m !== 'reset' && m !== 'code' ? field('loc_email', m === 'signup' ? 'Work email' : 'Email', 'email', 'email') : ''}
     ${m === 'signin' || m === 'signup' || m === 'reset' ? field('loc_pw', m === 'signin' ? 'Password' : 'New password (at least 10 characters)', 'password', m === 'signin' ? 'current-password' : 'new-password', 'minlength="10"') : ''}
-    <div class="wide"><button class="btn primary">${{ signin: 'Sign in', signup: first ? 'Create account and continue' : 'Create account', forgot: 'Email me a reset link', reset: 'Save and sign in' }[m]}</button></div>
+    <div class="wide"><button class="btn primary">${{ signin: 'Sign in', signup: first ? 'Create account and continue' : 'Create account', forgot: 'Email me a reset link', reset: 'Save and sign in', code: 'Verify and sign in' }[m]}</button></div>
     ${m === 'signup' ? '<p class="note wide">By creating an account you agree to the <a href="/terms" target="_blank" rel="noopener">terms</a> and the <a href="/privacy" target="_blank" rel="noopener">privacy policy</a>.</p>' : ''}
     <p class="note wide" id="locMsg" role="status"></p>
   </form>
-  ${first || m === 'reset' ? '' : `<p class="note">${m === 'signin' ? `New here? <button class="linkbtn" data-act="locMode" data-m="signup">Create an account</button> · <button class="linkbtn" data-act="locMode" data-m="forgot">Forgot your password?</button>` : `Already have an account? <button class="linkbtn" data-act="locMode" data-m="signin">Sign in</button>`}</p>`}`);
+  ${first || m === 'reset' ? '' : m === 'code' ? '<p class="note"><button class="linkbtn" data-act="locMode" data-m="signin">Start over</button></p>' : `<p class="note">${m === 'signin' ? `New here? <button class="linkbtn" data-act="locMode" data-m="signup">Create an account</button> · <button class="linkbtn" data-act="locMode" data-m="forgot">Forgot your password?</button>` : `Already have an account? <button class="linkbtn" data-act="locMode" data-m="signin">Sign in</button>`}</p>`}`);
 }
 async function submitLocal(form) {
   const m = form.dataset.mode, msg = $('#locMsg'), btn = $('button.primary', form), v = (id) => ($('#' + id) ? $('#' + id).value : '');
   btn.disabled = true; msg.textContent = '';
+  let r = null;
   try {
-    if (m === 'signin') await CLOUD.signInLocal(v('loc_email'), v('loc_pw'));
+    if (m === 'code') { r = await CLOUD.signInCode(LOC.ticket, v('loc_code')); LOC.ticket = null; if (r.recoveryLeft !== undefined) toast(`Signed in with a recovery code. ${r.recoveryLeft} left; make new ones under Account.`); }
+    else if (m === 'signin') r = await CLOUD.signInLocal(v('loc_email'), v('loc_pw'));
     else if (m === 'signup') await CLOUD.signUpLocal({ name: v('loc_name'), email: v('loc_email'), password: v('loc_pw'), workspace: JOIN ? undefined : v('loc_org'), invite: JOIN ? JOIN.code : undefined });
     else if (m === 'forgot') { const r = await CLOUD.resetRequest(v('loc_email')); msg.textContent = r.email ? 'If that address has an account, a reset link is on its way. It works for one hour.' : 'This server cannot send email yet, so ask whoever runs your Headcount to reset your password.'; btn.disabled = false; return; }
-    else if (m === 'reset') { await CLOUD.resetPassword(LOC.reset, v('loc_pw')); LOC.reset = null; history.replaceState(null, '', '/app'); toast('Password changed. You are signed in.'); }
+    else if (m === 'reset') { r = await CLOUD.resetPassword(LOC.reset, v('loc_pw')); LOC.reset = null; history.replaceState(null, '', '/app'); toast(r.twoFactor ? 'Password changed. Now enter your code.' : 'Password changed. You are signed in.'); }
+    if (r && r.twoFactor) { LOC.ticket = r.ticket; return localSignInDrawer('code'); }
     if (CLOUD.config.accounts) CLOUD.config.accounts.setup = false;
     closeDrawer();
   } catch (e) { msg.textContent = e.message; btn.disabled = false; }
@@ -1709,6 +1714,49 @@ function signInDrawer(mode) {
     <p class="note">Signing in saves your campaigns to your firm's workspace so you can use them on any device and share them with colleagues. Headcount asks for access to your calendar and email only when you first send a meeting request, and uses it only to send what you ask it to. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
   </div>`);
 }
+// ---------- two-step sign-in ----------
+function twoFactorSect() {
+  if (TWOFA.on) return `<details class="sect" id="tfSect"><summary>Two-step sign-in <span class="status ok">On</span></summary>
+    <p class="note">Signing in on a new device asks for a code from your authenticator app. ${TWOFA.left == null ? '' : `You have ${TWOFA.left} recovery code${TWOFA.left === 1 ? '' : 's'} left.`}</p>
+    <div id="tfBody"><form id="tfRecForm" class="form"><label class="wide">Code from your app<input id="tf_rcode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label><div class="wide"><button class="btn sm">Make new recovery codes</button></div><p class="note wide" id="tfRecMsg" role="status"></p></form>
+    <form id="tfOffForm" class="form"><label class="wide">Password<input id="tf_pw" type="password" autocomplete="current-password" required></label><label class="wide">Code from your app, or a recovery code<input id="tf_ocode" autocomplete="one-time-code" maxlength="12" required></label><div class="wide"><button class="btn sm warn">Turn off two-step sign-in</button></div><p class="note wide" id="tfOffMsg" role="status"></p></form></div></details>`;
+  return `<details class="sect" id="tfSect"><summary>Two-step sign-in <span class="status">Off</span></summary>
+    <p class="note">Ask for a code from an authenticator app, such as Google Authenticator, Microsoft Authenticator, 1Password or Authy, whenever you sign in on a new device. It keeps your clients' work safe even if your password leaks.</p>
+    <div id="tfBody"><button class="btn sm" data-act="tfStart">Turn on</button></div></details>`;
+}
+function showRecovery(codes, lead) {
+  LOC.codes = codes;
+  $('#tfBody').innerHTML = `<p class="note"><b>${lead}</b> Save these recovery codes somewhere safe, such as your password manager. Each works once if you lose your phone.</p>
+    <ol class="codes">${codes.map((c) => `<li><code>${esc(c)}</code></li>`).join('')}</ol>
+    <div class="btnrow"><button class="btn sm" data-act="tfCopy">Copy</button><button class="btn sm" data-act="tfDownload">Download</button><button class="btn sm primary" data-act="tfDone">I saved them</button></div>`;
+}
+async function twoFactorAct(a) {
+  if (a === 'tfStart') {
+    try {
+      const r = await CLOUD.api('POST', '/api/auth/2fa/start');
+      $('#tfBody').innerHTML = `<ol class="steps"><li>Scan this with your authenticator app.<div class="qrbox">${r.qr}</div><span class="note">Cannot scan it? Add an account by key: <code class="key">${esc(r.secret)}</code></span></li>
+        <li><form id="tfOnForm" class="form"><label class="wide">Enter the six-digit code it shows<input id="tf_code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label><div class="wide"><button class="btn sm primary">Turn on</button></div><p class="note wide" id="tfOnMsg" role="status"></p></form></li></ol>`;
+      $('#tf_code').focus();
+    } catch (err) { fail(err); }
+  }
+  if (a === 'tfCopy') { try { await navigator.clipboard.writeText(LOC.codes.join('\n')); toast('Copied'); } catch (_) { toast('Select the codes and copy them'); } }
+  if (a === 'tfDownload') download('headcount-recovery-codes.txt', `Headcount recovery codes for ${CLOUD.user.email}\nEach works once.\n\n${LOC.codes.join('\n')}\n`, 'text/plain');
+  if (a === 'tfDone') { LOC.codes = null; accountDrawer(); $('#tfSect').open = true; }
+}
+async function twoFactorForm(id) {
+  if (id === 'tfOnForm') {
+    try { const r = await CLOUD.api('POST', '/api/auth/2fa/enable', { code: $('#tf_code').value }); TWOFA = { on: true, left: r.recovery.length }; $('#tfSect summary').innerHTML = 'Two-step sign-in <span class="status ok">On</span>'; $('#tfSect > p.note').remove(); showRecovery(r.recovery, 'Two-step sign-in is on. Other devices are signed out.'); }
+    catch (err) { $('#tfOnMsg').textContent = err.message; }
+  }
+  if (id === 'tfRecForm') {
+    try { const r = await CLOUD.api('POST', '/api/auth/2fa/recovery', { code: $('#tf_rcode').value }); TWOFA.left = r.recovery.length; showRecovery(r.recovery, 'New recovery codes. The old ones no longer work.'); }
+    catch (err) { $('#tfRecMsg').textContent = err.message; }
+  }
+  if (id === 'tfOffForm') {
+    try { await CLOUD.api('POST', '/api/auth/2fa/disable', { password: $('#tf_pw').value, code: $('#tf_ocode').value }); TWOFA = { on: false, left: null }; toast('Two-step sign-in is off'); accountDrawer(); }
+    catch (err) { $('#tfOffMsg').textContent = err.message; }
+  }
+}
 function accountDrawer(scrollToEmail) {
   const u = CLOUD.user, p = CLOUD.provider(), cfg = CLOUD.config || {}, pr = PREFS || { digest: 'weekly', digestHour: 8, notifyAssigned: true, notifyAdded: true };
   const how = CLOUD.local() ? 'Email and password' : CLOUD.isSSO() ? 'Single sign-on' : CLOUD.providerName(u.provider);
@@ -1717,7 +1765,7 @@ function accountDrawer(scrollToEmail) {
   <dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Signed in with</dt><dd>${esc(how)}</dd>
   ${CLOUD.local() ? `<dt>Email confirmed</dt><dd>${u.emailVerified ? '<span class="status ok">Yes</span>' : `<span class="status wait">Not yet</span> <button class="btn sm" data-act="resendVerify">Send the link again</button>`}</dd>` : ''}
   ${CLOUD.canConnect() ? `<dt>Calendar and email</dt><dd>${CLOUD.connected() ? `<span class="status ok">${esc(CLOUD.mailName(p))} connected in this tab</span>` : '<span class="status">Not connected</span>'}</dd>` : ''}</dl>
-  ${CLOUD.local() ? `<details class="sect"><summary>Change password</summary><form id="pwForm" class="form"><label class="wide">Current password<input id="pw_cur" type="password" autocomplete="current-password" required></label><label class="wide">New password (at least 10 characters)<input id="pw_new" type="password" autocomplete="new-password" minlength="10" required></label><div class="wide"><button class="btn">Change password</button></div><p class="note wide" id="pwMsg" role="status"></p></form></details>` : ''}
+  ${CLOUD.local() ? `<details class="sect"><summary>Change password</summary><form id="pwForm" class="form"><label class="wide">Current password<input id="pw_cur" type="password" autocomplete="current-password" required></label><label class="wide">New password (at least 10 characters)<input id="pw_new" type="password" autocomplete="new-password" minlength="10" required></label><div class="wide"><button class="btn">Change password</button></div><p class="note wide" id="pwMsg" role="status"></p></form></details>${twoFactorSect()}` : ''}
   ${CLOUD.connected() || !CLOUD.canConnect() ? '' : `<p class="note">Connect ${choices.map((x) => `${CLOUD.mailName(x)} and ${CLOUD.calName(x)}`).join(', or ')} to send meeting requests and invitations from your own account. Headcount reads your calendar only to find open times, never reads your email, and keeps the connection in this browser tab.</p>
   <div class="btnrow">${choices.map((x) => `<button class="btn" data-act="connect" data-mp="${x}">Connect ${CLOUD.mailName(x)}</button>`).join('')}</div>`}
   ${cfg.email ? `<details class="sect" id="emailSect" open><summary>Email from Headcount</summary>
@@ -1830,6 +1878,7 @@ document.addEventListener('click', async (e) => {
     case 'signin': return signInDrawer();
     case 'locMode': return localSignInDrawer(t.dataset.m);
     case 'hideGetting': lsSet('headcount.gs.' + ORG.id, 1); return renderPortfolio();
+    case 'tfStart': case 'tfCopy': case 'tfDownload': case 'tfDone': return twoFactorAct(a);
     case 'signoutAll': await flushNow(); await CLOUD.signOutEverywhere(); return toast('Signed out on every device');
     case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'This server cannot send email yet'); } catch (err) { fail(err); } return;
     case 'ssoSwitch': await flushNow(); await CLOUD.signOut(); SSO_NEEDED = null; return signInDrawer('sso');
@@ -2008,6 +2057,7 @@ document.addEventListener('submit', async (e) => {
   const m = S.members.find((x) => x.id === openId);
   if (id === 'oiForm') return sendOrgInvite(e.target);
   if (id === 'locForm') return submitLocal(e.target);
+  if (/^tf(On|Off|Rec)Form$/.test(id)) return twoFactorForm(id);
   if (id === 'pwForm') {
     try { await CLOUD.changePassword($('#pw_cur').value, $('#pw_new').value); toast('Password changed. Other devices are signed out.'); accountDrawer(); } catch (err) { $('#pwMsg').textContent = err.message; }
     return;

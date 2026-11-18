@@ -21,6 +21,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.9.0",
     "nodemailer": "^10.6.0",
+    "qrcode-generator": "2.0.4",
     "zod": "^4.6.7"
   },
   "homepage": "https://denc-dev.github.io/headcount/",

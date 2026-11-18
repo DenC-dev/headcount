@@ -223,3 +223,9 @@ a.brand { text-decoration: none; }
 .gsteps li.done .gcheck { background: var(--yes); border-color: var(--yes); }
 .gsteps li.done b { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
 .custtable td { vertical-align: top; } .custtable .meta { overflow-wrap: anywhere; }
+/* two-step sign-in */
+.qrbox { margin: 10px 0 6px; } .qrbox svg { width: 176px; height: 176px; display: block; border-radius: 8px; border: 1px solid var(--line); }
+code.key { font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; overflow-wrap: anywhere; }
+ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 12px; }
+ol.codes { list-style: none; margin: 0; padding: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; background: var(--soft); border-radius: 8px; }
+ol.codes code { font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; }

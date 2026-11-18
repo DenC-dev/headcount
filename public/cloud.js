@@ -84,8 +84,9 @@
     if (!res.ok) throw new CloudError('auth', json.error || `Request failed (${res.status}).`, res.status);
     return json;
   }
-  function startSession(r) { C.session = r.token; C.user = r.user; lsWrite(SESSION_KEY, { token: r.token, user: r.user }); C.emit(); return r; }
+  function startSession(r) { if (r.twoFactor) return r; C.session = r.token; C.user = r.user; lsWrite(SESSION_KEY, { token: r.token, user: r.user }); C.emit(); return r; }
   C.signInLocal = async (email, password) => startSession(await authPost('/api/auth/login', { email, password }));
+  C.signInCode = async (ticket, code) => startSession(await authPost('/api/auth/login/code', { ticket, code }));
   C.signUpLocal = async (fields) => startSession(await authPost('/api/auth/signup', fields));
   C.resetRequest = (email) => authPost('/api/auth/reset-request', { email });
   C.resetPassword = async (token, password) => startSession(await authPost('/api/auth/reset', { token, password }));

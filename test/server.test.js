@@ -694,3 +694,62 @@ test('server settings: operator only, secrets encrypted and hidden, applied live
   assert.ok(c.workspaces.every((w) => typeof w.name === 'string' && typeof w.plan === 'string' && Number.isInteger(w.people)));
   assert.equal((await fetch(base + '/api/settings/customers', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403);
 });
+
+// ---------- two-step sign-in ----------
+test('two-step sign-in: authenticator codes, one use each, recovery codes, a reset does not get past it', async () => {
+  const { totp } = await import('../server/accounts.js');
+  mods.config.trustProxy = true; // its own address, so the sign-in limits of earlier tests do not apply
+  try {
+    const H = { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.77' };
+    const post = (p, b, token) => fetch(base + p, { method: 'POST', headers: { ...H, ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(b || {}) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+    const me = (token) => fetch(base + '/api/me', { headers: { ...H, Authorization: 'Bearer ' + token } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+    const creds = { email: 'tess@firm.test', password: 'tess long password' };
+    const tess = (await post('/api/auth/signup', { name: 'Tess Two', ...creds })).body.token;
+    const other = (await post('/api/auth/login', creds)).body.token;
+    assert.equal((await me(tess)).body.user.twoFactor, false);
+    // Set up: a QR code and a key; a wrong code does not turn it on
+    const st = await post('/api/auth/2fa/start', {}, tess);
+    assert.match(st.body.uri, /^otpauth:\/\/totp\/Headcount%3Atess%40firm\.test\?secret=[A-Z2-7]{32}&issuer=Headcount/);
+    assert.match(st.body.qr, /^<svg [^>]*viewBox/); assert.match(st.body.qr, /<path fill="#000" d="M/);
+    const secret = st.body.secret.replace(/ /g, ''), step = Math.floor(Date.now() / 30000);
+    const wrong = String((Number(totp(secret)) + 500000) % 1e6).padStart(6, '0');
+    assert.equal((await post('/api/auth/2fa/enable', { code: wrong }, tess)).status, 400);
+    const en = await post('/api/auth/2fa/enable', { code: totp(secret, step) }, tess);
+    assert.equal(en.status, 200); assert.equal(en.body.recovery.length, 10); assert.match(en.body.recovery[0], /^[a-hjkmnp-z2-9]{4}-[a-hjkmnp-z2-9]{4}$/);
+    const row = store.db.prepare("SELECT totp_secret, recovery FROM accounts WHERE email = 'tess@firm.test'").get();
+    assert.match(row.totp_secret, /^enc:v1:/, 'the secret is encrypted at rest'); assert.equal(row.recovery.includes(en.body.recovery[0]), false, 'recovery codes stored only as hashes');
+    assert.equal((await me(other)).status, 401, 'other devices are signed out');
+    const m = await me(tess); assert.equal(m.body.user.twoFactor, true); assert.equal(m.body.recoveryLeft, 10);
+    // The password alone gives a ticket, not a session
+    const l1 = await post('/api/auth/login', creds);
+    assert.equal(l1.body.twoFactor, true); assert.equal(l1.body.token, undefined); assert.ok(l1.body.ticket);
+    assert.equal((await post('/api/auth/login/code', { ticket: l1.body.ticket, code: totp(secret, step) })).status, 400, 'a code works once');
+    const ok = await post('/api/auth/login/code', { ticket: l1.body.ticket, code: totp(secret, step + 1) });
+    assert.equal(ok.status, 200); assert.match(ok.body.token, /^s\./); assert.equal(ok.body.recoveryLeft, undefined);
+    assert.equal((await post('/api/auth/login/code', { ticket: l1.body.ticket, code: totp(secret, step + 1) })).status, 401, 'a ticket works once');
+    // A recovery code, in any case and spacing, works once
+    const rc = en.body.recovery[0];
+    const l2 = await post('/api/auth/login', creds);
+    const r2 = await post('/api/auth/login/code', { ticket: l2.body.ticket, code: ' ' + rc.toUpperCase().replace('-', ' ') });
+    assert.equal(r2.status, 200); assert.equal(r2.body.recoveryLeft, 9);
+    // Five wrong tries end the ticket
+    const l3 = await post('/api/auth/login', creds);
+    for (let i = 0; i < 5; i++) assert.equal((await post('/api/auth/login/code', { ticket: l3.body.ticket, code: i ? wrong : rc })).status, 400);
+    assert.equal((await post('/api/auth/login/code', { ticket: l3.body.ticket, code: en.body.recovery[1] })).status, 401);
+    // A password reset by email still asks for the code
+    await post('/api/auth/reset-request', { email: 'tess@firm.test' });
+    const mail = store.db.prepare("SELECT * FROM email_queue WHERE kind = 'reset' AND to_addr = 'tess@firm.test'").get();
+    const rs = await post('/api/auth/reset', { token: /#reset=([A-Za-z0-9_-]+)/.exec(mail.text_body)[1], password: 'tess newer password' });
+    assert.equal(rs.status, 200); assert.equal(rs.body.twoFactor, true); assert.equal(rs.body.token, undefined);
+    const after = await post('/api/auth/login/code', { ticket: rs.body.ticket, code: en.body.recovery[2] });
+    assert.equal(after.status, 200);
+    // New recovery codes replace the old ones; turning it off needs the password and a code
+    const nr = await post('/api/auth/2fa/recovery', { code: en.body.recovery[3] }, after.body.token);
+    assert.equal(nr.body.recovery.length, 10);
+    assert.equal((await post('/api/auth/2fa/disable', { password: 'wrong password!!', code: nr.body.recovery[0] }, after.body.token)).status, 400);
+    assert.equal((await post('/api/auth/2fa/disable', { password: 'tess newer password', code: en.body.recovery[4] }, after.body.token)).status, 400, 'old recovery codes no longer work');
+    assert.equal((await post('/api/auth/2fa/disable', { password: 'tess newer password', code: nr.body.recovery[0] }, after.body.token)).status, 200);
+    const plain = await post('/api/auth/login', { email: 'tess@firm.test', password: 'tess newer password' });
+    assert.match(plain.body.token, /^s\./, 'off again: the password is enough');
+  } finally { mods.config.trustProxy = false; }
+});

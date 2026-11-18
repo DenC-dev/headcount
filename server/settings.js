@@ -101,5 +101,5 @@ export function makeSettings(cfg, store, { keyFile = null, onChange = () => {} }
     return view();
   }
   apply();
-  return { view, save, apply, read };
+  return { view, save, apply, read, seal, open };
 }
