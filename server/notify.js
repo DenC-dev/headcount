@@ -32,6 +32,7 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
       if (e.type === 'task.assigned') return assigned(e);
       if (e.type === 'campaign.added') return added(e);
       if (e.type === 'billing.payment_failed') return paymentFailed(e.org);
+      if (e.type === 'billing.risk') return riskAlert(e);
     } catch (err) { console.error('Notification failed', e.type, err.message); }
   }
 
@@ -62,6 +63,25 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
         subject: `Payment failed for ${org.name} on Headcount`,
         text: `The latest payment for ${org.name} did not go through. Update the card in Workspace, then Plan, to keep your plan.\n\n${app}`,
         html: htmlEmail({ heading: 'A payment did not go through', blocks: [{ p: `The latest payment for ${org.name} did not go through. Update the card to keep your plan.` }], action: { url: app, label: 'Update payment' }, footer: footer(null, null, `you manage ${org.name}`) }) });
+    }
+  }
+
+  // Disputes, refunds and fraud warnings go to whoever runs Headcount (and the
+  // support address), because the money is theirs. They act on it in Stripe.
+  function riskAlert({ kind, org, amount, currency, charge, reason }) {
+    const op = store.setting('operator') ? store.q.user.get(store.setting('operator')) : null;
+    const to = [...new Set([op && op.email, cfg.supportEmail].filter(Boolean).map((x) => String(x).toLowerCase()))];
+    const money = typeof amount === 'number' ? `${(amount / 100).toLocaleString('en-US', { style: 'currency', currency: String(currency || 'usd').toUpperCase() })} ` : '';
+    const who = org ? org.name : 'a customer';
+    const what = { disputed: [`A customer disputed a payment`, `${who} disputed a ${money}payment${reason ? ` (reason given: ${String(reason).replace(/_/g, ' ')})` : ''}. Respond in Stripe before the deadline it shows, with any evidence you have, or the money goes back to them.`],
+      refunded: [`A payment was refunded`, `A ${money}payment from ${who} was refunded. If this was not you, check your Stripe account.`],
+      fraud_warning: [`Stripe flagged a payment as possible fraud`, `Stripe's card networks flagged a ${money}payment from ${who} as possibly fraudulent${reason ? ` (${String(reason).replace(/_/g, ' ')})` : ''}. Consider refunding it in Stripe now; a refund avoids a dispute and its fee.`] }[kind];
+    if (!what || !to.length) return;
+    const link = charge ? `https://dashboard.stripe.com/payments/${encodeURIComponent(charge)}` : 'https://dashboard.stripe.com/payments';
+    for (const addr of to) {
+      mail.queue({ to: addr, kind: 'billing', dedupe: `risk:${kind}:${charge || org && org.id || 'x'}:${addr}`,
+        subject: `${what[0]} (${who})`, text: `${what[1]}\n\nOpen it in Stripe: ${link}`,
+        html: htmlEmail({ heading: what[0], blocks: [{ p: what[1] }], action: { url: link, label: 'Open in Stripe' }, footer: footer(null, null, 'you run this Headcount') }) });
     }
   }
 

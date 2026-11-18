@@ -37,6 +37,10 @@ const chip = (on, yes, no) => `<span class="status ${on ? 'ok' : 'wait'}">${esc(
 const dollars = (label, d) => { const m = /\$([\d,.]+)/.exec(label || ''); return m ? m[1].replace(/,/g, '') : d; };
 const helpHtml = (p) => `${esc(p.help)}${p.link ? ` <a href="${p.link[0]}" target="_blank" rel="noopener">${esc(p.link[1])}</a>` : ''}`;
 
+const KEY_PERMS = ['Products: Write', 'Prices: Write', 'Customers: Write', 'Checkout Sessions: Write', 'Subscriptions: Write', 'Customer portal: Write', 'Webhook Endpoints: Write', 'Charges: Read', 'Tax Registrations: Read (only to charge sales tax)'];
+const saferKey = `<details class="wide adv"><summary>Safer: use a restricted key</summary><p class="note">Stripe recommends a restricted key, which can do only what Headcount needs. In Stripe, open Developers, then API keys, and choose <i>Create restricted key</i>. Name it Headcount and allow: ${KEY_PERMS.map(esc).join('; ')}. Leave everything else at None. It begins <code>rk_test_</code> or <code>rk_live_</code>.</p></details>`;
+const taxBox = (on) => `<label class="wide check"><input type="checkbox" id="pay_tax" ${on ? 'checked' : ''}> Charge sales tax with Stripe Tax. First tell Stripe where you are registered to collect it (Stripe, then Tax, then Registrations); Headcount checks before turning it on. Customers can add their tax ID.</label>`;
+
 function paymentsSection(f, st, open) {
   const acct = f.stripeAccount.value || '', test = / \(test mode\)$/.test(acct), on = st.billing;
   const head = `${open('billing', false)}<summary>Payments ${chip(on, test ? 'On, in test mode' : 'On', 'Off: everything is free')}</summary>`;
@@ -46,22 +50,27 @@ function paymentsSection(f, st, open) {
   if (!on) return `${head}
     <p class="note">Charge customers for the Team and Firm plans. Payments go through Stripe, which takes cards, sends receipts and pays the money into your bank account. Until you connect it, everyone gets every feature for free.</p>
     <ol class="steps howto">
-      <li><b>Make a Stripe account.</b> It is free: <a href="https://dashboard.stripe.com/register" target="_blank" rel="noopener">sign up at stripe.com</a>. You can try everything in test mode before Stripe asks for your business and bank details.</li>
-      <li><b>Copy your secret key.</b> In Stripe, open <a href="https://dashboard.stripe.com/test/apikeys" target="_blank" rel="noopener">Developers, then API keys</a>. Next to <i>Secret key</i>, click <i>Reveal</i> and copy it. Start with the test key, which begins <code>sk_test_</code>.</li>
+      <li><b>Make a Stripe account.</b> It is free: <a href="https://dashboard.stripe.com/register" target="_blank" rel="noopener">sign up at stripe.com</a>. Try everything first in a <i>sandbox</i>, Stripe's practice account (account menu, then Sandboxes), before Stripe asks for your business and bank details.</li>
+      <li><b>Copy your key.</b> In Stripe, open <a href="https://dashboard.stripe.com/test/apikeys" target="_blank" rel="noopener">Developers, then API keys</a>. Next to <i>Secret key</i>, click <i>Reveal</i> and copy it. A sandbox or test key begins <code>sk_test_</code>.</li>
       <li><b>Paste it here, choose your prices and connect.</b> Headcount sets up the plans, the checkout page, receipts and the page where customers manage their billing, all in your Stripe account.</li>
     </ol>
     <form class="form" id="svPayForm">
-      <label class="wide">Stripe secret key<input id="pay_key" type="password" autocomplete="off" placeholder="sk_test_…" required></label>
+      <label class="wide">Stripe key<input id="pay_key" type="password" autocomplete="off" placeholder="sk_test_… or rk_test_…" required></label>
+      ${saferKey}
       ${prices}
+      ${taxBox(false)}
       <p class="note wide">Customers start with a ${esc(String((CLOUD.config && CLOUD.config.billing && CLOUD.config.billing.trialDays) || 14))}-day free trial of the Team plan, then choose a plan and pay by card. Prices are in U.S. dollars.</p>
       <div class="wide"><button class="btn primary">Connect Stripe</button></div><p class="note wide" id="payMsg" role="status"></p></form></details>`;
   return `${head}
-    <p class="note"><span class="good">Connected</span> to <b>${esc(acct.replace(/ \(test mode\)$/, ''))}</b>. Team: ${esc(f.priceLabelTeam.value || 'not set')}. Firm: ${esc(f.priceLabelFirm.value || 'not offered')}.</p>
+    <p class="note"><span class="good">Connected</span> to <b>${esc(acct.replace(/ \(test mode\)$/, ''))}</b>. Team: ${esc(f.priceLabelTeam.value || 'not set')}. Firm: ${esc(f.priceLabelFirm.value || 'not offered')}. Sales tax: ${f.stripeTax.value === 'on' ? 'charged with Stripe Tax' : 'off'}.</p>
     ${test ? `<div class="callout"><b>Test mode: no real money moves.</b> To try it, open Workspace, choose a plan, and pay with the card number 4242 4242 4242 4242, any future date and any three digits.
       When you are ready for real payments, finish your business and bank details in Stripe, then paste your live secret key (it begins <code>sk_live_</code>) below and click Save.</div>` : ''}
     <form class="form" id="svPayForm">
-      <label class="wide">${test ? 'Live secret key, when you are ready' : 'Stripe secret key'}<input id="pay_key" type="password" autocomplete="off" placeholder="Leave empty to keep the current key"></label>
+      <label class="wide">${test ? 'Live key, when you are ready' : 'Stripe key'}<input id="pay_key" type="password" autocomplete="off" placeholder="Leave empty to keep the current key"></label>
+      ${saferKey}
       ${prices}
+      ${taxBox(f.stripeTax.value === 'on')}
+      <p class="note wide">Stripe also tells Headcount about disputes, refunds and payments flagged as fraud; you get an email so you can respond in Stripe in time.</p>
       <p class="note wide">A new price applies to new customers; people already paying keep their price until you change it in Stripe.</p>
       <div class="wide btnrow"><button class="btn primary">Save</button><button type="button" class="btn warn" data-x="payOff">${SET.payOff ? 'Click again to turn off payments' : 'Turn off payments'}</button></div>
       <p class="note wide" id="payMsg" role="status"></p></form></details>`;
@@ -124,7 +133,7 @@ async function connectStripe(form) {
   const msg = $('#payMsg'), btn = form.querySelector('button.primary');
   btn.disabled = true; msg.textContent = 'Setting up your plans in Stripe…'; SET.payOff = false;
   try {
-    const r = await CLOUD.api('POST', '/api/settings/stripe', { key: $('#pay_key').value.trim(), team: $('#pay_team').value, firm: $('#pay_firm').value });
+    const r = await CLOUD.api('POST', '/api/settings/stripe', { key: $('#pay_key').value.trim(), team: $('#pay_team').value, firm: $('#pay_firm').value, tax: $('#pay_tax').checked });
     await refreshSettings(r); drawSettings('billing'); render();
     const s = r.stripe, m = $('#payMsg');
     toast(s.live ? 'Payments are on' : 'Payments are on, in test mode');

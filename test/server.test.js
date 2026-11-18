@@ -26,26 +26,31 @@ const mock = http.createServer((req, res) => {
     if (u.pathname === '/jwks') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=60' }); return res.end(JSON.stringify({ keys: [jwk] })); }
     if (u.pathname === '/v1/messages') { mocks.claude.push({ headers: req.headers, body: JSON.parse(body) }); return j(200, mocks.claudeReply); }
     if (u.pathname.startsWith('/v1/')) {
-      mocks.stripe.push({ method: req.method, path: u.pathname, auth: req.headers.authorization, form: new URLSearchParams(body) });
+      mocks.stripe.push({ method: req.method, path: u.pathname, auth: req.headers.authorization, version: req.headers['stripe-version'], form: new URLSearchParams(body) });
+      if (u.pathname === '/v1/charges/ch_1') return j(200, { id: 'ch_1', object: 'charge', customer: 'cus_1', amount: 22500, currency: 'usd' });
       if (u.pathname === '/v1/customers') return j(200, { id: 'cus_1' });
       if (u.pathname === '/v1/checkout/sessions') return j(200, { id: 'cs_1', url: 'https://checkout.stripe.com/c/pay/cs_1' });
       if (u.pathname === '/v1/billing_portal/sessions') return j(200, { url: 'https://billing.stripe.com/p/session/1' });
       if (u.pathname === '/v1/subscriptions/sub_1') return j(200, mocks.sub);
       // What Headcount's one-step Stripe setup uses
       const S = mocks.so, f = new URLSearchParams(body), get = req.method === 'GET';
+      if (u.pathname === '/v1/tax/registrations') return j(200, { data: S.taxRegs || [] });
+      if (/^\/v1\/prices\/price_\d+$/.test(u.pathname) && req.method === 'POST') { const p = S.prices.find((x) => x.id === u.pathname.split('/').pop()); p.tax_behavior = f.get('tax_behavior'); return j(200, p); }
+      if (u.pathname === '/v1/account' && /rk_test_/.test(req.headers.authorization || '')) return j(403, { error: { message: 'The provided key does not have the required permissions' } });
       if (u.pathname === '/v1/account') return /bad/.test(req.headers.authorization || '') ? j(401, { error: { message: 'Invalid API Key provided' } }) : j(200, { id: 'acct_1', settings: { dashboard: { display_name: 'Capitol Strategies' } }, charges_enabled: false, details_submitted: false });
       if (u.pathname === '/v1/products') {
         if (get) return j(200, { data: S.products });
-        const p = { id: 'prod_' + (S.products.length + 1), name: f.get('name'), metadata: { headcount_plan: f.get('metadata[headcount_plan]') } }; S.products.push(p); return j(200, p);
+        const p = { id: 'prod_' + (S.products.length + 1), name: f.get('name'), tax_code: f.get('tax_code'), metadata: { headcount_plan: f.get('metadata[headcount_plan]') } }; S.products.push(p); return j(200, p);
       }
+      if (/^\/v1\/products\/prod_\d+$/.test(u.pathname) && req.method === 'POST') { const p = S.products.find((x) => x.id === u.pathname.split('/').pop()); p.tax_code = f.get('tax_code'); return j(200, p); }
       if (u.pathname === '/v1/prices') {
         if (get) return j(200, { data: S.prices.filter((p) => p.product === u.searchParams.get('product')) });
-        const p = { id: 'price_' + (S.prices.length + 1), product: f.get('product'), unit_amount: Number(f.get('unit_amount')), currency: f.get('currency'), recurring: { interval: f.get('recurring[interval]'), usage_type: 'licensed' }, metadata: { headcount_plan: f.get('metadata[headcount_plan]') } };
+        const p = { id: 'price_' + (S.prices.length + 1), product: f.get('product'), unit_amount: Number(f.get('unit_amount')), currency: f.get('currency'), recurring: { interval: f.get('recurring[interval]'), usage_type: 'licensed' }, tax_behavior: f.get('tax_behavior') || 'unspecified', metadata: { headcount_plan: f.get('metadata[headcount_plan]') } };
         S.prices.push(p); return j(200, p);
       }
       if (u.pathname === '/v1/webhook_endpoints') {
         if (get) return j(200, { data: S.hooks.map(({ secret, ...h }) => h) });
-        S.n++; const h = { id: 'we_' + S.n, url: f.get('url'), events: [...f.entries()].filter(([k]) => k.startsWith('enabled_events')).map(([, v]) => v), secret: 'whsec_made_' + S.n };
+        S.n++; const h = { id: 'we_' + S.n, url: f.get('url'), apiVersion: f.get('api_version'), events: [...f.entries()].filter(([k]) => k.startsWith('enabled_events')).map(([, v]) => v), secret: 'whsec_made_' + S.n };
         S.hooks.push(h); return j(200, h);
       }
       if (u.pathname.startsWith('/v1/webhook_endpoints/') && req.method === 'DELETE') { S.hooks = S.hooks.filter((h) => h.id !== u.pathname.split('/').pop()); return j(200, { deleted: true }); }
@@ -856,7 +861,7 @@ test('connecting Stripe from one key: plans, prices, webhook and billing page ma
   const { setupStripe, HOOK_EVENTS, readDollars } = await import('../server/stripe-setup.js');
   const { planForPrice } = await import('../server/billing.js');
   const sbase = mods.config.stripeBase, publicUrl = 'https://hc.example.org', key = 'sk_test_' + 'k'.repeat(24);
-  await assert.rejects(setupStripe({ base: sbase, key: 'pk_test_' + 'a'.repeat(24), publicUrl, team: 45 }), /does not look like a Stripe secret key/);
+  await assert.rejects(setupStripe({ base: sbase, key: 'pk_test_' + 'a'.repeat(24), publicUrl, team: 45 }), /does not look like a Stripe key/);
   await assert.rejects(setupStripe({ base: sbase, key, publicUrl: 'http://localhost:3000', team: 45 }), /public web address/);
   await assert.rejects(setupStripe({ base: sbase, key: 'sk_test_bad' + 'a'.repeat(20), publicUrl, team: 45 }), /did not accept that key/);
   assert.throws(() => readDollars('', 'the Team plan'), /Enter a price/); assert.throws(() => readDollars('0.5', 'Team'), /between 1 and 10,000/);
@@ -864,12 +869,12 @@ test('connecting Stripe from one key: plans, prices, webhook and billing page ma
   const S = mocks.so;
   const r = await setupStripe({ base: sbase, key, publicUrl, team: 45, firm: 75 });
   assert.equal(r.account, 'Capitol Strategies'); assert.equal(r.live, false); assert.equal(r.chargesEnabled, false);
-  assert.deepEqual(S.products.map((p) => [p.name, p.metadata.headcount_plan]), [['Headcount Team', 'team'], ['Headcount Firm', 'firm']]);
+  assert.deepEqual(S.products.map((p) => [p.name, p.metadata.headcount_plan, p.tax_code]), [['Headcount Team', 'team', 'txcd_10103001'], ['Headcount Firm', 'firm', 'txcd_10103001']]);
   assert.deepEqual(S.prices.map((p) => [p.unit_amount, p.currency, p.recurring.interval, p.metadata.headcount_plan]), [[4500, 'usd', 'month', 'team'], [7500, 'usd', 'month', 'firm']]);
   assert.equal(S.hooks.length, 1); assert.equal(S.hooks[0].url, 'https://hc.example.org/api/stripe/webhook'); assert.deepEqual(S.hooks[0].events, HOOK_EVENTS);
   assert.equal(S.portals.length, 1); assert.equal(S.portals[0].cancelMode, 'at_period_end'); assert.equal(S.portals[0].returnUrl, 'https://hc.example.org/app');
   assert.deepEqual(r.settings, { stripeKey: key, stripeWebhookSecret: S.hooks[0].secret, stripeWebhookId: S.hooks[0].id, stripePortalConfig: 'bpc_1', stripePriceTeam: 'price_1', stripePriceFirm: 'price_2',
-    priceLabelTeam: '$45 per person a month', priceLabelFirm: '$75 per person a month', stripeAccount: 'Capitol Strategies (test mode)' });
+    priceLabelTeam: '$45 per person a month', priceLabelFirm: '$75 per person a month', stripeAccount: 'Capitol Strategies (test mode)', stripeTax: '' });
   // Again, with a new Team price: nothing is duplicated, the webhook is replaced
   const r2 = await setupStripe({ base: sbase, key, publicUrl, team: 55, firm: 75 });
   assert.equal(S.products.length, 2); assert.equal(S.prices.length, 3); assert.equal(S.portals.length, 1); assert.equal(S.hooks.length, 1);
@@ -887,4 +892,62 @@ test('connecting Stripe from one key: plans, prices, webhook and billing page ma
     const res = await fetch(base + '/api/settings/stripe', { method: 'POST', headers: { ...H, Authorization: 'Bearer ' + op }, body: JSON.stringify({ key, team: 45 }) });
     assert.equal(res.status, 409);
   } finally { mods.config.trustProxy = false; }
+});
+
+test('Stripe best practices: a pinned API version, restricted keys, sales tax only with a registration', async () => {
+  const { setupStripe, HOOK_EVENTS } = await import('../server/stripe-setup.js');
+  const { STRIPE_VERSION } = await import('../server/billing.js');
+  const sbase = mods.config.stripeBase, publicUrl = 'https://hc.example.org', S = mocks.so;
+  mocks.stripe.length = 0;
+  // A restricted key cannot read the account; that is fine
+  const r = await setupStripe({ base: sbase, key: 'rk_test_' + 'r'.repeat(24), publicUrl, team: 45 });
+  assert.equal(r.account, 'your Stripe account'); assert.equal(r.settings.stripeKey.slice(0, 8), 'rk_test_');
+  assert.ok(mocks.stripe.every((x) => x.version === STRIPE_VERSION), 'every request names the API version');
+  const hook = S.hooks.at(-1);
+  assert.equal(hook.apiVersion, STRIPE_VERSION, 'webhook payloads use the same version');
+  for (const e of ['invoice.paid', 'charge.dispute.created', 'charge.refunded', 'radar.early_fraud_warning.created', 'checkout.session.async_payment_succeeded']) assert.ok(hook.events.includes(e), e);
+  assert.deepEqual(hook.events, HOOK_EVENTS);
+  // Sales tax: refused until Stripe knows where you are registered
+  await assert.rejects(setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, tax: true }), /Tax, then Registrations/);
+  S.taxRegs = [{ id: 'taxreg_1', status: 'active', country: 'US' }];
+  const t = await setupStripe({ base: sbase, key: 'sk_test_' + 'k'.repeat(24), publicUrl, team: 45, tax: true });
+  assert.equal(t.settings.stripeTax, 'on');
+  assert.ok(S.prices.filter((p) => p.unit_amount === 4500).every((p) => p.tax_behavior === 'exclusive'), 'tax is added on top of the price');
+  S.taxRegs = [];
+});
+
+test('Stripe events: checkout tagging, renewals, disputes, refunds and fraud warnings reach the right people', async () => {
+  mocks.stripe.length = 0;
+  // Checkout carries the integration tag and the API version
+  const W2 = ok(await api('alice', 'POST', '/api/workspaces', { name: 'Tagged Co' })).id;
+  ok(await api('alice', 'POST', `/api/workspaces/${W2}/billing/checkout`, { seats: 2 }));
+  const sess = mocks.stripe.find((x) => x.path === '/v1/checkout/sessions');
+  assert.match(sess.form.get('integration_identifier'), /^headcount_\w+_[a-z]{8}$/); assert.equal(sess.form.get('automatic_tax[enabled]'), null, 'no tax unless turned on');
+  const { STRIPE_VERSION } = await import('../server/billing.js');
+  assert.equal(sess.version, STRIPE_VERSION);
+  const send = async (event) => { const s = signed(event); return hook(s.raw, s.sig); };
+  const auditOf = (oid) => store.db.prepare('SELECT action, detail FROM audit WHERE org_id = ? ORDER BY id').all(oid).map((x) => x.action);
+  const opEmail = store.q.user.get(store.setting('operator')).email;
+  const riskMail = () => store.db.prepare("SELECT * FROM email_queue WHERE kind = 'billing' AND to_addr = ? ORDER BY id").all(opEmail);
+  // A dispute on a charge from W's customer: logged on W, emailed to whoever runs Headcount
+  assert.equal((await send({ id: 'evt_dp1', type: 'charge.dispute.created', data: { object: { id: 'dp_1', object: 'dispute', charge: 'ch_1', amount: 22500, currency: 'usd', reason: 'fraudulent' } } })).status, 200);
+  assert.ok(auditOf(W).includes('billing.disputed'));
+  const dm = riskMail().find((m) => /disputed/.test(m.subject));
+  assert.ok(dm, 'the operator hears about it'); assert.match(dm.text_body, /\$225\.00/); assert.match(dm.text_body, /dashboard\.stripe\.com\/payments\/ch_1/);
+  assert.equal((await send({ id: 'evt_dp1', type: 'charge.dispute.created', data: { object: { id: 'dp_1', charge: 'ch_1' } } })).status, 200);
+  assert.equal(riskMail().filter((m) => /disputed/.test(m.subject)).length, 1, 'each event is handled once');
+  // A refund and an early fraud warning
+  assert.equal((await send({ id: 'evt_rf1', type: 'charge.refunded', data: { object: { id: 'ch_1', object: 'charge', customer: 'cus_1', amount_refunded: 4500, currency: 'usd' } } })).status, 200);
+  assert.equal((await send({ id: 'evt_efw1', type: 'radar.early_fraud_warning.created', data: { object: { id: 'issfr_1', charge: 'ch_1', fraud_type: 'made_with_stolen_card' } } })).status, 200);
+  assert.ok(auditOf(W).includes('billing.refunded') && auditOf(W).includes('billing.fraud_warning'));
+  assert.ok(riskMail().some((m) => /refunded/.test(m.subject)) && riskMail().some((m) => /possible fraud/.test(m.subject)));
+  // A renewal that goes through after a failure brings the plan back
+  store.db.prepare("UPDATE orgs SET status = 'past_due', stripe_subscription = 'sub_1', stripe_item = 'si_1' WHERE id = ?").run(W);
+  mocks.sub = subscription(W, 5, 'active');
+  assert.equal((await send({ id: 'evt_ip1', type: 'invoice.paid', data: { object: { id: 'in_1', object: 'invoice', customer: 'cus_1', parent: { type: 'subscription_details', subscription_details: { subscription: 'sub_1' } } } } })).status, 200);
+  assert.equal(store.q.org.get(W).status, 'active');
+  // A bank payment that clears later unlocks the plan through the same path as checkout
+  mocks.stripe.length = 0;
+  assert.equal((await send({ id: 'evt_as1', type: 'checkout.session.async_payment_succeeded', data: { object: { id: 'cs_2', client_reference_id: W, customer: 'cus_1', subscription: 'sub_1', payment_status: 'paid' } } })).status, 200);
+  assert.ok(mocks.stripe.some((x) => x.path === '/v1/subscriptions/sub_1' && x.method === 'GET'));
 });

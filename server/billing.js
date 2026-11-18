@@ -5,6 +5,12 @@ import { HttpError } from './db.js';
 // API directly: Checkout to subscribe, the customer portal to manage cards,
 // invoices and cancellation, and webhooks to keep the plan in step.
 
+// Every request and the webhook use one API version, so the shape of Stripe's
+// objects only changes when this line does.
+export const STRIPE_VERSION = '2026-10-28.endive';
+// Tags Headcount's Checkout Sessions so they can be told apart in Stripe.
+const CHECKOUT_TAG = 'headcount_seat_checkout_qpzvmwtk';
+
 export function form(obj, prefix, out = new URLSearchParams()) {
   for (const [k, v] of Object.entries(obj)) {
     if (v === undefined || v === null) continue;
@@ -19,7 +25,7 @@ async function stripe(cfg, method, path, params) {
   try {
     res = await fetch(`${cfg.stripeBase}${path}`, {
       method, signal: AbortSignal.timeout(20000),
-      headers: { Authorization: `Bearer ${cfg.stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { Authorization: `Bearer ${cfg.stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded', 'Stripe-Version': STRIPE_VERSION },
       body: params ? form(params).toString() : undefined,
     });
   } catch (_) { throw new HttpError(502, 'The payment service could not be reached. Try again shortly.'); }
@@ -60,7 +66,9 @@ export function makeBilling(cfg, store) {
       mode: 'subscription', customer, client_reference_id: oid,
       line_items: { 0: { price, quantity: n } },
       subscription_data: { metadata: { org_id: oid } },
-      allow_promotion_codes: 'true',
+      allow_promotion_codes: 'true', integration_identifier: CHECKOUT_TAG,
+      // Sales tax, only once the operator has turned it on (which checks for a registration)
+      ...(cfg.stripeTax === 'on' ? { automatic_tax: { enabled: 'true' }, customer_update: { address: 'auto', name: 'auto' }, tax_id_collection: { enabled: 'true' } } : {}),
       success_url: `${cfg.publicUrl}/app?billing=done`, cancel_url: `${cfg.publicUrl}/app?billing=cancelled`,
     });
     store.log(oid, user.id, 'billing.checkout_started', null, { seats: n });
@@ -86,8 +94,27 @@ export function makeBilling(cfg, store) {
     return { seats: n };
   }
 
+  // The workspace behind a Stripe object: by its customer first, then the
+  // workspace ID Headcount put on it.
+  const orgOf = (customer, orgId) => store.orgForStripe(orgId, customer);
+  async function chargeOrg(chargeId) {
+    if (!chargeId) return { org: null, charge: null };
+    try { const charge = await stripe(cfg, 'GET', `/v1/charges/${encodeURIComponent(chargeId)}`); return { org: orgOf(charge.customer), charge }; }
+    catch (e) { console.error('Could not look up a charge', e.message); return { org: null, charge: null }; }
+  }
+  // Disputes, refunds and fraud warnings: logged on the workspace and sent to
+  // whoever runs Headcount, since the money at risk is theirs.
+  function risk(kind, org, { amount, currency, charge, reason }) {
+    if (org) store.log(org.id, null, `billing.${kind}`, null, { amount, currency, charge, reason });
+    store.notify({ type: 'billing.risk', kind, org, amount, currency, charge, reason });
+  }
+  async function refresh(subscriptionId) {
+    if (!subscriptionId) return;
+    try { sync(await stripe(cfg, 'GET', `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`)); } catch (e) { console.error('Could not refresh a subscription', e.message); }
+  }
+
   function sync(sub, known) {
-    const org = known || store.orgForStripe(sub.metadata && sub.metadata.org_id, sub.customer);
+    const org = known || orgOf(sub.customer, sub.metadata && sub.metadata.org_id);
     if (!org) return;
     if (sub.status === 'canceled' || sub.status === 'incomplete_expired') return store.endSubscription(org);
     const item = sub.items && sub.items.data && sub.items.data[0];
@@ -115,8 +142,11 @@ export function makeBilling(cfg, store) {
     if (!store.firstSeen(event.id)) return { duplicate: true };
     const obj = event.data && event.data.object;
     switch (event.type) {
-      case 'checkout.session.completed': {
-        const org = store.orgForStripe(obj.client_reference_id, obj.customer);
+      case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded': {
+        // The subscription's own status decides the plan, so a bank payment
+        // still clearing does not unlock it early.
+        const org = orgOf(obj.customer, obj.client_reference_id);
         if (org && obj.subscription) {
           if (!org.stripe_customer) store.setCustomer(org.id, obj.customer);
           try { sync(await stripe(cfg, 'GET', `/v1/subscriptions/${encodeURIComponent(obj.subscription)}`), store.orgForStripe(org.id)); }
@@ -128,9 +158,31 @@ export function makeBilling(cfg, store) {
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
         sync(obj); break;
+      case 'checkout.session.async_payment_failed':
       case 'invoice.payment_failed': {
-        const org = store.orgForStripe(null, obj.customer);
+        const org = orgOf(obj.customer, obj.client_reference_id);
         if (org) { store.log(org.id, null, 'billing.payment_failed'); store.notify({ type: 'billing.payment_failed', org }); }
+        break;
+      }
+      case 'invoice.paid': {
+        // A renewal went through: bring the plan back from past due.
+        const subId = (obj.parent && obj.parent.subscription_details && obj.parent.subscription_details.subscription) || obj.subscription;
+        const org = orgOf(obj.customer);
+        if (org && subId && org.status !== 'active') await refresh(typeof subId === 'string' ? subId : subId.id);
+        break;
+      }
+      case 'charge.refunded':
+        risk('refunded', orgOf(obj.customer), { amount: obj.amount_refunded, currency: obj.currency, charge: obj.id });
+        break;
+      case 'charge.dispute.created': {
+        const { org } = await chargeOrg(typeof obj.charge === 'string' ? obj.charge : obj.charge && obj.charge.id);
+        risk('disputed', org, { amount: obj.amount, currency: obj.currency, charge: typeof obj.charge === 'string' ? obj.charge : obj.charge && obj.charge.id, reason: obj.reason });
+        break;
+      }
+      case 'radar.early_fraud_warning.created': {
+        const id = typeof obj.charge === 'string' ? obj.charge : obj.charge && obj.charge.id;
+        const { org, charge } = await chargeOrg(id);
+        risk('fraud_warning', org, { amount: charge ? charge.amount : null, currency: charge ? charge.currency : null, charge: id, reason: obj.fraud_type });
         break;
       }
       default: break;

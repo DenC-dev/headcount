@@ -738,7 +738,8 @@ class Store {
   // ---------- billing ----------
   billingOrg(oid, uid) { this.needOrg(oid, uid, 'admin'); return this.q.org.get(oid); }
   setCustomer(oid, customer) { this.q.setCustomer.run(customer, oid); }
-  orgForStripe(orgId, customer) { return (orgId && this.q.org.get(orgId)) || (customer && this.q.orgByCustomer.get(customer)) || null; }
+  // Stripe's customer is the first-class link; the workspace ID in metadata is a fallback.
+  orgForStripe(orgId, customer) { return (customer && this.q.orgByCustomer.get(customer)) || (orgId && this.q.org.get(orgId)) || null; }
   applySubscription(org, s) {
     this.q.setBilling.run(s.plan, s.status, s.seats, s.periodEnd || null, s.customer || org.stripe_customer, s.subscription, s.item, org.id);
     this.log(org.id, null, 'billing.subscription', s.status, { plan: s.plan, seats: s.seats });
