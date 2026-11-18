@@ -31,3 +31,5 @@
   .checks .phone { display: block; }
   .checks th:nth-child(3), .checks td.wide { display: none; }
 }
+/* the project site's footer has four columns */
+@media (min-width: 981px) { .site-foot .wrap { grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); } }

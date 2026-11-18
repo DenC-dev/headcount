@@ -121,26 +121,28 @@ function siteVars() {
   const inf = (v) => (v === Number.POSITIVE_INFINITY ? 'Unlimited' : v);
   const P = PLANS;
   const rows = [
-    ['People', `Up to ${P.free.seats}`, 'As many seats as you need', 'As many seats as you need'],
+    ['People', `Up to ${P.free.seats}`, 'As many as you need', 'As many as you need'],
     ['Active campaigns', P.free.campaigns, inf(P.team.campaigns), inf(P.firm.campaigns)],
-    ['Guests (clients, partners)', P.free.guests, `${P.team.guestsPerSeat} per seat`, inf(P.firm.guests)],
-    ['Briefs drafted with Claude, per month', P.free.drafts, `${P.team.draftsPerSeat} per seat`, `${P.firm.draftsPerSeat} per seat`],
+    ['Free guests (clients, partners)', P.free.guests, `${P.team.guestsPerSeat} per person`, inf(P.firm.guests)],
+    ['Bill briefs drafted by AI, per month', P.free.drafts, `${P.team.draftsPerSeat} per person`, `${P.firm.draftsPerSeat} per person`],
     ['Vote counts, meeting requests, bill briefs', 'Yes', 'Yes', 'Yes'],
-    ['Monitor watches: bills, rules, contract notices', P.free.watches, inf(P.team.watches), inf(P.firm.watches)],
+    ['Alerts for new bills, rules and contract notices', P.free.watches, inf(P.team.watches), inf(P.firm.watches)],
     ['Who is lobbying on a bill; contract award history', 'Yes', 'Yes', 'Yes'],
     ['Stakeholder contacts and email outreach', 'Yes', 'Yes', 'Yes'],
     ['Action center for constituent letters', 'No', 'Yes', 'Yes'],
     ['Portfolio and clients', 'Yes', 'Yes', 'Yes'],
     ['Lobbying activity report', 'No', 'Yes', 'Yes'],
     ['Activity log', 'No', 'Yes', 'Yes'],
-    ['Join by email domain', 'No', 'Yes', 'Yes'],
-    ['Single sign-on (SAML, OIDC)', 'No', 'No', 'Yes'],
+    ['Colleagues join with their work email, no invitation', 'No', 'Yes', 'Yes'],
+    ['Two-step sign-in', 'Yes', 'Yes', 'Yes'],
+    ['Require two-step sign-in for everyone', 'No', 'Yes', 'Yes'],
+    ['Sign in through your firm\'s own login page', 'No', 'No', 'Yes'],
   ];
   return {
     year: String(new Date().getFullYear()),
     trialDays: String(config.trialDays),
-    priceTeam: escHtml(config.priceLabelTeam || 'Per seat, billed monthly'),
-    priceFirm: escHtml(config.priceLabelFirm || 'Per seat, with single sign-on'),
+    priceTeam: escHtml(config.priceLabelTeam || 'Per person, billed monthly'),
+    priceFirm: escHtml(config.priceLabelFirm || 'Per person, with your firm\'s own login'),
     salesEmail: config.salesEmail || config.supportEmail ? `<a href="mailto:${escHtml(config.salesEmail || config.supportEmail)}">${escHtml(config.salesEmail || config.supportEmail)}</a>` : 'us through the form on the <a href="/#demo">home page</a>',
     planTable: `<table class="plans"><thead><tr><th></th><th>Free</th><th>Team</th><th>Firm</th></tr></thead><tbody>${rows.map((r) => `<tr><th scope="row">${escHtml(r[0])}</th>${r.slice(1).map((v) => `<td>${escHtml(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`,
   };
@@ -227,8 +229,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     return mail.queue({ to: user.email, kind: kind === 'reset' ? 'reset' : 'verify', subject: kind === 'reset' ? 'Reset your Headcount password' : 'Confirm your email for Headcount', text,
       html: htmlEmail({ heading: kind === 'reset' ? 'Reset your password' : 'Confirm your email', blocks: [{ p: kind === 'reset' ? `Someone asked to reset the password for ${user.email}. The link works for one hour.` : `Welcome to Headcount, ${user.name}. Confirm your email so colleagues can find you and your workspace can recognize your firm's domain.` }, ...(kind === 'reset' ? [{ p: 'If it was not you, ignore this email. Your password has not changed.' }] : [])], action: { url: link, label: kind === 'reset' ? 'Choose a new password' : 'Confirm my email' }, footer: 'You get this email because of an action on your Headcount account.' }) });
   };
-  const needBilling = () => { const b = getBilling(); if (!b) throw new HttpError(501, 'Billing is not set up on this server.'); return b; };
-  const needOperator = (u) => { if (!isOperator(u)) throw new HttpError(403, 'Only the person who runs this Headcount server can change its settings.'); };
+  const needBilling = () => { const b = getBilling(); if (!b) throw new HttpError(501, 'Payments are not turned on.'); return b; };
+  const needOperator = (u) => { if (!isOperator(u)) throw new HttpError(403, 'Only the person who runs this Headcount can change its settings.'); };
   const SOURCE_TESTS = {
     congress: async () => `${(await sources.congressUpdated(config, new Date(Date.now() - 2 * 864e5), 1)).length} bills updated in the last two days`,
     openstates: async () => `${(await sources.stateBills(config, { states: ['DE'], q: 'budget', since: new Date(Date.now() - 365 * 864e5) })).length} Delaware budget bills this year`,
@@ -265,7 +267,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     // Payments: one Stripe key, and Headcount sets up the rest in Stripe.
     ['POST', '/api/settings/stripe', async (m, x) => {
       needOperator(x.user); limit('stripe:' + x.user.id, 6);
-      if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this server, so they cannot be changed here.');
+      if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this Headcount, so they cannot be changed here.');
       const b = await x.body();
       const r = await setupStripe({ base: config.stripeBase, key: String(b.key || '').trim() || settings.read('stripeKey'), publicUrl: config.publicUrl,
         team: readDollars(b.team, 'the Team plan'), firm: readDollars(b.firm, 'the Firm plan', true) });
@@ -276,7 +278,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     }],
     ['DELETE', '/api/settings/stripe', async (m, x) => {
       needOperator(x.user);
-      if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this server, so they cannot be changed here.');
+      if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this Headcount, so they cannot be changed here.');
       await removeStripeHook({ base: config.stripeBase, key: settings.read('stripeKey'), id: settings.read('stripeWebhookId') });
       settings.save(Object.fromEntries(['stripeKey', 'stripeWebhookSecret', 'stripeWebhookId', 'stripePortalConfig', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'stripeAccount'].map((k) => [k, ''])));
       return settings.view();
@@ -374,12 +376,12 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
     ['POST', '/api/bills/draft', async (m, x) => {
-      if (!draftBrief) throw new HttpError(501, 'Brief drafting is not set up on this server.');
+      if (!draftBrief) throw new HttpError(501, 'AI drafting is not turned on. An admin can add it under Admin settings, AI writing help.');
       limit('draft:' + x.user.id, 3);
       const b = await x.body(2_500_000);
       store.need(String(b.campaignId || ''), x.user.id, 'editor');
       const camp = store.q.campaign.get(b.campaignId);
-      if (!store.meterGlobal('draft', config.aiDailyLimit)) throw new HttpError(429, 'Brief drafting has reached its daily limit on this server. Try again tomorrow.');
+      if (!store.meterGlobal('draft', config.aiDailyLimit)) throw new HttpError(429, 'AI drafting has reached its daily limit. Try again tomorrow.');
       store.meter(camp.org_id, 'draft');
       return draftBrief(b);
     }],

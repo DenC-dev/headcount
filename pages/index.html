@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Headcount: open-source vote counts and outreach for government affairs</title>
-<meta name="description" content="Headcount is an open-source web app for lobbyists, advocates and government affairs teams: whip counts with live odds, meeting requests, bill briefs, monitoring of bills, rules and contracts, an action center and a contacts list.">
+<title>Headcount: vote counts, meetings and alerts for lobbyists and advocates</title>
+<meta name="description" content="Headcount shows where every legislator stands on your bill, the odds it passes and who to talk to next, then books the meetings, writes the bill brief and tells you what is new in Congress and your state. Free to try in your browser.">
 <meta name="theme-color" content="#0a0f20">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,11 +21,11 @@
 <section class="hero">
   <div class="wrap hero-grid">
     <div>
-      <p class="eyebrow">Open source · Apache 2.0</p>
-      <h1>Know the count. <em>Run it yourself.</em></h1>
-      <p class="lede">Headcount is a web app for lobbyists, advocates and government affairs teams. It shows where every member stands, the odds a bill passes and whose mind to change next, then books the meeting, writes the brief and watches every capitol. The code is public: host it for your team, or build on it.</p>
-      <div class="ctas"><a class="button" href="./app/">Try it free <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="{{repo}}">Get the code</a></div>
-      <p class="fine">Runs in your browser. No account, no card. <span id="srcLine"><a href="./status.html">Data source status</a></span></p>
+      <p class="eyebrow">For lobbyists, advocates and engaged citizens</p>
+      <h1>Know the count. <em>Change the vote.</em></h1>
+      <p class="lede">Headcount shows where every legislator stands on your bill, the odds it passes and whose mind to change next. Then it helps you book the meeting, write the bill brief, rally supporters, and hear about new bills and rules in Congress and your state.</p>
+      <div class="ctas"><a class="button" href="./app/">Try it free <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="{{signin}}">Create an account</a></div>
+      <p class="fine">Nothing to install. No account or card needed to try it. <span id="srcLine"><a href="./status.html">Information sources</a></span></p>
     </div>
     <figure class="stage" aria-label="An example vote count: a 41-seat chamber colored by each member's position, with the odds of passage and the member to see next">
       <div class="stage-top"><span class="live"><i></i>Live example</span><span>SB 214 · State Senate</span></div>
@@ -44,10 +44,10 @@
 <section class="band" id="how"><div class="wrap">
   <div class="section-head reveal"><p class="eyebrow">How it works</p><h2>From the first count to the quarterly report</h2></div>
   <ol class="steps">
-    <li class="reveal"><h3>Count</h3><p>Load the U.S. House, the U.S. Senate or any state chamber with current members and offices, and mark where each one stands.</p></li>
-    <li class="reveal"><h3>Prioritize</h3><p>Headcount ranks the members whose movement would change the outcome most, counting committee seats and who takes cues from whom.</p></li>
-    <li class="reveal"><h3>Meet</h3><p>Ask the scheduler for a meeting from your own Gmail or Outlook with open times from your calendar, then send the invitation when they reply.</p></li>
-    <li class="reveal"><h3>Report</h3><p>Log each contact as it happens. The activity report groups a quarter's contacts by client and issue for your disclosure filings.</p></li>
+    <li class="reveal"><h3>Count</h3><p>Pick the U.S. House, the U.S. Senate or any state legislature. Every current member appears, with their office; mark where each one stands.</p></li>
+    <li class="reveal"><h3>Prioritize</h3><p>Headcount tells you whose vote matters most right now, counting committee seats and who follows whose lead.</p></li>
+    <li class="reveal"><h3>Meet</h3><p>Ask the office for a meeting from your own Gmail or Outlook, offering times when you are free, and send the calendar invitation when they reply.</p></li>
+    <li class="reveal"><h3>Report</h3><p>Note each conversation as it happens. At the end of the quarter, the activity report lists them by client and issue, ready for your lobbying disclosures.</p></li>
   </ol>
 </div></section>
 
@@ -67,15 +67,15 @@
     </div>
     <div role="tabpanel" id="p-request" aria-labelledby="t-request" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / meeting request</span></div><figure><img src="img/request.png" width="1280" height="820" alt="A meeting request to a senator's scheduler with three open times from the calendar" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Meetings that actually get scheduled</h3><ul><li>Sent from your own Gmail or Outlook, to the scheduler who handles it</li><li>Three open times from your calendar, then a real invitation with a Meet or Teams link</li><li>Replies tracked, and a follow-up set for every request</li></ul></div>
+      <div class="panel-copy"><h3>Meetings that actually get scheduled</h3><ul><li>Sent from your own Gmail or Outlook, to the person who keeps the calendar</li><li>Three open times from your calendar, then a real invitation with a Meet or Teams link</li><li>Replies tracked, and a follow-up set for every request</li></ul></div>
     </div>
     <div role="tabpanel" id="p-brief" aria-labelledby="t-brief" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / bill brief</span></div><figure><img src="img/brief.png" width="1280" height="820" alt="A bill brief with sponsors, status, the position and the summary" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>A brief for every bill, ready for the meeting</h3><ul><li>Sponsors, status and the official summary from Congress.gov or Open States</li><li>Talking points and likely objections, drafted by Claude and marked for checking</li><li>Who else is lobbying on it, from federal disclosure filings</li></ul></div>
+      <div class="panel-copy"><h3>A brief for every bill, ready for the meeting</h3><ul><li>Sponsors, where the bill stands and the official summary, filled in for you</li><li>Talking points and likely objections, drafted by AI and marked for you to check</li><li>Who else is lobbying on it, from public lobbying disclosures</li></ul></div>
     </div>
     <div role="tabpanel" id="p-monitor" aria-labelledby="t-monitor" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / monitor</span></div><figure><img src="img/monitor.png" width="1280" height="820" alt="The Monitor: new bills, a proposed rule and a contract notice, each scored for relevance with a one-line reason" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Every capitol, watched for you</h3><ul><li>New bills in Congress and all 50 states, Federal Register rules and SAM.gov contract notices</li><li>Ranked against your priorities, with a reason you can scan in a second</li><li>Track a bill to hear when it moves; start a campaign in one click</li></ul></div>
+      <div class="panel-copy"><h3>Every capitol, watched for you</h3><ul><li>New bills in Congress and all 50 states, new federal rules and federal contract notices</li><li>Sorted by what matters to you, each with a one-line reason</li><li>Track a bill to hear when it moves; start a campaign in one click</li></ul></div>
     </div>
     <div role="tabpanel" id="p-portfolio" aria-labelledby="t-portfolio" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / portfolio</span></div><figure><img src="img/portfolio.png" width="1280" height="820" alt="A portfolio of four campaigns with clients, odds, counts and next votes" loading="lazy"></figure></div>
@@ -89,9 +89,9 @@
   <div class="reveal">
     <p class="eyebrow">Action center</p>
     <h2>Bring constituents into the count</h2>
-    <p class="intro">Every campaign can have a public page. Supporters find which of your targets represent them and write or call, and each letter appears beside that member in your whip count.</p>
+    <p class="intro">Every campaign can have a public page to share. Supporters see which of their own legislators you need, then write or call in a minute, with no account. Each letter shows up next to that legislator in your count.</p>
     <ol class="points">
-      <li><span class="num">1</span><div><b>Find my legislators</b><span>A supporter enters their address; the U.S. Census lookup finds their districts.</span></div></li>
+      <li><span class="num">1</span><div><b>Find my legislators</b><span>A supporter types their address, and Headcount finds the people who represent them.</span></div></li>
       <li><span class="num">2</span><div><b>A letter in their own words</b><span>They edit your draft and send it to the office, or call with your script.</span></div></li>
       <li><span class="num">3</span><div><b>Counted where it matters</b><span>"3 constituent letters" shows next to that member while you plan the meeting.</span></div></li>
     </ol>
@@ -104,74 +104,39 @@
   <div class="grid3">
     <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-scales"/></svg></span><h3>Who else is lobbying</h3><p>Federal disclosure filings that name your bill: which clients, which firms, what they reported. For contracts, who has won the work before.</p></div>
     <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-contacts"/></svg></span><h3>Every relationship</h3><p>Agency staff, coalition partners and client contacts with owners and a shared history. Personal emails from your inbox, logged on each contact.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Ready for a firm</h3><p>Workspaces with roles and client guests, single sign-on with SAML or OIDC, an activity log, email digests, and per-seat billing through Stripe if you sell it.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-spark"/></svg></span><h3>Drafts, clearly marked</h3><p>Claude drafts summaries, talking points and objections from the bill itself, labelled for checking before anyone relies on them.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Plain to run</h3><p>A small Node.js server and one SQLite file. No web framework, no build step, no separate database. Every setting is an environment variable.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-phone"/></svg></span><h3>In the hallway</h3><p>Add it to a phone's home screen. It opens without a signal and catches up when you are back online.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Built for a team</h3><p>A shared workspace for your firm, guest access so clients see their own campaigns, a log of who changed what, and a morning email with what moved.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-spark"/></svg></span><h3>Drafts, clearly marked</h3><p>AI drafts the summary, talking points and likely objections from the bill itself, labelled so everyone knows to check them first.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Safe and private</h3><p>Two-step sign-in, passwords that are never stored readably, and a backup every day. Your counts are yours: never sold, never shared.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-phone"/></svg></span><h3>In the hallway</h3><p>Add it to your phone's home screen like an app. It opens even without a signal in the capitol basement and catches up when you are back online.</p></div>
   </div>
 </div></section>
 
 <section class="band pricing" id="plans"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">Free and premium</p><h2>Start free in your browser. Sign in when the team joins.</h2></div>
+  <div class="section-head reveal"><p class="eyebrow">Plans</p><h2>Start free. Upgrade when your team joins.</h2></div>
   <div class="plans4">
     <div class="card reveal"><h3>Free</h3><p class="price">In your browser · no account</p><ul><li>Vote counts with live odds</li><li>Who to see next</li><li>U.S. House, Senate and Florida rosters</li><li>Bill briefs, written by hand</li><li>Meeting requests through your email app</li><li>Saved in this browser only</li></ul><a class="button ghost" href="./app/">Try it free</a></div>
-    <div class="card reveal"><h3>Free account</h3><p class="price">Sign in · no card</p><ul><li>Everything in Free</li><li>Saved to your account, on any device</li><li>Up to 2 people and 3 campaigns</li><li>2 Monitor watches</li><li>Any state legislature</li><li>Contacts and email digests</li><li>Two-step sign-in</li><li>Calendar feed for Outlook and Google</li></ul><a class="button ghost" href="{{signin}}">Sign in</a></div>
-    <div class="card featured reveal"><h3>Team <span class="tier">Premium</span></h3><p class="price">Per seat · {{trialDays}}-day trial</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 Monitor watches with Claude ranking</li><li>Action center for constituent letters</li><li>Who else is lobbying, contract history</li><li>Activity report, activity log, guests</li><li>Require two-step sign-in</li></ul><a class="button" href="{{signin}}">Start a trial</a></div>
-    <div class="card reveal"><h3>Firm <span class="tier">Premium</span></h3><p class="price">Per seat · for larger firms</p><ul><li>Everything in Team</li><li>Single sign-on with SAML or OIDC</li><li>Require single sign-on for staff</li><li>Unlimited watches and guests</li><li>Invoicing on request</li></ul><a class="button ghost" href="{{repo}}/issues/new?title=Firm%20plan">Talk to us</a></div>
+    <div class="card reveal"><h3>Free account</h3><p class="price">Sign in · no card</p><ul><li>Everything in Free</li><li>Saved to your account, on any device</li><li>Up to 2 people and 3 campaigns</li><li>2 alerts for new bills and rules</li><li>Any state legislature</li><li>Contacts and email digests</li><li>Two-step sign-in</li><li>Calendar feed for Outlook and Google</li></ul><a class="button ghost" href="{{signin}}">Sign in</a></div>
+    <div class="card featured reveal"><h3>Team <span class="tier">Premium</span></h3><p class="price">Per person, monthly · {{trialDays}}-day free trial</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 alerts for bills, rules and contracts, sorted by AI</li><li>Action center for constituent letters</li><li>See who else is lobbying on a bill</li><li>Quarterly activity report and client guests</li><li>Require two-step sign-in</li></ul><a class="button" href="{{signin}}">Start a trial</a></div>
+    <div class="card reveal"><h3>Firm <span class="tier">Premium</span></h3><p class="price">Per person, monthly · for larger firms</p><ul><li>Everything in Team</li><li>Sign in through your firm's own login page</li><li>Unlimited alerts and guests</li><li>Invoicing on request</li></ul><a class="button ghost" href="{{contact}}">Talk to us</a></div>
   </div>
 </div></section>
 
-<section class="band night-band" id="accounts"><div class="wrap spotlight">
-  <div class="reveal">
-    <p class="eyebrow">Sign in with your team</p>
-    <h2>Accounts live on a Headcount server. Get one in a few clicks.</h2>
-    <p class="intro">Team workspaces, the Monitor, contacts, email alerts and premium plans run on a Headcount server. Deploy one to Render with the button below: no command line. Create your account on it, and it walks you through email and data sources in the browser.</p>
-    <div class="ctas"><a class="button" href="https://render.com/deploy?repo={{repo}}">Deploy to Render <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="#run">Or run it on any computer</a></div>
-  </div>
-  <ol class="points reveal steps-dark">
-    <li><span class="num">1</span><div><b>Deploy</b><span>Render asks you to sign in, then builds Headcount with a disk for your data.</span></div></li>
-    <li><span class="num">2</span><div><b>Create your account</b><span>The first account runs the server. Choose who else can sign up.</span></div></li>
-    <li><span class="num">3</span><div><b>Finish setting up</b><span>Connect email and data sources from server settings, each with a test button.</span></div></li>
-  </ol>
-</div></section>
-
-<section class="band night-band" id="run"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">Run it</p><h2>On your computer in two minutes</h2><p class="intro">You need Node.js 22.13 or later. The development server has a test sign-in that accepts any name, so you can try teams and invitations right away.</p></div>
-  <div class="terminal reveal"><div class="bar"><i></i><i></i><i></i></div><pre><code><span class="p">$ </span>git clone {{repo}}.git
-<span class="p">$ </span>cd headcount
-<span class="p">$ </span>npm install
-<span class="p">$ </span>npm run dev
-<span class="c"># open http://localhost:3000</span></code></pre></div>
-  <p class="intro reveal">For your team, run the Docker image behind HTTPS with a persistent disk. The <a href="{{repo}}#set-it-up-for-real-users" style="color:#c3cbff">setup guide</a> covers sign-in with Google Cloud Identity Platform, calendar and email access, email delivery, single sign-on, billing and the data source keys.</p>
-  <div class="terminal reveal"><div class="bar"><i></i><i></i><i></i></div><pre><code><span class="p">$ </span>docker build -t headcount .
-<span class="p">$ </span>docker run -p 3000:3000 -v headcount-data:/data --env-file .env headcount</code></pre></div>
-</div></section>
-
-<section class="band" id="data"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">Built on public data</p><h2>Checked against the real sources every morning</h2><p class="intro">Headcount reads public records directly from the services that publish them. A daily check runs the app's own code against each one and publishes the result on the <a href="./status.html">status page</a>.</p></div>
-  <div class="tablewrap reveal"><table class="plans sources-table">
-    <thead><tr><th>Source</th><th>Used for</th><th>Key</th><th>Today</th></tr></thead>
-    <tbody>
-      <tr><th scope="row">Congress.gov</th><td>Federal bills for briefs and the Monitor</td><td>Free</td><td data-src="Congress.gov">&hellip;</td></tr>
-      <tr><th scope="row">Open States</th><td>Bills and legislators in every state</td><td>Free</td><td data-src="Open States">&hellip;</td></tr>
-      <tr><th scope="row">Federal Register</th><td>Proposed rules, final rules and notices</td><td>None</td><td data-src="Federal Register">&hellip;</td></tr>
-      <tr><th scope="row">SAM.gov</th><td>Federal contract opportunities</td><td>Free</td><td data-src="SAM.gov">&hellip;</td></tr>
-      <tr><th scope="row">LDA.gov</th><td>Who else is lobbying on a bill</td><td>Optional</td><td data-src="LDA.gov">&hellip;</td></tr>
-      <tr><th scope="row">USAspending.gov</th><td>Who wins similar contracts</td><td>None</td><td data-src="USAspending">&hellip;</td></tr>
-      <tr><th scope="row">U.S. Census geocoder</th><td>Supporters' districts on action pages</td><td>None</td><td data-src="Census">&hellip;</td></tr>
-    </tbody>
-  </table></div>
-  <div class="grid3">
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-log"/></svg></span><h3>Every push</h3><p>Server tests for permissions, billing, email and every data source, against local stand-ins.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-people"/></svg></span><h3>Every push</h3><p>An end-to-end test drives the whole app in a real browser with several people, from sign-in to single sign-on.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-radar"/></svg></span><h3>Every morning</h3><p>Live checks against the real services above. A failure opens an issue on GitHub; recovery closes it.</p></div>
+<section class="band" id="faq"><div class="wrap">
+  <div class="section-head reveal"><p class="eyebrow">Questions</p><h2>Good to know</h2></div>
+  <div class="faq">
+    <div class="reveal"><h3>Do I need to install anything?</h3><p>No. Headcount works in your web browser on a computer, tablet or phone. On a phone you can add it to your home screen, and it opens like an app.</p></div>
+    <div class="reveal"><h3>What does it cost?</h3><p>Trying it in your browser is free, with no account. A free account saves your work and works for two people. The Team and Firm plans are charged per person each month, after a {{trialDays}}-day free trial, and you can cancel any time.</p></div>
+    <div class="reveal"><h3>Where does the information come from?</h3><p>From official public sources: Congress.gov, all 50 state legislatures, the Federal Register, federal contract notices, lobbying disclosures, USAspending.gov and the U.S. Census. <a href="./status.html">See today's status</a>.</p></div>
+    <div class="reveal"><h3>Who can see my counts?</h3><p>Only you and the colleagues you invite. Clients you add as guests see only the campaigns you share with them. Your data is never sold or shared.</p></div>
+    <div class="reveal"><h3>Can my supporters use it?</h3><p>Yes, with no account. Share a campaign's action page: supporters type their address, see their own legislators and send a letter in their own words, or call with your talking points.</p></div>
+    <div class="reveal"><h3>How do I pay?</h3><p>By card, inside Headcount: open Workspace, then Plan. Stripe handles the payment and the receipts. You can add people, remove them or cancel whenever you like.</p></div>
   </div>
 </div></section>
 
 <section class="band night-band closing"><div class="wrap reveal">
-  <p class="eyebrow">Open source</p>
+  <p class="eyebrow">Get started</p>
   <h2>Know the count <em>before the roll is called.</em></h2>
-  <div class="ctas"><a class="button" href="{{repo}}">Get the code <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="{{repo}}/blob/main/CONTRIBUTING.md">Contribute</a></div>
+  <div class="ctas"><a class="button" href="./app/">Try it free <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="{{signin}}">Create an account</a></div>
 </div></section>
 
 </main>

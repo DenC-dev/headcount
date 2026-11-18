@@ -64,6 +64,6 @@ export function makeAuthenticator(config, accounts = null) {
     if (accounts && m[1].startsWith('s.') && (config.authMode === 'local' || config.authMode === 'dev')) return accounts.verify(m[1]);
     if (config.authMode === 'firebase') return verifyFirebaseToken(m[1], { projectId: config.firebase.projectId, jwksUrl: config.firebaseJwksUrl });
     if (config.authMode === 'dev') return verifyDevToken(m[1]);
-    throw new HttpError(401, 'Accounts are not set up on this server.');
+    throw new HttpError(401, 'Accounts are not turned on here.');
   };
 }

@@ -196,7 +196,7 @@ export function makeAccounts(cfg, store, { seal = (v) => v, open = (v) => v } = 
     if (!isEmail(e)) throw new HttpError(400, 'Enter a valid email address.');
     const pw = readPassword(password, e);
     const first = q.count.get().n === 0;
-    if (!first && !signupsOpen() && !(invite && store.inviteExists(String(invite)))) throw new HttpError(403, 'New accounts on this server need an invitation. Ask your administrator for one.');
+    if (!first && !signupsOpen() && !(invite && store.inviteExists(String(invite)))) throw new HttpError(403, 'New accounts here need an invitation. Ask the person who runs your Headcount for one.');
     if (q.byEmail.get(e)) throw new HttpError(409, 'An account with that email already exists. Sign in instead, or reset your password.');
     const id = 'loc:' + b64(12);
     q.insert.run(id, e, n, await hashPassword(pw), 0, Date.now());

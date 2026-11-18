@@ -465,7 +465,7 @@ try {
   await visitor.page.waitForFunction(() => /Thank you/.test(document.querySelector('form.lead .status').textContent));
   assert.ok((await outbox()).some((x) => x.kind === 'lead' && x.to_addr === 'sales@headcount.test'));
   await visitor.page.goto(`${BASE}/pricing`); await shot(visitor.page, 'site-pricing', true);
-  assert.match(await visitor.page.locator('table.plans').innerText(), /Single sign-on/);
+  assert.match(await visitor.page.locator('table.plans').innerText(), /Sign in through your firm's own login page/);
   await visitor.page.setViewportSize({ width: 390, height: 844 });
   for (const pg of ['/', '/pricing', '/security', '/privacy', '/terms']) {
     await visitor.page.goto(BASE + pg);

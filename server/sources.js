@@ -25,8 +25,8 @@ async function getJson(url, { headers, method = 'GET', body, name, notFound = nu
     try {
       res = await fetch(url, { method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
     } catch (_) { if (again) { await pause(); continue; } throw new HttpError(502, `${name} could not be reached. Try again shortly.`); }
-    if (res.status === 401 || res.status === 403) throw new HttpError(502, `${name} rejected this server's API key.`);
-    if (res.status === 429) throw new HttpError(429, `${name} is rate limiting this server. Try again later.`);
+    if (res.status === 401 || res.status === 403) throw new HttpError(502, `${name} did not accept the key. An admin can check it under Admin settings.`);
+    if (res.status === 429) throw new HttpError(429, `${name} is busy right now. Try again later.`);
     if (res.status === 404) { if (notFound) throw new HttpError(502, notFound); return null; }
     if (res.status >= 500 && again) { await pause(); continue; }
     if (!res.ok) throw new HttpError(502, `${name} returned an error (${res.status}).`);
@@ -50,7 +50,7 @@ const stateOf = (jid) => { const m = /(?:state|district|territory):([a-z]{2})/.e
 // Congress.gov has no keyword search, so the Monitor reads every bill updated
 // since the last run and matches titles itself.
 export async function congressUpdated(cfg, since, maxPages = 4) {
-  if (!cfg.congressKey) throw new HttpError(501, 'Federal bill monitoring needs CONGRESS_API_KEY on the server.');
+  if (!cfg.congressKey) throw new HttpError(501, 'Watching Congress needs a free Congress.gov key, which an admin adds under Admin settings.');
   const out = [];
   for (let page = 0; page < maxPages; page++) {
     const q = new URLSearchParams({ format: 'json', fromDateTime: `${day(since)}T00:00:00Z`, sort: 'updateDate desc', limit: '250', offset: String(page * 250) });
@@ -67,7 +67,7 @@ export async function congressUpdated(cfg, since, maxPages = 4) {
 }
 
 export async function stateBills(cfg, { states, q, since }) {
-  if (!cfg.openStatesKey) throw new HttpError(501, 'State bill monitoring needs OPENSTATES_API_KEY on the server.');
+  if (!cfg.openStatesKey) throw new HttpError(501, 'Watching the states needs a free Open States key, which an admin adds under Admin settings.');
   const terms = phrases(q).map((p) => (p.includes(' ') ? `"${p}"` : p)).join(' or ');
   if (!terms) return [];
   const list = states === 'all' || !states.length ? [null] : states.slice(0, 12);
@@ -106,7 +106,7 @@ export async function federalRegister(cfg, { q, since, agency }) {
 const mmddyyyy = (d) => `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`;
 const titleCase = (s) => String(s || '').toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase()).replace(/\b(Of|And|The|For)\b/g, (w) => w.toLowerCase()).replace(/^./, (c) => c.toUpperCase());
 export async function samOpportunities(cfg, { q, since, naics }) {
-  if (!cfg.samKey) throw new HttpError(501, 'Contract monitoring needs SAM_API_KEY on the server.');
+  if (!cfg.samKey) throw new HttpError(501, 'Watching federal contracts needs a free SAM.gov key, which an admin adds under Admin settings.');
   const to = new Date(), seen = new Map();
   const words = phrases(q).slice(0, 3);
   for (const title of words.length ? words : ['']) {
@@ -205,7 +205,7 @@ export async function lobbyingOn(cfg, { number, title }) {
 // ---------- legislators ----------
 const partyLetter = (p) => (/^dem/i.test(p) ? 'D' : /^rep/i.test(p) ? 'R' : 'I');
 export async function stateRoster(cfg, state, chamber) {
-  if (!cfg.openStatesKey) throw new HttpError(501, 'Loading state rosters needs OPENSTATES_API_KEY on the server.');
+  if (!cfg.openStatesKey) throw new HttpError(501, 'Loading a state legislature needs a free Open States key, which an admin adds under Admin settings.');
   const st = String(state || '').toUpperCase();
   if (!STATES[st]) throw new HttpError(400, 'Choose a state.');
   if (!['upper', 'lower', 'legislature'].includes(chamber)) throw new HttpError(400, 'Choose a chamber.');

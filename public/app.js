@@ -703,7 +703,7 @@ function briefDoc(b) {
     <h2>${esc(b.number || '')}${b.number && b.title ? ': ' : ''}${esc(b.title || (b.number ? '' : c.bill))}</h2></div>
     ${facts.length ? `<dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
     <div class="position"><b>Our position:</b> we ${c.side === 'defeat' ? 'oppose' : 'support'} this bill${clientOf() ? ` on behalf of ${esc(clientOf())}` : ''}.${c.ask ? ` <b>The ask:</b> ${esc(c.ask)}.` : ''}</div>
-    ${b.draftedAt ? `<p class="draftnote noprint">The analysis below was drafted with Claude on ${esc(fmtDay(b.draftedAt.slice(0, 10)))} from the bill material. Check every point against the bill before you rely on it.</p>` : ''}
+    ${b.draftedAt ? `<p class="draftnote noprint">The analysis below was drafted by AI (Claude) on ${esc(fmtDay(b.draftedAt.slice(0, 10)))} from the bill material. Check every point against the bill before you rely on it.</p>` : ''}
     ${sec('Summary', para(b.plainSummary || firstSentences(b.officialSummary, 900)))}
     ${sec('What it does', list(lines(b.keyProvisions)))}
     ${sec('Who it affects', para(b.whoItAffects))}
@@ -744,12 +744,12 @@ function briefPanelHtml() {
       <label>Bill number<input id="lk_n" name="n" required placeholder="H.R. 1234, S. 56, HB 123" value="${esc(S.brief.number || '')}"></label>
       <label>Congress or session <span class="note">optional</span><input id="lk_s" name="s" placeholder="119, or 2026"></label>
       <div class="wide btnrow"><button class="btn primary">Look it up</button><button type="button" class="btn" data-act="briefPanelOff">Cancel</button></div>
-      <p class="wide note">${!signedIn() ? 'Sign in to look up bills.' : !ok ? 'Bill lookup is not set up on this server yet, so fill in the brief by hand.' : `Federal bills come from Congress.gov${cfg.bills.states ? ' and state bills from Open States' : ''}. This fills in the bill's details and official summary and keeps your analysis.`}</p>
+      <p class="wide note">${!signedIn() ? 'Sign in to look up bills.' : !ok ? 'Bill lookup is not turned on yet (an admin adds it under Admin settings), so fill in the brief by hand.' : `Federal bills come from Congress.gov${cfg.bills.states ? ' and state bills from Open States' : ''}. This fills in the bill's details and official summary and keeps your analysis.`}</p>
     </form></div>`;
   }
   if (briefPanel === 'draft') {
     return `<div class="panel noprint" style="max-width:860px;margin:0 auto 14px"><form id="dfForm" class="form">
-      <p class="wide note">Claude drafts the summary, what the bill does, talking points and likely objections, working only from the official summary and anything you paste here. It argues for your position: ${S.campaign.side === 'defeat' ? 'defeat' : 'pass'} the bill${S.campaign.ask ? `, with the ask "${esc(S.campaign.ask)}"` : ''}. Check every point before you use it.</p>
+      <p class="wide note">AI (Claude) drafts the summary, what the bill does, talking points and likely objections, working only from the official summary and anything you paste here. It argues for your position: ${S.campaign.side === 'defeat' ? 'defeat' : 'pass'} the bill${S.campaign.ask ? `, with the ask "${esc(S.campaign.ask)}"` : ''}. Check every point before you use it.</p>
       <label class="wide">Bill text, analysis or notes <span class="note">optional</span><textarea id="df_text" name="material" style="min-height:150px" placeholder="Paste the bill text or a committee analysis for a better draft"></textarea></label>
       <div class="wide btnrow"><button class="btn primary" id="dfGo">${hasBrief(S.brief) && (S.brief.plainSummary || lines(S.brief.talkingPoints).length) ? 'Draft and replace my analysis' : 'Draft it'}</button><button type="button" class="btn" data-act="briefPanelOff">Cancel</button><span class="note" id="dfMsg"></span></div>
     </form></div>`;
@@ -758,7 +758,7 @@ function briefPanelHtml() {
 }
 function renderBrief() {
   const b = S.brief, ro = !canEditNow(), cfg = CLOUD.config || {};
-  const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft analysis with Claude</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}${typeof intelBriefButtons === 'function' ? intelBriefButtons(b) : ''}</div>`;
+  const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft it with AI</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}${typeof intelBriefButtons === 'function' ? intelBriefButtons(b) : ''}</div>`;
   const empty = `<div class="brief" style="text-align:center"><h2 style="font-size:22px">No brief for this bill yet</h2><p class="note" style="margin:0 auto">Look up the bill to fill in its sponsors, status and official summary, then add your summary, talking points and likely objections. Every meeting brief and meeting request for this campaign uses it.</p></div>`;
   $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty);
   if (briefPanel === 'lookup' && $('#lk_j')) $('#lk_j').value = guessJurisdiction();
@@ -810,9 +810,9 @@ async function lookupBill(form) {
 async function draftAnalysis(form) {
   const go = $('#dfGo'), msg = $('#dfMsg');
   if (go.dataset.sure !== '1' && /replace/i.test(go.textContent)) { go.dataset.sure = '1'; msg.textContent = 'This replaces your summary, talking points and objections. Press again to go ahead.'; return; }
-  if (!signedIn()) return toast('Sign in to draft with Claude.');
+  if (!signedIn()) return toast('Sign in to draft with AI.');
   const b = S.brief, c = S.campaign, material = $('#df_text').value;
-  go.disabled = true; msg.textContent = 'Claude is drafting. This can take up to a minute.';
+  go.disabled = true; msg.textContent = 'Drafting with AI. This can take up to a minute.';
   try {
     const r = await CLOUD.api('POST', '/api/bills/draft', { bill: { number: b.number, title: b.title || c.bill, jurisdiction: b.jurisdiction, session: b.session, sponsors: b.sponsors, status: b.status, committees: b.committees, officialSummary: b.officialSummary }, material, side: c.side, ask: c.ask, client: clientOf(), campaignId: S.cloud ? S.id : undefined });
     Object.assign(b, { plainSummary: r.plainSummary, keyProvisions: r.keyProvisions, whoItAffects: r.whoItAffects, fiscalImpact: r.fiscalImpact, talkingPoints: r.talkingPoints, objections: r.objections, needsChecking: r.needsChecking, draftedAt: r.draftedAt });
@@ -1226,7 +1226,7 @@ function gettingStarted() {
 // ---------- portfolio ----------
 function renderPortfolio() {
   const el = $('#portfolioPage');
-  if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to see every campaign in your workspace in one place. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'The portfolio needs accounts, which are not set up on this server.'}</div>`; return; }
+  if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to see every campaign in your workspace in one place. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'The portfolio is part of the full version of Headcount, with accounts. This free version keeps everything in your browser.'}</div>`; return; }
   if (!ORG) { el.innerHTML = '<div class="panel empty">Create or join a workspace to see your portfolio. <button class="btn sm primary" data-page="workspace">Set up a workspace</button></div>'; return; }
   const f = WS.filter, q = f.q.trim().toLowerCase();
   const list = ACCOUNT.list.filter((c) => (f.archived || !c.archived) && (!f.client || c.clientId === f.client) && (!q || `${c.name} ${c.client} ${(c.summary || {}).bill || ''}`.toLowerCase().includes(q)));
@@ -1296,7 +1296,7 @@ async function loadWs() {
 function planPanel() {
   const p = ORG.plan, u = ORG.usage, b = (CLOUD.config && CLOUD.config.billing) || null, admin = isAdmin();
   const daysLeft = p.trialEnds ? Math.max(0, Math.ceil((p.trialEnds - Date.now()) / 864e5)) : 0;
-  const status = p.key === 'trial' ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left` : p.status === 'past_due' ? 'Payment overdue' : p.key === 'unlimited' ? 'No limits on this server' : p.key === 'free' ? 'Free' : 'Active';
+  const status = p.key === 'trial' ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left` : p.status === 'past_due' ? 'Payment overdue' : p.key === 'unlimited' ? 'No limits' : p.key === 'free' ? 'Free' : 'Active';
   const rows = [['People using seats', limitText(u.seats, p.seats)], ['Guests', limitText(u.guests, p.guests)], ['Active campaigns', limitText(u.campaigns, p.campaigns)], ['Briefs drafted this month', limitText(u.drafts, p.drafts)]];
   let actions = '';
   if (b && admin) {
@@ -1339,8 +1339,8 @@ function domainPanel() {
   const d = ORG.domain, on = ORG.plan.features.domain;
   let body;
   if (!on) return upsell('Email domain', 'Team', 'Colleagues with an email address at your firm\'s domain join without an invitation.');
-  else if (!d) body = `<p class="note">Let colleagues with an email address at your firm's domain join this workspace as members, without an invitation. You prove you own the domain with a DNS record.</p><form id="dmForm" class="taskadd"><input id="dm_name" name="domain" placeholder="yourfirm.com" aria-label="Domain" required><button class="btn">Add domain</button></form>`;
-  else if (!d.verified) body = `<p class="note">Add this TXT record to <b>${esc(d.name)}</b> at your DNS provider, then press Verify. Changes can take up to an hour to appear.</p><div class="linkbox"><input readonly value="headcount-verification=${esc(d.token)}" aria-label="TXT record"><button class="btn sm" data-copy="headcount-verification=${esc(d.token)}">Copy</button></div><div class="btnrow" style="margin-top:8px"><button class="btn primary" data-act="dmVerify">Verify</button><button class="btn" data-act="dmRemove">Remove</button></div>`;
+  else if (!d) body = `<p class="note">Let colleagues with an email address at your firm (like @yourfirm.com) join this workspace without an invitation. First you prove the address belongs to your firm, with help from whoever manages your firm's website or email.</p><form id="dmForm" class="taskadd"><input id="dm_name" name="domain" placeholder="yourfirm.com" aria-label="Domain" required><button class="btn">Add domain</button></form>`;
+  else if (!d.verified) body = `<p class="note">Ask whoever manages <b>${esc(d.name)}</b> (often your IT person, or the company where you bought the domain, such as GoDaddy or Squarespace) to add this TXT record to it. Then press Verify. It can take up to an hour to show up.</p><div class="linkbox"><input readonly value="headcount-verification=${esc(d.token)}" aria-label="TXT record"><button class="btn sm" data-copy="headcount-verification=${esc(d.token)}">Copy</button></div><div class="btnrow" style="margin-top:8px"><button class="btn primary" data-act="dmVerify">Verify</button><button class="btn" data-act="dmRemove">Remove</button></div>`;
   else body = `<p><span class="status ok">Verified</span> ${esc(d.name)}</p><label class="check"><input type="checkbox" id="dm_join" ${d.join ? 'checked' : ''}> Anyone who signs in with a verified @${esc(d.name)} address can join as a member (each uses a seat)</label><div><button class="btn sm" data-act="dmRemove">Remove domain</button></div>`;
   return `<div class="panel"><span class="label">Email domain</span>${body}</div>`;
 }
@@ -1364,15 +1364,15 @@ async function setRequire2fa(box) {
 function ssoPanel() {
   if (!isAdmin() || !CLOUD.config.sso) return '';
   const sso = ORG.sso || {}, d = ORG.domain, support = CLOUD.config.supportEmail;
-  if (!ORG.plan.features.sso) return upsell('Single sign-on', 'Firm', 'Staff sign in through your identity provider (Okta, Microsoft Entra ID, or any SAML or OIDC provider), and you can require it.');
+  if (!ORG.plan.features.sso) return upsell('Single sign-on', 'Firm', 'Staff sign in through your firm\'s own login page (Okta, Microsoft Entra ID and others), and you can make it required.');
   return `<div class="panel"><span class="label">Single sign-on</span>
     ${!d || !d.verified ? '<p class="note">Verify your email domain first: people reach your sign-in page by entering their work email.</p>' : ''}
     <form id="ssForm" class="form">
-      <label class="wide">Provider ID from Identity Platform<input id="ss_provider" name="provider" value="${esc(sso.provider || '')}" placeholder="saml.yourfirm"></label>
-      <label class="wide check"><input type="checkbox" id="ss_required" name="required" ${sso.required ? 'checked' : ''}> Require single sign-on for members and admins. Owners can always sign in, so they can fix these settings.</label>
+      <label class="wide">Sign-on ID (from Headcount support)<input id="ss_provider" name="provider" value="${esc(sso.provider || '')}" placeholder="saml.yourfirm"></label>
+      <label class="wide check"><input type="checkbox" id="ss_required" name="required" ${sso.required ? 'checked' : ''}> Require it for members and admins. Owners can always sign in another way, so they can fix this if something goes wrong.</label>
       <div class="wide"><button class="btn primary">Save</button></div>
     </form>
-    <p class="note">To connect your identity provider, ${support ? `write to ${esc(support)}` : 'contact Headcount support'}. They set it up in Identity Platform with your provider's details and give you the provider ID to enter here. People then choose "Sign in with single sign-on" and enter their ${d ? '@' + esc(d.name) : 'work'} email; anyone who signs in that way joins this workspace as a member.</p></div>`;
+    <p class="note">Your IT team and Headcount support set this up together: ${support ? `write to ${esc(support)}` : 'contact Headcount support'} and they will ask your IT team for a few details, then give you the sign-on ID to enter here. People then choose "Sign in with single sign-on" and enter their ${d ? '@' + esc(d.name) : 'work'} email; anyone who signs in that way joins this workspace as a member.</p></div>`;
 }
 function reportPanel() {
   if (!isAdmin()) return '';
@@ -1400,7 +1400,7 @@ function dataPanel() {
   return `<div class="panel"><span class="label">Workspace</span>
     ${isAdmin() ? `<form id="wnForm" class="taskadd"><input id="wn_name" name="name" value="${esc(ORG.name)}" aria-label="Workspace name" required><button class="btn">Rename</button></form>
     <p class="note">The workspace name appears in meeting requests as the organization you are writing from.</p>
-    <div class="btnrow"><button class="btn" data-act="orgExport">Download all data (JSON)</button></div>` : ''}
+    <div class="btnrow"><button class="btn" data-act="orgExport">Download all data</button></div>` : ''}
     <details class="sect"><summary>${owner ? 'Delete workspace' : 'Leave workspace'}</summary>
       <p class="note">${owner ? 'Deletes every campaign, client and invitation in this workspace for everyone. Download the data first if you need it. This cannot be undone.' : 'You lose access to its campaigns until someone invites you again.'}</p>
       <div><button class="btn sm warn" data-act="${owner ? 'orgDelete' : 'orgLeave'}">${owner ? 'Delete this workspace' : 'Leave this workspace'}</button></div></details></div>`;
@@ -1429,7 +1429,7 @@ function renderWorkspace(fromLoad) {
 }
 function drawWorkspace(fromLoad) {
   const el = $('#workspacePage');
-  if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to set up a workspace for your team. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'Workspaces need accounts, which are not set up on this server.'}</div>`; return; }
+  if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to set up a workspace for your team. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'Workspaces are part of the full version of Headcount, with accounts. This free version keeps everything in your browser.'}</div>`; return; }
   if (!ORG) { el.innerHTML = onboardingHtml(); return; }
   el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${securityPanel()}${ssoPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
   if (!fromLoad) loadWs();
@@ -1516,7 +1516,7 @@ function render() {
       : JOIN.info ? `<span><b>${esc(JOIN.info.invitedBy)}</b> invited you to ${JOIN.kind === 'org' ? 'join' : 'work on'} ${what} as ${role}.${signedIn() ? '' : ' Sign in to accept.'}</span>${signedIn() ? '<button class="btn sm primary" data-act="joinNow">Accept</button>' : '<button class="btn sm primary" data-act="signin">Sign in to accept</button>'}` : '<span>Checking your invitation</span>';
   } else if (cfg.authError) banner = `<span>${esc(cfg.authError)}</span>`;
   else if (signedIn() && TFA_NEEDED && !SSO_NEEDED) banner = `<span><b>${esc(TFA_NEEDED)}</b> requires two-step sign-in. Turn it on for your account to open its campaigns.</span><button class="btn sm primary" data-act="tfaSetup">Turn it on</button>`;
-  else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's identity provider to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
+  else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's own login page to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
   else if (signedIn() && OPERATOR && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add free keys so Headcount can look up bills and legislators.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
@@ -1687,8 +1687,8 @@ function localSignInDrawer(mode) {
   const field = (id, label, type, ac, extra = '') => `<label class="wide">${label}<input id="${id}" type="${type}" autocomplete="${ac}" required ${extra}></label>`;
   showDrawer(`<div class="row"><h2>${title}</h2><button class="btn sm" data-act="close">Close</button></div>
   ${m === 'code' ? '<p class="note">Open your authenticator app and enter the six-digit code for Headcount. If you no longer have your phone, enter one of your recovery codes instead.</p>' : ''}
-  ${first ? '<p class="note">You are the first person on this Headcount server, so your account will also manage its settings: email, data sources and who can sign up.</p>' : ''}
-  ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts on this server need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
+  ${first ? '<p class="note">You are the first person here, so your account will also manage the settings for Headcount: email, bill data, payments and who can sign up.</p>' : ''}
+  ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts here need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
   <form id="locForm" class="form" data-mode="${m}">
     ${m === 'signup' ? field('loc_name', 'Your name', 'text', 'name') : ''}
     ${m === 'signup' && !JOIN ? field('loc_org', 'Firm or team name', 'text', 'organization', 'maxlength="80" placeholder="For example, Capitol Strategies"') : ''}
@@ -1709,7 +1709,7 @@ async function submitLocal(form) {
     if (m === 'code') { r = await CLOUD.signInCode(LOC.ticket, v('loc_code')); LOC.ticket = null; if (r.recoveryLeft !== undefined) toast(`Signed in with a recovery code. ${r.recoveryLeft} left; make new ones under Account.`); }
     else if (m === 'signin') r = await CLOUD.signInLocal(v('loc_email'), v('loc_pw'));
     else if (m === 'signup') await CLOUD.signUpLocal({ name: v('loc_name'), email: v('loc_email'), password: v('loc_pw'), workspace: JOIN ? undefined : v('loc_org'), invite: JOIN ? JOIN.code : undefined });
-    else if (m === 'forgot') { const r = await CLOUD.resetRequest(v('loc_email')); msg.textContent = r.email ? 'If that address has an account, a reset link is on its way. It works for one hour.' : 'This server cannot send email yet, so ask whoever runs your Headcount to reset your password.'; btn.disabled = false; return; }
+    else if (m === 'forgot') { const r = await CLOUD.resetRequest(v('loc_email')); msg.textContent = r.email ? 'If that address has an account, a reset link is on its way. It works for one hour.' : 'Headcount cannot send email yet, so ask whoever runs your Headcount to reset your password.'; btn.disabled = false; return; }
     else if (m === 'reset') { r = await CLOUD.resetPassword(LOC.reset, v('loc_pw')); LOC.reset = null; history.replaceState(null, '', '/app'); toast(r.twoFactor ? 'Password changed. Now enter your code.' : 'Password changed. You are signed in.'); }
     if (r && r.twoFactor) { LOC.ticket = r.ticket; return localSignInDrawer('code'); }
     if (CLOUD.config.accounts) CLOUD.config.accounts.setup = false;
@@ -1725,7 +1725,7 @@ function signInDrawer(mode) {
     ${cfg.providers.map((p) => `<button class="btn" data-act="signinWith" data-p="${p}">Continue with ${CLOUD.providerName(p)}</button>`).join('')}
     ${cfg.sso ? `<details class="sect" ${mode === 'sso' ? 'open' : ''}><summary>Sign in with single sign-on</summary>
       <form id="ssoForm" class="taskadd"><input id="sso_email" name="email" type="email" required placeholder="you@yourfirm.com" aria-label="Work email" value="${esc((SSO_STEP && SSO_STEP.email) || '')}"><button class="btn">Continue</button></form>
-      <div id="ssoNext" class="note">${SSO_STEP && SSO_STEP.provider ? `<button class="btn primary" data-act="ssoGo">Continue to ${esc(SSO_STEP.workspace)} sign-in</button>` : 'For firms that sign in through Okta, Microsoft Entra ID or another identity provider.'}</div></details>` : ''}
+      <div id="ssoNext" class="note">${SSO_STEP && SSO_STEP.provider ? `<button class="btn primary" data-act="ssoGo">Continue to ${esc(SSO_STEP.workspace)} sign-in</button>` : 'For firms with their own login page, such as Okta or Microsoft Entra ID.'}</div></details>` : ''}
     <p class="note">Signing in saves your campaigns to your firm's workspace so you can use them on any device and share them with colleagues. Headcount asks for access to your calendar and email only when you first send a meeting request, and uses it only to send what you ask it to. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
   </div>`);
 }
@@ -1918,7 +1918,7 @@ document.addEventListener('click', async (e) => {
     case 'calRenew': return loadCalendar(true);
     case 'tfaSetup': accountDrawer(); $('#tfSect').open = true; return TWOFA.on ? null : twoFactorAct('tfStart');
     case 'signoutAll': await flushNow(); await CLOUD.signOutEverywhere(); return toast('Signed out on every device');
-    case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'This server cannot send email yet'); } catch (err) { fail(err); } return;
+    case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'Headcount cannot send email yet'); } catch (err) { fail(err); } return;
     case 'ssoSwitch': await flushNow(); await CLOUD.signOut(); SSO_NEEDED = null; return signInDrawer('sso');
     case 'ssoGo': try { await CLOUD.signInSSO(SSO_STEP.provider, SSO_STEP.email); SSO_STEP = null; closeDrawer(); } catch (err) { fail(err); } return;
     case 'account': return accountDrawer();

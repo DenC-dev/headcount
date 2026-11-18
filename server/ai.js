@@ -62,7 +62,7 @@ export async function draftBrief(input) {
     });
   } catch (e) {
     if (e instanceof Anthropic.RateLimitError) throw new HttpError(429, 'The drafting service is busy. Try again in a minute.');
-    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw new HttpError(502, 'This server\'s drafting key was rejected.');
+    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw new HttpError(502, 'Anthropic did not accept the AI key. An admin can check it under Admin settings, AI writing help.');
     if (e instanceof Anthropic.BadRequestError) throw new HttpError(502, 'The drafting service could not handle that request.');
     if (e instanceof Anthropic.APIError) throw new HttpError(502, 'The drafting service returned an error. Try again shortly.');
     throw new HttpError(502, 'The drafting service could not be reached.');

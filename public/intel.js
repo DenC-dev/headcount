@@ -87,9 +87,9 @@ function drawMonitor() {
   el.innerHTML = `<div class="mgrid">
     <div class="panel">
       <div class="row"><span class="label">Watches</span><button class="btn sm primary" data-x="newWatch">New watch</button></div>
-      ${MON.watches.length ? `<ul class="wlist">${MON.watch ? '<li><button class="linkbtn" data-x="pickWatch" data-id="">Show every watch</button></li>' : ''}${watches}</ul>` : `<p class="note" style="margin-top:12px">A watch searches new and updated bills in Congress and every state legislature, proposed and final rules in the Federal Register, and federal contract opportunities on SAM.gov. Headcount checks each watch every few hours, scores what it finds against your priorities${src.ai ? ' with Claude' : ''}, and tells you about what matters.</p><div class="btnrow"><button class="btn primary" data-x="newWatch">Create your first watch</button></div>`}
+      ${MON.watches.length ? `<ul class="wlist">${MON.watch ? '<li><button class="linkbtn" data-x="pickWatch" data-id="">Show every watch</button></li>' : ''}${watches}</ul>` : `<p class="note" style="margin-top:12px">A watch searches new and updated bills in Congress and every state legislature, proposed and final rules in the Federal Register, and federal contract opportunities on SAM.gov. Headcount checks each watch every few hours, scores what it finds against your priorities${src.ai ? ' with AI' : ''}, and tells you about what matters.</p><div class="btnrow"><button class="btn primary" data-x="newWatch">Create your first watch</button></div>`}
       ${ORG.plan && ORG.plan.watches ? `<p class="note" style="margin-top:12px">${MON.watches.length} of ${ORG.plan.watches} watches on the ${esc(ORG.plan.label)} plan.${MON.watches.length >= ORG.plan.watches ? ` <span class="tier">Team</span> ${isAdmin() && CLOUD.config.billing ? '<button class="btn sm" data-act="gotoPlans">Get more</button>' : ''}` : ''}</p>` : ''}
-      ${off.length ? `<p class="note" style="margin-top:12px">Not set up on this server: ${esc(off.join(', '))}.</p>` : ''}
+      ${off.length ? `<p class="note" style="margin-top:12px">Not turned on yet: ${esc(off.join(', '))}. An admin adds the free keys under Admin settings.</p>` : ''}
     </div>
     <div class="panel">
       <div class="row"><div class="seg" role="group" aria-label="Show">${[['new', `Inbox${counts ? ` (${counts})` : ''}`], ['tracked', 'Tracking'], ['all', 'Everything'], ['dismissed', 'Dismissed']].map(([k, l]) => `<button data-x="monView" data-v="${k}" aria-pressed="${MON.view === k}">${esc(l)}</button>`).join('')}</div>
@@ -107,8 +107,8 @@ function watchDrawer(w) {
     <label class="wide">Search terms, separated by commas<input id="mw_query" name="query" value="${esc(w ? w.query : '')}" placeholder="rural broadband, digital equity" required></label>
     <label class="wide">What matters to you (Headcount ranks results by this)<textarea id="mw_pri" name="priorities" rows="3" placeholder="Grants and permitting rules for rural electric co-ops building broadband">${esc(w ? w.priorities : '')}</textarea></label>
     <fieldset class="wide mwf" data-for="bill" ${kind === 'bill' ? '' : 'hidden'}><legend class="note">Where</legend>
-      <label class="check"><input type="checkbox" id="mw_us" ${states.includes('US') ? 'checked' : ''}> U.S. Congress${src.federal ? '' : ' (not set up on this server)'}</label>
-      <label class="check"><input type="checkbox" id="mw_all" ${states.includes('ALL') ? 'checked' : ''}> Every state legislature${src.states ? '' : ' (not set up on this server)'}</label>
+      <label class="check"><input type="checkbox" id="mw_us" ${states.includes('US') ? 'checked' : ''}> U.S. Congress${src.federal ? '' : ' (not turned on yet)'}</label>
+      <label class="check"><input type="checkbox" id="mw_all" ${states.includes('ALL') ? 'checked' : ''}> Every state legislature${src.states ? '' : ' (not turned on yet)'}</label>
       <label>Or these states<input id="mw_states" value="${esc(states.filter((s) => st[s]).join(', '))}" placeholder="FL, GA, TX" list="mw_stlist"></label>
       <datalist id="mw_stlist">${Object.entries(st).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</datalist>
     </fieldset>
@@ -363,8 +363,8 @@ function rowsFromCsv(text) {
 }
 function importDrawer() {
   showDrawer(`<div class="row"><h2>Import contacts</h2><button class="btn sm" data-act="close">Close</button></div>
-  <p class="note">Choose a CSV file, or paste rows from a spreadsheet. The first row can name the columns (name, title, organization, email, phone, tags, notes); otherwise columns are read in that order. Contacts whose email is already here are updated, not duplicated.</p>
-  <form id="imForm" class="form"><label class="wide">CSV file<input type="file" id="im_file" accept=".csv,text/csv,text/plain"></label>
+  <p class="note">Choose a spreadsheet saved as a CSV file, or copy rows from Excel or Google Sheets and paste them below. The first row can name the columns (name, title, organization, email, phone, tags, notes); otherwise columns are read in that order. Contacts whose email is already here are updated, not duplicated.</p>
+  <form id="imForm" class="form"><label class="wide">Spreadsheet file (CSV)<input type="file" id="im_file" accept=".csv,text/csv,text/plain"></label>
   <label class="wide">Or paste<textarea id="im_text" rows="8" placeholder="name,title,organization,email,tags&#10;Dana Lee,Policy Advisor,NTIA,dana@ntia.gov,agency"></textarea></label>
   <div class="wide"><button class="btn primary">Import</button></div><p class="note wide" id="imMsg" role="status"></p></form>`);
 }

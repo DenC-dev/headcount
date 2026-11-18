@@ -707,7 +707,7 @@ class Store {
     const o = this.q.org.get(oid); if (!o.domain) throw new HttpError(400, 'Add a domain first.');
     let txt = [];
     try { txt = (await resolveTxt(o.domain)).map((parts) => parts.join('')); } catch (_) { txt = []; }
-    if (!txt.includes(`headcount-verification=${o.domain_token}`)) throw new HttpError(409, `The TXT record was not found on ${o.domain} yet. DNS changes can take an hour to appear.`);
+    if (!txt.includes(`headcount-verification=${o.domain_token}`)) throw new HttpError(409, `We could not find the record on ${o.domain} yet. It can take up to an hour to show up, so try Verify again later.`);
     const taken = this.q.orgByDomain.get(o.domain);
     if (taken && taken.id !== oid) throw new HttpError(409, 'Another workspace already verified this domain.');
     this.q.setDomain.run(o.domain, o.domain_token, 1, o.domain_join, oid); this.log(oid, uid, 'domain.verified', o.domain);
@@ -768,7 +768,7 @@ class Store {
   setSso(oid, uid, { provider, required }) {
     this.needOrg(oid, uid, 'admin'); this.feature(oid, 'sso', 'Single sign-on');
     const o = this.q.org.get(oid), p = provider === undefined ? o.sso_provider : String(provider || '').trim();
-    if (p && !/^(saml|oidc)\.[A-Za-z0-9._-]{1,60}$/.test(p)) throw new HttpError(400, 'Enter the provider ID from Identity Platform, such as saml.yourfirm or oidc.yourfirm.');
+    if (p && !/^(saml|oidc)\.[A-Za-z0-9._-]{1,60}$/.test(p)) throw new HttpError(400, 'Enter the sign-on ID that Headcount support gave you, such as saml.yourfirm.');
     if (p && !o.domain_verified) throw new HttpError(400, 'Verify your email domain first, so people can find your sign-in page by their work address.');
     const other = p ? this.q.orgBySso.get(p) : null;
     if (other && other.id !== oid) throw new HttpError(409, 'Another workspace already uses that provider.');

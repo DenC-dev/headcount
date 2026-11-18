@@ -53,14 +53,14 @@ async function getJson(url, headers) {
   try { res = await fetch(url, { headers: { Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(15000) }); }
   catch (_) { throw new HttpError(502, 'The bill database could not be reached. Try again shortly.'); }
   if (res.status === 404) return null;
-  if (res.status === 401 || res.status === 403) throw new HttpError(502, 'The bill database rejected this server\'s API key.');
-  if (res.status === 429) throw new HttpError(429, 'The bill database is rate limiting this server. Try again in a minute.');
+  if (res.status === 401 || res.status === 403) throw new HttpError(502, 'The bill service did not accept the key. An admin can check it under Admin settings.');
+  if (res.status === 429) throw new HttpError(429, 'The bill service is busy right now. Try again in a minute.');
   if (!res.ok) throw new HttpError(502, `The bill database returned an error (${res.status}).`);
   return res.json();
 }
 
 async function federal(cfg, number, congress) {
-  if (!cfg.congressKey) throw new HttpError(501, 'Federal bill lookup is not set up on this server (CONGRESS_API_KEY).');
+  if (!cfg.congressKey) throw new HttpError(501, 'Looking up bills in Congress is not turned on yet. An admin adds a free Congress.gov key under Admin settings.');
   const p = parseFederal(number);
   if (!p) throw new HttpError(400, 'Enter a federal bill number such as H.R. 1234, S. 56 or H.Res. 7.');
   const c = Number(congress) || currentCongress();
@@ -95,7 +95,7 @@ async function federal(cfg, number, congress) {
 }
 
 async function state(cfg, st, number, session) {
-  if (!cfg.openStatesKey) throw new HttpError(501, 'State bill lookup is not set up on this server (OPENSTATES_API_KEY).');
+  if (!cfg.openStatesKey) throw new HttpError(501, 'Looking up state bills is not turned on yet. An admin adds a free Open States key under Admin settings.');
   const code = String(st || '').toUpperCase();
   if (!STATES[code]) throw new HttpError(400, 'Choose a state.');
   const ident = parseState(number);
