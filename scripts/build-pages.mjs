@@ -28,7 +28,8 @@ fs.writeFileSync(path.join(OUT, 'status.json'), JSON.stringify(latest || { ranAt
 fs.writeFileSync(path.join(OUT, 'history.json'), JSON.stringify(history));
 
 const vars = { trialDays: process.env.TRIAL_DAYS || '14', repo: REPO_URL, year: String(new Date().getFullYear()), hemicycle: read('site/_hemicycle.svg'), header: read('pages/_header.html'), footer: read('pages/_footer.html'), logo: read('site/_logo.svg'), icons: read('site/_icons.svg') };
-const fill = (html) => html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => vars[k]).replace(/\{\{logo\}\}/g, vars.logo).replace(/\{\{icons\}\}/g, vars.icons).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+vars.guide = read('site/_guide.html').replace(/\{\{img\}\}/g, 'img').replace(/\{\{app\}\}/g, '{{signin}}').replace(/\{\{supportLine\}\}/g, 'the person who runs your Headcount');
+const fill = (html) => html.replace(/\{\{(header|footer|hemicycle|guide)\}\}/g, (_, k) => vars[k]).replace(/\{\{logo\}\}/g, vars.logo).replace(/\{\{icons\}\}/g, vars.icons).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
 for (const f of fs.readdirSync(path.join(ROOT, 'pages'))) {
   if (f.startsWith('_')) continue;
   const src = path.join(ROOT, 'pages', f);
@@ -44,11 +45,11 @@ for (const f of fs.readdirSync(path.join(ROOT, 'site', 'img'))) fs.copyFileSync(
 const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
 fs.mkdirSync(path.join(OUT, 'app'), { recursive: true });
 for (const f of ['app.js', 'cloud.js', 'intel.js', 'admin.js', 'select.js', 'select.css', 'styles.css', 'rosters.json', 'icon.svg', 'icon-192.png']) fs.copyFileSync(path.join(ROOT, 'public', f), path.join(OUT, 'app', f));
-fs.writeFileSync(path.join(OUT, 'app', 'app.js'), fs.readFileSync(path.join(OUT, 'app', 'app.js'), 'utf8').replace("fetch('/rosters.json')", "fetch('rosters.json')"));
+fs.writeFileSync(path.join(OUT, 'app', 'app.js'), fs.readFileSync(path.join(OUT, 'app', 'app.js'), 'utf8').replace("fetch('/rosters.json')", "fetch('rosters.json')").replace("const GUIDE = '/guide';", "const GUIDE = '../guide.html';"));
 let appHtml = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8')
   .replace(/<link rel="manifest"[^>]*>\n?/, '').replace(/(href|src)="\/([\w.-]+\.(?:css|js|svg|png))"/g, '$1="$2"')
   .replace('<a class="brand" href="/">', '<a class="brand" href="../">')
-  .replace(/href="\/(privacy|terms|security)"/g, (m, pg) => (APP_URL ? `href="${APP_URL}/${pg}"` : 'href="../"')).replace(/href="\/"/g, 'href="../"')
+  .replace(/href="\/(privacy|terms|security)"/g, (m, pg) => (APP_URL ? `href="${APP_URL}/${pg}"` : 'href="../"')).replace(/href="\/"/g, 'href="../"').replace(/href="\/guide"/g, 'href="../guide.html"')
   .replace('<div class="wrap">', `<div class="wrap"><div class="demo-note"><b>Free version.</b> Everything you do stays in this browser, with no account. <a href="${APP_URL ? `${APP_URL}/app` : '../'}">Create an account or sign in</a> to save your work, share it with your team and get alerts.</div>`);
 fs.writeFileSync(path.join(OUT, 'app', 'index.html'), appHtml.replace('</head>', '<style>.demo-note{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:14px}</style>\n</head>'));
 vars.signin = APP_URL ? `${APP_URL}/app` : `${REPO_URL}#readme`;

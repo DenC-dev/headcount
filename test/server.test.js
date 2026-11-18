@@ -497,7 +497,9 @@ test('the website and the app have their own addresses', async () => {
   assert.match(h, /Know the count/); assert.match(h, /<svg/); assert.doesNotMatch(h, /\{\{\w+\}\}/);
   const pricing = await (await fetch(base + '/pricing')).text();
   assert.match(pricing, /<td>3<\/td>/); assert.match(pricing, /Sign in through your firm&#39;s own login page|Sign in through your firm's own login page/); assert.doesNotMatch(pricing, /SAML|OIDC/); assert.doesNotMatch(pricing, /\{\{\w+\}\}/);
-  for (const pth of ['/security', '/privacy', '/terms', '/site/site.css', '/site/site.js', '/app', '/app/', '/invite/abcdefgh12']) assert.equal((await fetch(base + pth)).status, 200, pth);
+  const guide = await (await fetch(base + '/guide')).text();
+  assert.match(guide, /Getting started with Headcount/); assert.doesNotMatch(guide, /\{\{\w+\}\}/, 'every placeholder filled'); assert.match(guide, /src="\/site\/img\/guide-chamber\.png"/);
+  for (const pth of ['/security', '/privacy', '/terms', '/site/img/guide-start.png', '/site/site.css', '/site/site.js', '/app', '/app/', '/invite/abcdefgh12']) assert.equal((await fetch(base + pth)).status, 200, pth);
   assert.match(await (await fetch(base + '/app')).text(), /<script src="\/app\.js\?v=[0-9a-f]{10}" defer>/, 'asset links carry a content version');
   for (const pth of ['/site/_header.html', '/site/_hemicycle.svg']) assert.equal((await fetch(base + pth)).status, 403, pth);
   assert.match(await (await fetch(base + '/security')).text(), /mailto:sales@headcount\.test/);

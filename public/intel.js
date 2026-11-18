@@ -75,7 +75,7 @@ function drawMonitor() {
   if (!teamMember()) { el.innerHTML = '<div class="panel empty">The Monitor is for workspace members. Sign in and join a workspace to use it.</div>'; return; }
   if (MON.org && MON.org !== ORG.id) { MON.watches = null; MON.items = null; MON.watch = ''; }
   if (MON.watches === null) { el.innerHTML = '<div class="panel empty">Loading the Monitor</div>'; loadMonitor(); return; }
-  const src = MON.sources || {}, off = [!src.federal && 'Congress (CONGRESS_API_KEY)', !src.states && 'state legislatures (OPENSTATES_API_KEY)', !src.contracts && 'SAM.gov contracts (SAM_API_KEY)'].filter(Boolean);
+  const src = MON.sources || {}, off = [!src.federal && 'Congress', !src.states && 'state legislatures', !src.contracts && 'federal contract notices'].filter(Boolean);
   const watches = MON.watches.map((w) => `<li class="witem${MON.watch === w.id ? ' on' : ''}">
       <div class="itop"><button class="linkbtn wname" data-x="pickWatch" data-id="${esc(w.id)}">${esc(w.name)}</button>${w.fresh ? `<span class="status wait">${w.fresh} new</span>` : ''}${w.paused ? '<span class="status">Paused</span>' : ''}</div>
       <div class="meta">${esc(KIND_LABEL[w.kind])} · ${esc(watchScope(w))}${w.client ? ` · ${esc(w.client)}` : ''}</div>

@@ -21,11 +21,11 @@ const SOURCES = [
   ['ldaKey', 'lda', 'Lobbying disclosures, LDA.gov (optional)', 'Who else is lobbying on a bill. Works without a key, just more slowly.', 'https://lda.gov/api/register/', 'Get a free key'],
 ];
 
-async function serverSettings() {
+async function serverSettings(open) {
   $('#moreMenu').open = false;
   showDrawer('<div class="row"><h2>Admin settings</h2><button class="btn sm" data-act="close">Close</button></div><p class="note">Loading</p>');
   try { SET.data = await CLOUD.api('GET', '/api/settings'); } catch (e) { showDrawer(`<div class="row"><h2>Admin settings</h2><button class="btn sm" data-act="close">Close</button></div><p class="bad">${esc(e.message)}</p>`); return; }
-  drawSettings();
+  drawSettings(open);
 }
 function field(k, label, opts = {}) {
   const f = SET.data.fields[k] || {}, locked = f.env;
@@ -160,7 +160,7 @@ async function saveSection(form) {
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-x]'); if (!t) return;
   const x = t.dataset.x;
-  if (x === 'serverSettings') return serverSettings();
+  if (x === 'serverSettings') return serverSettings(t.dataset.open);
   if (x === 'svTest') {
     const out = document.getElementById(`svt_${t.dataset.src}`); out.textContent = 'Checking…'; t.disabled = true;
     try { const r = await CLOUD.api('POST', '/api/settings/test-source', { source: t.dataset.src }); out.innerHTML = `<span class="${r.ok ? 'good' : 'bad'}">${r.ok ? 'Working' : 'Not working'}:</span> ${esc(r.detail)}`; }

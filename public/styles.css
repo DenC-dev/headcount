@@ -241,3 +241,15 @@ details.adv[open] > summary { margin-bottom: 8px; }
 .taxpick label.check { align-items: flex-start; gap: 10px; }
 .taxpick label.check > input { margin-top: 3px; flex: none; }
 .taxpick label.check b { display: block; font-weight: 600; }
+
+/* phones: the page tabs are one row you can swipe, not two cramped rows */
+@media (max-width: 640px) {
+  .pagetabs { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; mask-image: linear-gradient(90deg, #000 85%, transparent); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); }
+  .pagetabs::-webkit-scrollbar { display: none; }
+  .pagetabs button { flex: none; }
+}
+/* an empty campaign asks which chamber to count */
+.pickchamber { display: flex; flex-direction: column; gap: 8px; padding: 18px 0 8px; }
+.pickchamber b { font-size: 17px; }
+.pickchamber .btnrow select { min-width: min(320px, 100%); }
+a.btn#helpBtn { color: inherit; }

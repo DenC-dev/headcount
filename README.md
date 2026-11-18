@@ -5,6 +5,8 @@
 
 Open source under the Apache License 2.0. Project website and data source status: https://denc-dev.github.io/headcount/
 
+**New to Headcount?** The [step-by-step guide](https://denc-dev.github.io/headcount/guide.html) walks through everything, from your first sign-in to your first count, with screenshots. It is also in the app, under Help, at `/guide`.
+
 **Try it free in your browser**, no account and nothing to install: https://denc-dev.github.io/headcount/app/ (your work stays in that browser).
 
 **Run your own, with sign-in and team workspaces, without the command line:**

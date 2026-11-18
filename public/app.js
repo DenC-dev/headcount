@@ -177,6 +177,30 @@ function contact(m) {
   const r = (m.ref && DIR[m.ref]) || m.c || {};
   return { phone: m.phone || r.ph || '', email: m.email || r.em || '', office: r.of || '', dphone: r.dph || '', doffice: r.dof || '', url: r.url || '', form: r.cf || '' };
 }
+// An empty campaign asks which chamber to count, and loads it in one step.
+function chamberPicker() {
+  if (!canEditNow()) return '<p class="note" style="margin:24px 0">No members yet.</p>';
+  const cfg = CLOUD.config || {}, states = cfg.rosters && signedIn() ? cfg.states || {} : {};
+  const presets = ROSTERS ? Object.entries(ROSTERS).filter(([k]) => !/^os-/.test(k)).map(([k, p]) => `<option value="p:${esc(k)}">${esc(p.label)}</option>`).join('') : '';
+  const live = Object.entries(states).flatMap(([k, v]) => (k === 'NE' ? [[`s:${k}:legislature`, `${v} Legislature`]] : [[`s:${k}:upper`, `${v} Senate`], [`s:${k}:lower`, `${v} House or Assembly`]])).map(([val, label]) => `<option value="${val}">${esc(label)}</option>`).join('');
+  return `<div class="pickchamber"><b>Which chamber are you counting?</b>
+    <p class="note">Choose it to load every current member, with their office and phone number.</p>
+    <div class="btnrow"><select id="q_chamber" aria-label="Chamber"><option value="">Choose a chamber</option>${presets}${live}</select><button class="btn primary" data-act="quickChamber">Load the members</button></div>
+    <p class="note" id="q_msg" role="status">${live ? '' : 'Other states appear here once an admin turns on legislator data. '}Not listed? <button class="linkbtn" data-act="setup">Paste your own list</button>.</p></div>`;
+}
+async function quickChamber(btn) {
+  const v = $('#q_chamber').value, msg = $('#q_msg');
+  if (!v) { msg.textContent = 'Choose a chamber first.'; return; }
+  const [kind, a, b] = v.split(':');
+  if (kind === 'p') { loadPreset(a, -1, ''); return commit(`${ROSTERS[a].label} loaded`); }
+  btn.disabled = true; msg.textContent = 'Getting the current members';
+  try {
+    const r = await CLOUD.api('GET', `/api/rosters/state?state=${encodeURIComponent(a)}&chamber=${encodeURIComponent(b)}`);
+    if (!ROSTERS) ROSTERS = {};
+    ROSTERS[r.key] = r; r.members.forEach((m) => { DIR[m.k] = m; });
+    loadPreset(r.key, -1, ''); commit(`${r.label} loaded: ${r.members.length} members`);
+  } catch (e) { msg.textContent = e.message; btn.disabled = false; }
+}
 function loadPreset(key, cmteIdx, backed) {
   const p = ROSTERS[key], cm = p.committees[cmteIdx], on = new Set(cm ? cm.m : []), titles = (cm && cm.t) || {};
   const start = (party) => (!backed ? 2 : party === backed ? 3 : party === 'I' ? 2 : 1);
@@ -505,7 +529,7 @@ async function onSignedIn() {
   if (!S.cloud) {
     const last = lsGet(LAST);
     if (last && ACCOUNT.list.some((e) => e.id === last)) return cloudOpen(last);
-    if (S.example && ACCOUNT.list.length) page = 'portfolio';
+    if (S.example && ORG && ORG.role !== 'guest') page = 'portfolio'; // their own work, not the invented example
   }
   render();
 }
@@ -550,7 +574,7 @@ function seatLayout(n) {
   return { seats: seats.sort((p, q) => q.a - p.a), size };
 }
 function renderHemi(nd) {
-  if (!S.members.length) { $('#hemi').innerHTML = `<p class="note" style="margin:24px 0">${SYNC.loading ? 'Loading the campaign.' : 'No members yet. Open Setup to load a preset chamber, or add members one at a time.'}</p>`; $('#tally').innerHTML = ''; $('#path').textContent = ''; return; }
+  if (!S.members.length) { $('#hemi').innerHTML = SYNC.loading ? '<p class="note" style="margin:24px 0">Loading the campaign.</p>' : chamberPicker(); $('#tally').innerHTML = ''; $('#path').textContent = ''; return; }
   const order = S.members.slice().sort((a, b) => b.pos - a.pos || (PARTY_ORDER[a.party] ?? 1) - (PARTY_ORDER[b.party] ?? 1));
   const { seats, size } = seatLayout(order.length);
   const inView = (m) => view === 'floor' || m.cmte;
@@ -580,8 +604,8 @@ function movesList(days) {
 function renderOdds(nd, base) {
   const defeat = dirOf(S) < 0;
   $('#oddsLabel').textContent = defeat ? 'Odds of defeating it today' : 'Odds of passage today';
-  $('#odds').innerHTML = S.members.length ? `${pct(goal(S, base.both))}<small>%</small>` : '<small>No roster yet</small>';
-  $('#stages').innerHTML = defeat
+  $('#odds').innerHTML = S.members.length ? `${pct(goal(S, base.both))}<small>%</small>` : '<small>No members yet</small>';
+  $('#stages').innerHTML = !S.members.length ? '<p class="note">The odds appear once the chamber is loaded and you mark where members stand.</p>' : defeat
     ? `<div class="stage"><b>${nd.c ? pct(1 - base.cm) + '%' : 'n/a'}</b><span>Stopped in committee (${nd.c - nd.needC + 1} of ${nd.c} to block)</span></div><div class="stage"><b>${pct(1 - base.fl)}%</b><span>Fails on the floor (${nd.n - nd.needF + 1} of ${nd.n} to block)</span></div>`
     : `<div class="stage"><b>${nd.c ? pct(base.cm) + '%' : 'n/a'}</b><span>Clears committee (${nd.needC} of ${nd.c})</span></div><div class="stage"><b>${pct(base.fl)}%</b><span>Wins the floor (${nd.needF} of ${nd.n})</span></div>`;
   const now = goal(S, base.both);
@@ -977,7 +1001,7 @@ function rqHtml(m) {
       ${signed ? `<label class="wide check"><input type="checkbox" id="rq_video" ${RQ.video ? 'checked' : ''}> Add a ${prov ? CLOUD.videoName(prov) : 'video meeting'} link</label>` : ''}
       <label class="wide">Note in the invitation <span class="note">optional</span><textarea id="rq_note">${esc(RQ.note)}</textarea></label>
       ${signNote}
-      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqInvite" data-mp="${x}">Send invitation from ${CLOUD.calName(x)}</button>`).join('') : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqIcs">Download invitation (.ics)</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
+      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqInvite" data-mp="${x}">Send invitation from ${CLOUD.calName(x)}</button>`).join('') : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqIcs">Download a calendar invitation</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
   }
   return `<form id="rqForm" class="form">${tabs}${common}${body}<p class="wide note" id="rqMsg" role="status">${esc(RQ.msg)}</p></form>`;
 }
@@ -1156,6 +1180,8 @@ function parseRoster(text) {
 let OPERATOR = false, ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null, TFA_NEEDED = null;
 const WS = { members: null, invites: null, audit: null, auditMore: true, report: null, lastInvite: null, loading: false, filter: { client: '', q: '', archived: false } };
 const LASTORG = 'headcount.lastOrg';
+const cfg2 = () => CLOUD.config || {};
+const GUIDE = '/guide'; // the step-by-step guide; the free in-browser version points at the website's copy
 const isAdmin = () => ORG && (ORG.role === 'owner' || ORG.role === 'admin');
 const clientOf = (st = S) => (st.cloud && st.campaign.clientId ? (CLIENTS.find((k) => k.id === st.campaign.clientId) || {}).name || '' : st.campaign.client || '');
 const firmOf = (st = S) => (st.cloud && ORG ? ORG.name : '');
@@ -1209,18 +1235,25 @@ function summaryOf(st) {
 // A short checklist for a new workspace, until it is done or hidden.
 function gettingStarted() {
   if (!ORG || ORG.role === 'guest' || !ORG.setup || lsGet('headcount.gs.' + ORG.id)) return '';
-  const st = ORG.setup, steps = [
-    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Load the chamber and mark where each member stands.', '<button class="btn sm" data-act="newCamp">New campaign</button>'],
+  const st = ORG.setup, cfg = CLOUD.config || {}, how = (id) => ` <a class="note" href="${GUIDE}#${id}" target="_blank" rel="noopener">How?</a>`;
+  // For whoever runs Headcount: the two things everyone else depends on
+  const admin = OPERATOR ? [
+    [Boolean(cfg.email), 'Connect email', 'So people can reset passwords and get invitations, alerts and digests.', '<button class="btn sm" data-x="serverSettings" data-open="email">Connect email</button>', 'admin-email'],
+    [Boolean(cfg.bills && cfg.bills.federal && cfg.bills.states), 'Turn on bill and legislator data', 'Two free keys let Headcount look up bills and load any state legislature.', '<button class="btn sm" data-x="serverSettings" data-open="sources">Add the free keys</button>', 'admin-data'],
+  ] : [];
+  const steps = [...admin,
+    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Start a campaign, load the chamber and mark where each member stands.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
     [st.clients > 0, 'Add the clients you represent', 'Every campaign, report and watch can be filed under a client.', '<button class="btn sm" data-page="workspace">Add a client</button>'],
-    [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Counts, meetings and briefs update for everyone within seconds.', '<button class="btn sm" data-page="workspace">Invite</button>'],
-    [st.watches > 0, 'Watch for new bills and rules', 'The Monitor checks Congress, the states, the Federal Register and SAM.gov for you.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>'],
-    [st.contacts > 0, 'Bring in your contacts', 'Agency staff, coalition partners and client contacts, with a shared history.', '<button class="btn sm" data-page="contacts">Add contacts</button>'],
+    [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Counts, meetings and briefs update for everyone within seconds.', '<button class="btn sm" data-page="workspace">Invite</button>', 'invite'],
+    [st.watches > 0, 'Watch for new bills and rules', 'The Monitor checks Congress, the states, new federal rules and contract notices for you.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>', 'monitor'],
+    [st.contacts > 0, 'Bring in your contacts', 'Agency staff, coalition partners and client contacts, with a shared history.', '<button class="btn sm" data-page="contacts">Add contacts</button>', 'contacts'],
   ];
   const done = steps.filter((x) => x[0]).length;
   if (done === steps.length) return '';
   return `<div class="panel getting"><div class="row"><span class="label">Getting started · ${done} of ${steps.length}</span><button class="btn sm" data-act="hideGetting">Hide</button></div>
     <div class="gbar" aria-hidden="true"><i style="width:${Math.round((done / steps.length) * 100)}%"></i></div>
-    <ol class="gsteps">${steps.map(([ok, t, d, btn]) => `<li class="${ok ? 'done' : ''}"><span class="gcheck" aria-hidden="true"></span><div><b>${t}</b><span class="note">${d}</span></div>${ok ? '<span class="status ok">Done</span>' : btn}</li>`).join('')}</ol></div>`;
+    <ol class="gsteps">${steps.map(([ok, t, d, btn, id]) => `<li class="${ok ? 'done' : ''}"><span class="gcheck" aria-hidden="true"></span><div><b>${t}</b><span class="note">${d}${ok ? '' : how(id)}</span></div>${ok ? '<span class="status ok">Done</span>' : btn}</li>`).join('')}</ol>
+    <p class="note">New to Headcount? The <a href="${GUIDE}" target="_blank" rel="noopener">step-by-step guide</a> walks through everything.</p></div>`;
 }
 
 // ---------- portfolio ----------
@@ -1297,7 +1330,7 @@ function planPanel() {
   const p = ORG.plan, u = ORG.usage, b = (CLOUD.config && CLOUD.config.billing) || null, admin = isAdmin();
   const daysLeft = p.trialEnds ? Math.max(0, Math.ceil((p.trialEnds - Date.now()) / 864e5)) : 0;
   const status = p.key === 'trial' ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left` : p.status === 'past_due' ? 'Payment overdue' : p.key === 'unlimited' ? 'No limits' : p.key === 'free' ? 'Free' : 'Active';
-  const rows = [['People using seats', limitText(u.seats, p.seats)], ['Guests', limitText(u.guests, p.guests)], ['Active campaigns', limitText(u.campaigns, p.campaigns)], ['Briefs drafted this month', limitText(u.drafts, p.drafts)]];
+  const rows = [[cfg2().billing ? 'People (paid seats)' : 'People', limitText(u.seats, p.seats)], ['Guests', limitText(u.guests, p.guests)], ['Active campaigns', limitText(u.campaigns, p.campaigns)], ['Briefs drafted this month', limitText(u.drafts, p.drafts)]];
   let actions = '';
   if (b && admin) {
     const sub = ORG.billing.subscription && ['active', 'trialing', 'past_due'].includes(p.status);
@@ -1318,7 +1351,7 @@ function peoplePanel() {
     ${ms ? `<ul class="people">${ms.map((m) => `<li><span><b>${esc(m.name || m.email)}</b>${m.you ? ' (you)' : ''}<br><span class="note">${esc(m.email)}</span></span>
       <span class="btnrow">${canManage(m) ? `${roleSel(m)}<button class="btn sm warn" data-act="orgRemove" data-uid="${esc(m.id)}">Remove</button>` : `<span class="status">${ROLE_LABEL[m.role]}</span>`}</span></li>`).join('')}</ul>` : '<p class="note">Loading</p>'}
     ${admin ? `<form id="oiForm" class="form" style="margin-top:12px">
-      <label>Email <span class="note">optional</span><input id="oi_email" name="email" type="email" placeholder="colleague@yourfirm.com"></label>
+      <label>Their email (optional)<input id="oi_email" name="email" type="email" placeholder="colleague@yourfirm.com"></label>
       <label>Role<select id="oi_role" name="role"><option value="member">Member</option><option value="admin">Admin</option><option value="guest">Guest</option></select></label>
       <div class="wide btnrow"><button class="btn primary">Create invitation</button>${CLOUD.config.email || CLOUD.provider() ? `<label class="check note"><input type="checkbox" id="oi_send" checked> ${CLOUD.config.email ? 'Email the invitation' : `Email it from my ${CLOUD.mailName(CLOUD.provider())}`} when an address is given</label>` : ''}</div>
       </form>
@@ -1382,7 +1415,7 @@ function reportPanel() {
     <form id="rpForm" class="filters" style="margin-top:10px">
       <select id="rp_q" name="q" aria-label="Quarter">${qs.map((q, i) => `<option value="${i}" ${r && r.from === q.from ? 'selected' : ''}>${q.label}</option>`).join('')}</select>
       <select id="rp_client" name="client" aria-label="Client"><option value="">All clients</option>${CLIENTS.map((k) => `<option value="${esc(k.id)}" ${r && r.client === k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</select>
-      <button class="btn primary">Run report</button>${r ? '<button type="button" class="btn" data-act="rpCsv">Download CSV</button>' : ''}
+      <button class="btn primary">Run report</button>${r ? '<button type="button" class="btn" data-act="rpCsv">Download as a spreadsheet</button>' : ''}
     </form>
     ${r ? `<p class="note">${r.rows.length} contact${r.rows.length === 1 ? '' : 's'} logged from ${esc(fmtDay(r.from))} to ${esc(fmtDay(r.to))}.</p>
       ${r.summary.length ? `<div class="tablewrap" style="max-height:none"><table><thead><tr><th>Client</th><th>Contacts</th><th>Issues</th><th>Chambers</th><th>Lobbyists</th></tr></thead><tbody>${r.summary.map((g) => `<tr><td><b>${esc(g.client)}</b></td><td class="num">${g.contacts}</td><td>${esc(g.issues.join('; '))}</td><td>${esc(g.chambers.join('; '))}</td><td>${esc(g.lobbyists.join(', '))}</td></tr>`).join('')}</tbody></table></div>` : ''}
@@ -1392,7 +1425,7 @@ function reportPanel() {
 function auditPanel() {
   if (!isAdmin()) return '';
   if (!ORG.plan.features.audit) return upsell('Activity log', 'Team', 'Who added, changed, invited or removed what, and when, for the whole workspace.');
-  return `<div class="panel"><div class="row"><span class="label">Activity log</span>${WS.audit && WS.audit.length ? '<button class="btn sm" data-act="auditCsv">Download CSV</button>' : ''}</div>
+  return `<div class="panel"><div class="row"><span class="label">Activity log</span>${WS.audit && WS.audit.length ? '<button class="btn sm" data-act="auditCsv">Download as a spreadsheet</button>' : ''}</div>
     ${WS.audit ? `<ul class="hist">${WS.audit.map((a) => `<li><time>${esc(new Date(a.at).toLocaleString())}</time> · ${esc(a.actor || 'Billing')} ${esc(a.action === 'invite.created' && !a.target ? 'created an invitation link' : ACTIONS[a.action] || a.action)}${a.target ? ` <b>${esc(a.target)}</b>` : ''}${a.detail && a.detail.role ? ` as ${esc(ROLE_LABEL[a.detail.role] || a.detail.role)}` : ''}${a.detail && a.detail.to ? ` to ${esc(ROLE_LABEL[a.detail.to] || a.detail.to)}` : ''}${a.detail && a.detail.seats ? ` (${a.detail.seats} seats)` : ''}</li>`).join('') || '<li class="note">Nothing yet.</li>'}</ul>${WS.auditMore ? '<button class="btn sm" data-act="auditMore">Show older</button>' : ''}` : '<p class="note">Loading</p>'}</div>`;
 }
 function dataPanel() {
@@ -1493,6 +1526,7 @@ function render() {
   if ((page === 'monitor' || page === 'contacts') && !team && signedIn() && ORG) page = 'portfolio';
   renderSwitcher();
   $('.camp').hidden = !campaignPage;
+  $('#setupBtn').hidden = !campaignPage;
   ['pgPortfolio', 'pgWorkspace'].forEach((id) => { $('#' + id).hidden = !signedIn(); });
   ['pgMonitor', 'pgContacts'].forEach((id) => { $('#' + id).hidden = !team; });
   PAGES.forEach((k) => { $('#pg' + k[0].toUpperCase() + k.slice(1)).setAttribute('aria-pressed', page === k); });
@@ -1500,7 +1534,7 @@ function render() {
     const nd = needs(S);
     $('#hBill').textContent = c.bill || (SYNC.loading ? 'Loading' : 'Untitled campaign');
     const camp = S.cloud && ACCOUNT.list.find((e) => e.id === S.id);
-    $('#hSub').textContent = `${camp && camp.visibility === 'team' ? 'Closed · ' : ''}${dirOf(S) < 0 ? 'Working to defeat' : 'Working to pass'}${clientOf() ? ` for ${clientOf()}` : ''} · ${c.chamber || 'Chamber not set'} · ${nd.n} members, ${nd.needF} to pass`;
+    $('#hSub').textContent = `${S.example ? 'Example with invented members · ' : ''}${camp && camp.visibility === 'team' ? 'Closed · ' : ''}${dirOf(S) < 0 ? 'Working to defeat' : 'Working to pass'}${clientOf() ? ` for ${clientOf()}` : ''} · ${c.chamber || 'Chamber not set'} · ${nd.n} members, ${nd.needF} to pass`;
     $('#hDates').textContent = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]} ${inDays(x[1])} (${fmtDay(x[1])})`).concat((() => { const n = S.tasks.filter((t) => !t.done && t.due && dayDiff(t.due) < 0).length; return n ? [`${n} follow-up${n > 1 ? 's' : ''} overdue`] : []; })()).join(' · ');
   } else {
     $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : page === 'monitor' ? 'Monitor' : page === 'contacts' ? 'Contacts' : ORG ? `${ORG.name} settings` : 'Workspace';
@@ -1519,7 +1553,7 @@ function render() {
   else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's own login page to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
-  else if (signedIn() && OPERATOR && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add free keys so Headcount can look up bills and legislators.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
+  else if (signedIn() && OPERATOR && !(page === 'portfolio' && ORG && ORG.setup && !lsGet('headcount.gs.' + ORG.id)) && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add free keys so Headcount can look up bills and legislators.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
   else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
   else if (ORG && isAdmin() && page === 'portfolio' && (ORG.plan.key === 'trial' || ORG.plan.key === 'free' || ORG.plan.status === 'past_due') && cfg.billing) {
     const d = ORG.plan.trialEnds ? Math.max(0, Math.ceil((ORG.plan.trialEnds - Date.now()) / 864e5)) : 0;
@@ -1637,7 +1671,7 @@ async function loadTeam() {
 }
 function setupDrawer() {
   const c = S.campaign, ro = !canEditNow();
-  showDrawer(`<div class="row"><h2>Setup</h2><button class="btn sm" data-act="close">Close</button></div>
+  showDrawer(`<div class="row"><h2>Edit campaign</h2><button class="btn sm" data-act="close">Close</button></div>
   <details class="sect" open><summary>Campaign</summary>
   <form id="sForm" class="form">
     <label class="wide">Bill or vote<input id="s_bill" name="bill" value="${esc(c.bill)}"></label>
@@ -1907,6 +1941,7 @@ document.addEventListener('click', async (e) => {
       return;
     }
     case 'setup': return setupDrawer();
+    case 'quickChamber': return quickChamber(t);
     case 'reports': return reportsDrawer();
     case 'staffDir': return staffDirDrawer();
     case 'newCamp': return newCampDrawer();
@@ -2020,7 +2055,7 @@ document.addEventListener('click', async (e) => {
     case 'briefPrint': return window.print();
     case 'preset': {
       const key = $('#s_preset').value, ci = $('#s_cmte') ? +$('#s_cmte').value : -1, backed = $('#s_backed').value;
-      if (!sure(`Replace the current roster with ${ROSTERS[key].label}`)) return;
+      if (S.members.length && !S.example && !sure(`Replace the current roster with ${ROSTERS[key].label}`)) return;
       loadPreset(key, ci, backed); closeDrawer(); return commit(`${ROSTERS[key].label} loaded`);
     }
     case 'bulk': {
@@ -2133,8 +2168,8 @@ document.addEventListener('submit', async (e) => {
       if (S.preset) st.preset = plain(S.preset);
       st.members = plain(S.members).filter((x) => !x.draft).map((x) => Object.assign(x, { pos: 2, cmte: false, role: '', history: [] }));
     }
-    closeDrawer(); page = 'count'; await addCampaign(st); toast('Campaign created');
-    if (!st.members.length) setupDrawer();
+    closeDrawer(); page = 'count'; await addCampaign(st); toast('Campaign created. Now choose the chamber.');
+    if (!st.members.length) { const q = $('#q_chamber'); if (q) q.focus(); }
     return;
   }
   if (id === 'sForm') {

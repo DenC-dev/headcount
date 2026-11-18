@@ -84,7 +84,7 @@ const SECURITY = {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.webmanifest': 'application/manifest+json' };
 const SITE = path.resolve(here, '..', 'site');
-const SITE_PAGES = { '/': 'index.html', '/pricing': 'pricing.html', '/security': 'security.html', '/terms': 'terms.html', '/privacy': 'privacy.html' };
+const SITE_PAGES = { '/': 'index.html', '/pricing': 'pricing.html', '/security': 'security.html', '/terms': 'terms.html', '/privacy': 'privacy.html', '/guide': 'guide.html' };
 const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // Links to local stylesheets and scripts carry a content version (?v=…), so a
@@ -112,8 +112,8 @@ function sitePage(res, name, vars) {
   const read = (f) => fs.readFileSync(path.join(SITE, f), 'utf8');
   let html;
   try { html = read(name); } catch (_) { return send(res, 404, { error: 'Not found' }); }
-  const parts = { header: read('_header.html'), footer: read('_footer.html'), hemicycle: read('_hemicycle.svg') };
-  html = html.replace(/\{\{(header|footer|hemicycle)\}\}/g, (_, k) => parts[k]).replace(/\{\{logo\}\}/g, read('_logo.svg')).replace(/\{\{icons\}\}/g, read('_icons.svg')).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+  const parts = { header: read('_header.html'), footer: read('_footer.html'), hemicycle: read('_hemicycle.svg'), guide: read('_guide.html') };
+  html = html.replace(/\{\{(header|footer|hemicycle|guide)\}\}/g, (_, k) => parts[k]).replace(/\{\{logo\}\}/g, read('_logo.svg')).replace(/\{\{icons\}\}/g, read('_icons.svg')).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
   res.writeHead(200, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', 'Content-Security-Policy': csp() });
   res.end(versionAssets(html));
 }
@@ -140,6 +140,7 @@ function siteVars() {
   ];
   return {
     year: String(new Date().getFullYear()),
+    img: '/site/img', app: '/app', supportLine: config.supportEmail ? `<a href="mailto:${escHtml(config.supportEmail)}">${escHtml(config.supportEmail)}</a>` : 'the person who runs your Headcount',
     trialDays: String(config.trialDays),
     priceTeam: escHtml(config.priceLabelTeam || 'Per person, billed monthly'),
     priceFirm: escHtml(config.priceLabelFirm || 'Per person, with your firm\'s own login'),

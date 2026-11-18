@@ -308,7 +308,7 @@ try {
   await alice.page.goto(stripeState.success);
   await alice.page.waitForFunction(() => ORG && ORG.plan.key === 'firm' && page === 'workspace', null, { timeout: 15000 });
   assert.match(await alice.page.locator('#workspacePage').innerText(), /Firm · Active/);
-  assert.match(await alice.page.locator('#workspacePage').innerText(), /People using seats\s*2 of 5/);
+  assert.match(await alice.page.locator('#workspacePage').innerText(), /People \(paid seats\)\s*2 of 5/);
   assert.equal(new URL(alice.page.url()).search, '');
   log('ok  Stripe checkout and webhook moved the workspace to Firm with 5 seats');
 
@@ -371,7 +371,8 @@ try {
   await alice.page.click('#drawer summary:has-text("Load any state legislature")');
   await alice.page.selectOption('#os_state', 'FL'); await alice.page.selectOption('#os_chamber', 'upper'); await alice.page.click('[data-x=osRoster]');
   await alice.page.waitForFunction(() => document.querySelector('#s_preset') && document.querySelector('#s_preset').value === 'os-fl-upper');
-  await alice.page.click('[data-act=preset]'); await alice.page.click('[data-act=preset]');
+  await alice.page.click('[data-act=preset]');
+  if (await alice.page.locator('[data-act=preset]').isVisible()) await alice.page.click('[data-act=preset]'); // asks again only when it would replace members
   await alice.page.waitForFunction(() => S.members.length === 2 && S.campaign.juris && S.campaign.juris.state === 'FL');
   await settle(alice.page);
   assert.equal(await alice.page.evaluate(() => contact(S.members[0]).email), 'simon.corey@flsenate.gov');
