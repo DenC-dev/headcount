@@ -17,6 +17,7 @@ import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
 import { makeAccounts } from './accounts.js';
+import { makeCalendar } from './calendar.js';
 import { makeSettings } from './settings.js';
 import * as sources from './sources.js';
 
@@ -178,6 +179,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     return dns.resolveTxt(d);
   };
   const accounts = makeAccounts(config, store, { seal: settings.seal, open: settings.open });
+  const calendar = makeCalendar(config, store, { key: settings.calendarKey });
   const authenticate = makeAuthenticator(config, accounts);
   const localAccounts = () => config.authMode === 'local' || config.authMode === 'dev';
   // Claude and Stripe can be turned on later in server settings, so these are looked up when used.
@@ -251,6 +253,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   const routes = [
     ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id), recoveryLeft: accounts.recoveryLeft(x.user.id) }; }],
     ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
+    ['GET', '/api/me/calendar', (m, x) => ({ url: calendar.link(x.user.id) })],
+    ['POST', '/api/me/calendar', (m, x) => { limit('calnew:' + x.user.id, 5); return { url: calendar.renew(x.user.id) }; }],
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
     ['PATCH', `/api/workspaces/${W}/security`, async (m, x) => store.setSecurity(m[1], x.user.id, await x.body())],
     // Server settings, for the operator
@@ -365,6 +369,14 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   async function route(req, res, url) {
     const p = url.pathname, m = req.method; let pm;
     if (p === '/api/config' && m === 'GET') return send(res, 200, publicConfig());
+    // Calendar feeds: calendar apps cannot sign in, so the link carries a signed token.
+    if (m === 'GET' && (pm = /^\/api\/calendar\/([A-Za-z0-9_.-]{20,500})\.ics$/.exec(p))) {
+      limit('ics:' + clientIp(req), 60);
+      const uid = calendar.userFor(pm[1]);
+      if (!uid) return send(res, 404, { error: 'This calendar link was replaced. Copy the new one from Headcount, under Account.' });
+      res.writeHead(200, { ...SECURITY, 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=300', 'Content-Disposition': 'inline; filename="headcount.ics"' });
+      return res.end(calendar.ics(uid));
+    }
     // Built-in accounts
     if (p.startsWith('/api/auth/') && localAccounts()) {
       const ua = String(req.headers['user-agent'] || ''), ip = clientIp(req);

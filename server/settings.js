@@ -101,5 +101,6 @@ export function makeSettings(cfg, store, { keyFile = null, onChange = () => {} }
     return view();
   }
   apply();
-  return { view, save, apply, read, seal, open };
+  const calendarKey = () => crypto.createHash('sha256').update(getKey()).update('calendar-feed').digest();
+  return { view, save, apply, read, seal, open, calendarKey };
 }

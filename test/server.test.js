@@ -791,3 +791,39 @@ test('a workspace can require two-step sign-in: Team plan, the admin first, memb
     assert.ok(JSON.stringify(audit.body).includes('two-step sign-in required'));
   } finally { mods.config.trustProxy = false; }
 });
+
+test('calendar feed: votes, sent meeting invitations and my follow-ups, on a private link that can be replaced', async () => {
+  const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10), compact = (d) => d.replace(/-/g, '');
+  ok(await api('alice', 'POST', `/api/campaigns/${C1}/records`, { ops: [
+    { kind: 'summary', data: { odds: 0.6, side: 'pass', cmteDate: day(2), floorDate: day(9), trend: [], meetings: [] } },
+    { kind: 'meetings', id: 'mt1', data: { id: 'mt1', status: 'invited', start: day(1) + 'T15:00:00.000Z', mins: 45, title: 'Meeting with Sen. Vega, re: SB 214', where: 'Capitol; Room 214' } },
+    { kind: 'meetings', id: 'mt2', data: { id: 'mt2', status: 'requested', proposed: [], title: 'Not yet scheduled' } },
+    { kind: 'tasks', id: 'tc1', data: { id: 'tc1', text: 'Send the one-pager, with the fiscal note and the coalition letter attached for the committee staff', due: day(3), done: false } },
+    { kind: 'tasks', id: 'tc2', data: { id: 'tc2', text: 'Somebody else follows up', due: day(3), done: false, assignee: 'dev:bob' } },
+  ] }));
+  const { url } = ok(await api('alice', 'GET', '/api/me/calendar'));
+  const path1 = new URL(url).pathname;
+  assert.match(path1, /^\/api\/calendar\/[A-Za-z0-9_-]+\.\d+\.[A-Za-z0-9_-]{32}\.ics$/);
+  const r = await fetch(base + path1);
+  assert.equal(r.status, 200); assert.match(r.headers.get('content-type'), /^text\/calendar/);
+  const body = await r.text();
+  assert.ok(body.startsWith('BEGIN:VCALENDAR\r\n') && body.endsWith('END:VCALENDAR\r\n'));
+  assert.ok(body.split('\r\n').every((l) => Buffer.byteLength(l) <= 75), 'long lines are folded');
+  const flat = body.replace(/\r\n /g, '');
+  assert.ok(flat.includes(`DTSTART;VALUE=DATE:${compact(day(2))}\r\nDTEND;VALUE=DATE:${compact(day(3))}`));
+  assert.ok(flat.includes('SUMMARY:Committee vote: SB 214')); assert.ok(flat.includes('SUMMARY:Floor vote: SB 214'));
+  assert.ok(flat.includes(`DTSTART:${compact(day(1))}T150000Z\r\nDTEND:${compact(day(1))}T154500Z`));
+  assert.ok(flat.includes(String.raw`LOCATION:Capitol\; Room 214`));
+  assert.ok(flat.includes('SUMMARY:Follow-up: Send the one-pager\\, with the fiscal note and the coalition letter attached for the committee staff'));
+  assert.equal(flat.includes('Somebody else'), false, 'only my follow-ups and unassigned ones');
+  assert.equal(flat.includes('Not yet scheduled'), false, 'only meetings with an invitation sent');
+  // Bob sees his own feed: his follow-up, not alice's unassigned... both see unassigned
+  const bob = await (await fetch(base + new URL(ok(await api('bob', 'GET', '/api/me/calendar')).url).pathname)).text();
+  assert.ok(bob.replace(/\r\n /g, '').includes('Somebody else follows up'));
+  // A forged link fails, and a new link ends the old one
+  assert.equal((await fetch(base + path1.replace(/.{6}\.ics$/, 'AAAAAA.ics'))).status, 404);
+  const { url: url2 } = ok(await api('alice', 'POST', '/api/me/calendar'));
+  assert.notEqual(url2, url);
+  assert.equal((await fetch(base + path1)).status, 404);
+  assert.equal((await fetch(base + new URL(url2).pathname)).status, 200);
+});

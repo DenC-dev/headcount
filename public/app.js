@@ -1729,6 +1729,19 @@ function signInDrawer(mode) {
     <p class="note">Signing in saves your campaigns to your firm's workspace so you can use them on any device and share them with colleagues. Headcount asks for access to your calendar and email only when you first send a meeting request, and uses it only to send what you ask it to. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
   </div>`);
 }
+// ---------- calendar feed ----------
+async function loadCalendar(renew) {
+  const box = $('#calBody'); if (!box) return;
+  try {
+    const r = await CLOUD.api(renew ? 'POST' : 'GET', '/api/me/calendar');
+    box.innerHTML = `<label class="note" style="display:flex;flex-direction:column;gap:4px">Your private link<input id="calUrl" readonly value="${esc(r.url)}"></label>
+      <div class="btnrow"><button class="btn sm primary" data-act="calCopy">Copy link</button><a class="btn sm" href="${esc(r.url.replace(/^https?:/, 'webcal:'))}">Open in my calendar app</a><button class="btn sm" data-act="calRenew">Make a new link</button></div>
+      <p class="note">Outlook: Add calendar, then Subscribe from web. Google Calendar: Other calendars, then From URL. Anyone with the link can see these events, so keep it to yourself; making a new link stops the old one.</p>`;
+    if (renew) toast('New calendar link. The old one no longer works.');
+  } catch (err) { box.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+}
+document.addEventListener('toggle', (e) => { if (e.target.id === 'calSect' && e.target.open) loadCalendar(); }, true);
+
 // ---------- two-step sign-in ----------
 function twoFactorSect() {
   if (TWOFA.on) return `<details class="sect" id="tfSect"><summary>Two-step sign-in <span class="status ok">On</span></summary>
@@ -1795,6 +1808,9 @@ function accountDrawer(scrollToEmail) {
     <label class="check"><input type="checkbox" id="pf_assigned" ${pr.notifyAssigned ? 'checked' : ''}> Email me when someone assigns me a follow-up</label>
     <label class="check"><input type="checkbox" id="pf_added" ${pr.notifyAdded ? 'checked' : ''}> Email me when someone adds me to a campaign</label>
   </details>` : ''}
+  <details class="sect" id="calSect"><summary>Calendar feed</summary>
+    <p class="note">See committee and floor votes, the meetings you sent invitations for, and your follow-ups in Outlook, Google Calendar or Apple Calendar. They refresh on their own, about every hour.</p>
+    <div id="calBody"><p class="note">Loading</p></div></details>
   ${OPERATOR ? '<div class="btnrow"><button class="btn" data-x="serverSettings">Server settings</button></div>' : ''}
   <div class="btnrow"><button class="btn" data-act="signout">Sign out</button>${CLOUD.local() ? '<button class="btn" data-act="signoutAll">Sign out on every device</button>' : ''}</div>
   <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every workspace. A workspace you alone own passes to its longest-standing admin or member, or is deleted if nobody else is in it. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
@@ -1898,6 +1914,8 @@ document.addEventListener('click', async (e) => {
     case 'locMode': return localSignInDrawer(t.dataset.m);
     case 'hideGetting': lsSet('headcount.gs.' + ORG.id, 1); return renderPortfolio();
     case 'tfStart': case 'tfCopy': case 'tfDownload': case 'tfDone': return twoFactorAct(a);
+    case 'calCopy': try { await navigator.clipboard.writeText($('#calUrl').value); toast('Calendar link copied'); } catch (_) { $('#calUrl').select(); toast('Select the link and copy it'); } return;
+    case 'calRenew': return loadCalendar(true);
     case 'tfaSetup': accountDrawer(); $('#tfSect').open = true; return TWOFA.on ? null : twoFactorAct('tfStart');
     case 'signoutAll': await flushNow(); await CLOUD.signOutEverywhere(); return toast('Signed out on every device');
     case 'resendVerify': try { const r = await CLOUD.api('POST', '/api/auth/verify-email'); toast(r.sent ? 'Confirmation email sent' : 'This server cannot send email yet'); } catch (err) { fail(err); } return;
