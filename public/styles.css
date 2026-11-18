@@ -230,3 +230,9 @@ code.key { font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; le
 ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 12px; }
 ol.codes { list-style: none; margin: 0; padding: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; background: var(--soft); border-radius: 8px; }
 ol.codes code { font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* admin settings: step lists, callouts, more options */
+.callout { background: var(--soft); border-left: 3px solid var(--yes); border-radius: 6px; padding: 10px 12px; font-size: 14px; line-height: 1.5; }
+ol.howto { margin: 4px 0; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; }
+ol.howto code, .callout code { font: 600 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+details.adv > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details.adv[open] > summary { margin-bottom: 8px; }

@@ -5,7 +5,7 @@ import { HttpError } from './db.js';
 // API directly: Checkout to subscribe, the customer portal to manage cards,
 // invoices and cancellation, and webhooks to keep the plan in step.
 
-function form(obj, prefix, out = new URLSearchParams()) {
+export function form(obj, prefix, out = new URLSearchParams()) {
   for (const [k, v] of Object.entries(obj)) {
     if (v === undefined || v === null) continue;
     const key = prefix ? `${prefix}[${k}]` : k;
@@ -31,7 +31,13 @@ async function stripe(cfg, method, path, params) {
   return json;
 }
 
-const planForPrice = (cfg, price) => (price && price === cfg.stripePriceFirm ? 'firm' : 'team');
+// Prices made by Headcount's Stripe setup say which plan they are for, so a
+// subscriber stays on the right plan after the operator changes prices.
+export const planForPrice = (cfg, price) => {
+  const tag = price && price.metadata && price.metadata.headcount_plan;
+  if (tag === 'firm' || tag === 'team') return tag;
+  return price && price.id && price.id === cfg.stripePriceFirm ? 'firm' : 'team';
+};
 
 export function makeBilling(cfg, store) {
 
@@ -64,7 +70,7 @@ export function makeBilling(cfg, store) {
   async function portal(oid, user) {
     const org = store.billingOrg(oid, user.id);
     if (!org.stripe_customer) throw new HttpError(400, 'This workspace has no billing account yet. Choose a plan first.');
-    const s = await stripe(cfg, 'POST', '/v1/billing_portal/sessions', { customer: org.stripe_customer, return_url: `${cfg.publicUrl}/app?billing=back` });
+    const s = await stripe(cfg, 'POST', '/v1/billing_portal/sessions', { customer: org.stripe_customer, return_url: `${cfg.publicUrl}/app?billing=back`, configuration: cfg.stripePortalConfig || undefined });
     return { url: s.url };
   }
 
@@ -86,7 +92,7 @@ export function makeBilling(cfg, store) {
     if (sub.status === 'canceled' || sub.status === 'incomplete_expired') return store.endSubscription(org);
     const item = sub.items && sub.items.data && sub.items.data[0];
     store.applySubscription(org, {
-      plan: planForPrice(cfg, item && item.price && item.price.id), status: sub.status, seats: (item && item.quantity) || 1,
+      plan: planForPrice(cfg, item && item.price), status: sub.status, seats: (item && item.quantity) || 1,
       periodEnd: ((sub.current_period_end || (item && item.current_period_end)) || 0) * 1000 || null,
       customer: sub.customer, subscription: sub.id, item: item && item.id,
     });

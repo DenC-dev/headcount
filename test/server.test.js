@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Stand-ins for Google's signing keys, Congress.gov, Open States, Stripe and the Claude API.
-const mocks = { claude: [], claudeReply: null, stripe: [], sub: null, fedStatus: 'Referred to the Subcommittee on Communications.', scored: [], geo: [] };
+const mocks = { claude: [], claudeReply: null, stripe: [], so: { products: [], prices: [], hooks: [], portals: [], n: 0 }, sub: null, fedStatus: 'Referred to the Subcommittee on Communications.', scored: [], geo: [] };
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
 const fixtures = {
@@ -31,6 +31,29 @@ const mock = http.createServer((req, res) => {
       if (u.pathname === '/v1/checkout/sessions') return j(200, { id: 'cs_1', url: 'https://checkout.stripe.com/c/pay/cs_1' });
       if (u.pathname === '/v1/billing_portal/sessions') return j(200, { url: 'https://billing.stripe.com/p/session/1' });
       if (u.pathname === '/v1/subscriptions/sub_1') return j(200, mocks.sub);
+      // What Headcount's one-step Stripe setup uses
+      const S = mocks.so, f = new URLSearchParams(body), get = req.method === 'GET';
+      if (u.pathname === '/v1/account') return /bad/.test(req.headers.authorization || '') ? j(401, { error: { message: 'Invalid API Key provided' } }) : j(200, { id: 'acct_1', settings: { dashboard: { display_name: 'Capitol Strategies' } }, charges_enabled: false, details_submitted: false });
+      if (u.pathname === '/v1/products') {
+        if (get) return j(200, { data: S.products });
+        const p = { id: 'prod_' + (S.products.length + 1), name: f.get('name'), metadata: { headcount_plan: f.get('metadata[headcount_plan]') } }; S.products.push(p); return j(200, p);
+      }
+      if (u.pathname === '/v1/prices') {
+        if (get) return j(200, { data: S.prices.filter((p) => p.product === u.searchParams.get('product')) });
+        const p = { id: 'price_' + (S.prices.length + 1), product: f.get('product'), unit_amount: Number(f.get('unit_amount')), currency: f.get('currency'), recurring: { interval: f.get('recurring[interval]'), usage_type: 'licensed' }, metadata: { headcount_plan: f.get('metadata[headcount_plan]') } };
+        S.prices.push(p); return j(200, p);
+      }
+      if (u.pathname === '/v1/webhook_endpoints') {
+        if (get) return j(200, { data: S.hooks.map(({ secret, ...h }) => h) });
+        S.n++; const h = { id: 'we_' + S.n, url: f.get('url'), events: [...f.entries()].filter(([k]) => k.startsWith('enabled_events')).map(([, v]) => v), secret: 'whsec_made_' + S.n };
+        S.hooks.push(h); return j(200, h);
+      }
+      if (u.pathname.startsWith('/v1/webhook_endpoints/') && req.method === 'DELETE') { S.hooks = S.hooks.filter((h) => h.id !== u.pathname.split('/').pop()); return j(200, { deleted: true }); }
+      if (u.pathname === '/v1/billing_portal/configurations') {
+        if (get) return j(200, { data: S.portals });
+        const c = { id: 'bpc_' + (S.portals.length + 1), active: true, metadata: { headcount: f.get('metadata[headcount]') }, cancelMode: f.get('features[subscription_cancel][mode]'), returnUrl: f.get('default_return_url') };
+        S.portals.push(c); return j(200, c);
+      }
       return j(404, { error: { message: 'no' } });
     }
     if (u.pathname.startsWith('/v3/') && req.headers['x-api-key'] !== 'cg-key') return j(403, {});
@@ -826,4 +849,42 @@ test('calendar feed: votes, sent meeting invitations and my follow-ups, on a pri
   assert.notEqual(url2, url);
   assert.equal((await fetch(base + path1)).status, 404);
   assert.equal((await fetch(base + new URL(url2).pathname)).status, 200);
+});
+
+// ---------- payments setup ----------
+test('connecting Stripe from one key: plans, prices, webhook and billing page made once; prices change safely', async () => {
+  const { setupStripe, HOOK_EVENTS, readDollars } = await import('../server/stripe-setup.js');
+  const { planForPrice } = await import('../server/billing.js');
+  const sbase = mods.config.stripeBase, publicUrl = 'https://hc.example.org', key = 'sk_test_' + 'k'.repeat(24);
+  await assert.rejects(setupStripe({ base: sbase, key: 'pk_test_' + 'a'.repeat(24), publicUrl, team: 45 }), /does not look like a Stripe secret key/);
+  await assert.rejects(setupStripe({ base: sbase, key, publicUrl: 'http://localhost:3000', team: 45 }), /public web address/);
+  await assert.rejects(setupStripe({ base: sbase, key: 'sk_test_bad' + 'a'.repeat(20), publicUrl, team: 45 }), /did not accept that key/);
+  assert.throws(() => readDollars('', 'the Team plan'), /Enter a price/); assert.throws(() => readDollars('0.5', 'Team'), /between 1 and 10,000/);
+  assert.equal(readDollars('$1,200', 'Team'), 1200); assert.equal(readDollars('', 'Firm', true), null);
+  const S = mocks.so;
+  const r = await setupStripe({ base: sbase, key, publicUrl, team: 45, firm: 75 });
+  assert.equal(r.account, 'Capitol Strategies'); assert.equal(r.live, false); assert.equal(r.chargesEnabled, false);
+  assert.deepEqual(S.products.map((p) => [p.name, p.metadata.headcount_plan]), [['Headcount Team', 'team'], ['Headcount Firm', 'firm']]);
+  assert.deepEqual(S.prices.map((p) => [p.unit_amount, p.currency, p.recurring.interval, p.metadata.headcount_plan]), [[4500, 'usd', 'month', 'team'], [7500, 'usd', 'month', 'firm']]);
+  assert.equal(S.hooks.length, 1); assert.equal(S.hooks[0].url, 'https://hc.example.org/api/stripe/webhook'); assert.deepEqual(S.hooks[0].events, HOOK_EVENTS);
+  assert.equal(S.portals.length, 1); assert.equal(S.portals[0].cancelMode, 'at_period_end'); assert.equal(S.portals[0].returnUrl, 'https://hc.example.org/app');
+  assert.deepEqual(r.settings, { stripeKey: key, stripeWebhookSecret: S.hooks[0].secret, stripeWebhookId: S.hooks[0].id, stripePortalConfig: 'bpc_1', stripePriceTeam: 'price_1', stripePriceFirm: 'price_2',
+    priceLabelTeam: '$45 per person a month', priceLabelFirm: '$75 per person a month', stripeAccount: 'Capitol Strategies (test mode)' });
+  // Again, with a new Team price: nothing is duplicated, the webhook is replaced
+  const r2 = await setupStripe({ base: sbase, key, publicUrl, team: 55, firm: 75 });
+  assert.equal(S.products.length, 2); assert.equal(S.prices.length, 3); assert.equal(S.portals.length, 1); assert.equal(S.hooks.length, 1);
+  assert.equal(r2.settings.stripePriceTeam, 'price_3'); assert.equal(r2.settings.stripePriceFirm, 'price_2'); assert.notEqual(r2.settings.stripeWebhookSecret, r.settings.stripeWebhookSecret);
+  assert.equal((await setupStripe({ base: sbase, key, publicUrl, team: 55 })).settings.stripePriceFirm, '', 'the Firm plan is optional');
+  // Subscribers stay on their plan after prices change, because prices carry the plan
+  assert.equal(planForPrice({ stripePriceFirm: 'price_new' }, { id: 'price_2', metadata: { headcount_plan: 'firm' } }), 'firm');
+  assert.equal(planForPrice({ stripePriceFirm: 'price_f' }, { id: 'price_f' }), 'firm');
+  assert.equal(planForPrice({ stripePriceFirm: 'price_f' }, { id: 'price_x' }), 'team');
+  // On this test server Stripe comes from the host's settings, so the app cannot change it
+  mods.config.trustProxy = true;
+  try {
+    const H = { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.79' };
+    const op = (await (await fetch(base + '/api/auth/login', { method: 'POST', headers: H, body: JSON.stringify({ email: 'olivia@firm.test', password: 'the final password' }) })).json()).token;
+    const res = await fetch(base + '/api/settings/stripe', { method: 'POST', headers: { ...H, Authorization: 'Bearer ' + op }, body: JSON.stringify({ key, team: 45 }) });
+    assert.equal(res.status, 409);
+  } finally { mods.config.trustProxy = false; }
 });

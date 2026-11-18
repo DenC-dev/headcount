@@ -8,6 +8,7 @@ import { config } from './config.js';
 import { promises as dns } from 'node:dns';
 import { openDb, HttpError, clean } from './db.js';
 import { makeBilling } from './billing.js';
+import { setupStripe, removeStripeHook, readDollars } from './stripe-setup.js';
 import { forJson, PLANS } from './plans.js';
 import { makeMailer, htmlEmail } from './mail.js';
 import { makeNotifier } from './notify.js';
@@ -261,6 +262,25 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['GET', '/api/settings', (m, x) => { needOperator(x.user); return { ...settings.view(), status: { email: mail.enabled, ai: aiOn(), billing: Boolean(config.billing), auth: config.authMode, webhook: config.publicUrl ? `${config.publicUrl}/api/stripe/webhook` : '', backups: backupDir ? fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort().slice(-1)[0] || null : null : null } }; }],
     ['GET', '/api/settings/customers', (m, x) => { needOperator(x.user); return store.customers(); }],
     ['PUT', '/api/settings', async (m, x) => { needOperator(x.user); const r = settings.save(await x.body()); return r; }],
+    // Payments: one Stripe key, and Headcount sets up the rest in Stripe.
+    ['POST', '/api/settings/stripe', async (m, x) => {
+      needOperator(x.user); limit('stripe:' + x.user.id, 6);
+      if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this server, so they cannot be changed here.');
+      const b = await x.body();
+      const r = await setupStripe({ base: config.stripeBase, key: String(b.key || '').trim() || settings.read('stripeKey'), publicUrl: config.publicUrl,
+        team: readDollars(b.team, 'the Team plan'), firm: readDollars(b.firm, 'the Firm plan', true) });
+      const old = settings.read('stripeWebhookId');
+      settings.save(r.settings);
+      if (old && old !== r.settings.stripeWebhookId) removeStripeHook({ base: config.stripeBase, key: r.settings.stripeKey, id: old });
+      return { ...settings.view(), stripe: { account: r.account, live: r.live, chargesEnabled: r.chargesEnabled, detailsSubmitted: r.detailsSubmitted } };
+    }],
+    ['DELETE', '/api/settings/stripe', async (m, x) => {
+      needOperator(x.user);
+      if (settings.view().fields.stripeKey.env) throw new HttpError(409, 'Payments are set up by whoever hosts this server, so they cannot be changed here.');
+      await removeStripeHook({ base: config.stripeBase, key: settings.read('stripeKey'), id: settings.read('stripeWebhookId') });
+      settings.save(Object.fromEntries(['stripeKey', 'stripeWebhookSecret', 'stripeWebhookId', 'stripePortalConfig', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'stripeAccount'].map((k) => [k, ''])));
+      return settings.view();
+    }],
     ['POST', '/api/settings/test-email', async (m, x) => {
       needOperator(x.user); limit('testmail:' + x.user.id, 4);
       const to = String((await x.body()).to || x.user.email || '').trim();

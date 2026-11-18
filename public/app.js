@@ -1519,7 +1519,7 @@ function render() {
   else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's identity provider to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
-  else if (signedIn() && OPERATOR && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add data source keys to look up bills and monitor legislatures.'}</span><button class="btn sm primary" data-x="serverSettings">Server settings</button>`;
+  else if (signedIn() && OPERATOR && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add free keys so Headcount can look up bills and legislators.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
   else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
   else if (ORG && isAdmin() && page === 'portfolio' && (ORG.plan.key === 'trial' || ORG.plan.key === 'free' || ORG.plan.status === 'past_due') && cfg.billing) {
     const d = ORG.plan.trialEnds ? Math.max(0, Math.ceil((ORG.plan.trialEnds - Date.now()) / 864e5)) : 0;
@@ -1811,7 +1811,7 @@ function accountDrawer(scrollToEmail) {
   <details class="sect" id="calSect"><summary>Calendar feed</summary>
     <p class="note">See committee and floor votes, the meetings you sent invitations for, and your follow-ups in Outlook, Google Calendar or Apple Calendar. They refresh on their own, about every hour.</p>
     <div id="calBody"><p class="note">Loading</p></div></details>
-  ${OPERATOR ? '<div class="btnrow"><button class="btn" data-x="serverSettings">Server settings</button></div>' : ''}
+  ${OPERATOR ? '<div class="btnrow"><button class="btn" data-x="serverSettings">Admin settings</button></div>' : ''}
   <div class="btnrow"><button class="btn" data-act="signout">Sign out</button>${CLOUD.local() ? '<button class="btn" data-act="signoutAll">Sign out on every device</button>' : ''}</div>
   <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every workspace. A workspace you alone own passes to its longest-standing admin or member, or is deleted if nobody else is in it. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
   if (scrollToEmail && $('#emailSect')) $('#emailSect').scrollIntoView({ block: 'start' });
