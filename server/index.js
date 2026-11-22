@@ -117,6 +117,8 @@ function sitePage(res, name, vars) {
   try { html = read(name); } catch (_) { return send(res, 404, { error: 'Not found' }); }
   const parts = { header: read('_header.html'), footer: read('_footer.html'), hemicycle: read('_hemicycle.svg'), guide: read('_guide.html') };
   html = html.replace(/\{\{(header|footer|hemicycle|guide)\}\}/g, (_, k) => parts[k]).replace(/\{\{logo\}\}/g, read('_logo.svg')).replace(/\{\{icons\}\}/g, read('_icons.svg')).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+  // Google Search Console's ownership check, for the Google sign-in app review
+  if (config.googleSiteVerification && /^[\w-]{10,100}$/.test(config.googleSiteVerification)) html = html.replace('</head>', `<meta name="google-site-verification" content="${config.googleSiteVerification}">\n</head>`);
   res.writeHead(200, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', 'Content-Security-Policy': csp() });
   res.end(versionAssets(html));
 }

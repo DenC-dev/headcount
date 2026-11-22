@@ -48,7 +48,8 @@ export const config = {
   priceLabelFirm: env.PRICE_LABEL_FIRM || '',
   salesEmail: env.SALES_EMAIL || '',
   googleCertsUrl: env.GOOGLE_CERTS_URL || 'https://www.googleapis.com/oauth2/v3/certs',
-  googleClientId: (env.GOOGLE_CLIENT_ID || '').trim(), // Sign in with Google, and Gmail, Calendar and Meet from the browser
+  googleClientId: (env.GOOGLE_CLIENT_ID || '').trim(),
+  googleSiteVerification: (env.GOOGLE_SITE_VERIFICATION || '').trim(), // Sign in with Google, and Gmail, Calendar and Meet from the browser
   leadsEmail: env.LEADS_EMAIL || '', // where contact form messages go; never shown on the website
   trialDays: Number(env.TRIAL_DAYS) || 14,
   trialSeats: Number(env.TRIAL_SEATS) || 10,

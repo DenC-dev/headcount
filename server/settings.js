@@ -22,6 +22,7 @@ const F = {
   stripeWebhookId: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripePortalConfig: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripeAccount: { env: ['STRIPE_SECRET_KEY'], max: 200 }, stripeTax: { env: ['STRIPE_SECRET_KEY', 'STRIPE_TAX_MODE'], values: ['managed', 'stripe_tax', 'none'] },
   salesEmail: { env: ['SALES_EMAIL'], max: 160 }, supportEmail: { env: ['SUPPORT_EMAIL'], max: 160 }, leadsEmail: { env: ['LEADS_EMAIL'], max: 160 },
   googleClientId: { env: ['GOOGLE_CLIENT_ID'], max: 200 },
+  googleSiteVerification: { env: ['GOOGLE_SITE_VERIFICATION'], max: 120 },
 };
 const fromEnv = (k) => F[k].env && F[k].env.some((e) => ENV0[e]);
 
@@ -51,7 +52,7 @@ export function makeSettings(cfg, store, { keyFile = null, onChange = () => {} }
   let setAnthropic = false;
   function apply() {
     const val = (k) => (fromEnv(k) ? null : read(k));
-    for (const k of ['congressKey', 'openStatesKey', 'samKey', 'ldaKey', 'stripeKey', 'stripeWebhookSecret', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'salesEmail', 'supportEmail', 'leadsEmail', 'googleClientId', 'stripePortalConfig', 'stripeAccount', 'stripeTax']) {
+    for (const k of ['congressKey', 'openStatesKey', 'samKey', 'ldaKey', 'stripeKey', 'stripeWebhookSecret', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'salesEmail', 'supportEmail', 'leadsEmail', 'googleClientId', 'googleSiteVerification', 'stripePortalConfig', 'stripeAccount', 'stripeTax']) {
       const v = val(k); if (v !== null) cfg[k] = v;
     }
     const url = val('publicUrl'); if (url !== null && url) cfg.publicUrl = url.replace(/\/+$/, '');
@@ -96,10 +97,12 @@ export function makeSettings(cfg, store, { keyFile = null, onChange = () => {} }
       if (v.length > (f.max || 200)) throw new HttpError(400, `That value for ${k} is too long.`);
       if (f.values && v && !f.values.includes(v)) throw new HttpError(400, `Choose one of: ${f.values.join(', ')}.`);
       if (f.url && v && !/^https?:\/\/[^\s/]+[^\s]*$/.test(v)) throw new HttpError(400, 'The web address should start with https://');
+      if (k === 'googleSiteVerification' && v && !/^[\w-]{10,100}$/.test(v.replace(/^.*content="([^"]+)".*$/, '$1'))) throw new HttpError(400, 'Paste the code from Google Search Console (the part inside content="…").');
       if (k === 'googleClientId' && v && !/^[\w-]+\.apps\.googleusercontent\.com$/.test(v)) throw new HttpError(400, 'That is not a Google client ID. It ends in .apps.googleusercontent.com.');
       if (k === 'smtpPort' && v && !/^\d{2,5}$/.test(v)) throw new HttpError(400, 'The email port is a number such as 465 or 587.');
       if (/Email$|^emailFrom$/.test(k) && v && !/@/.test(v)) throw new HttpError(400, `${k === 'emailFrom' ? 'The From address' : 'That'} needs an email address.`);
-      store.putSetting(`cfg.${k}`, v ? (f.secret ? seal(v) : v) : '');
+      const val = k === 'googleSiteVerification' ? v.replace(/^.*content="([^"]+)".*$/, '$1') : v;
+      store.putSetting(`cfg.${k}`, val ? (f.secret ? seal(val) : val) : '');
     }
     apply();
     return view();

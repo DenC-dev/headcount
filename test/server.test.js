@@ -549,6 +549,15 @@ test('Continue with Google: the token is checked against Google\'s keys and this
   } finally { certs.close(); }
 });
 
+test('Google site verification: the pasted Search Console tag is reduced to its code and served on the website', async () => {
+  const { makeSettings } = await import('../server/settings.js');
+  const s3 = mods.db.openDb(':memory:', { billing: false }), c3 = {};
+  makeSettings(c3, s3).save({ googleSiteVerification: '<meta name="google-site-verification" content="AbC-123_xyzVerificationCode" />' });
+  assert.equal(c3.googleSiteVerification, 'AbC-123_xyzVerificationCode');
+  assert.throws(() => makeSettings({}, s3).save({ googleSiteVerification: 'bad code!' }), /Search Console/);
+  assert.throws(() => makeSettings({}, s3).save({ googleClientId: 'not-a-client-id' }), /client ID/);
+});
+
 test('the demo request form stores the lead and emails sales', async () => {
   const post = (b) => fetch(base + '/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
   assert.equal((await post({ name: 'Pat', email: 'nope' })).status, 400);

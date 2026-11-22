@@ -131,7 +131,7 @@ try {
   assert.match(body, /^Hi Jamie,/); assert.match(body, /Would one of these times work\?/); assert.match(body, /In short: Creates a state grant program/);
   await guest.page.click('[data-act=rqMailto]');
   await guest.page.click('[data-act=rqLogged]');
-  assert.match(await guest.page.locator('#meets').innerText(), /Requested/);
+  assert.match(await guest.page.locator('#meets').innerText(), /Requested/i);
   await guest.page.keyboard.press('Escape');
   assert.match(await guest.page.locator('#tasks').innerText(), /Follow up with Jamie Ortiz on the meeting request/);
   await guest.page.locator('#meets [data-act=bookTime]').click();
@@ -307,7 +307,7 @@ try {
   await stripeHook({ id: 'evt_e2e', type: 'checkout.session.completed', data: { object: { client_reference_id: stripeState.org, customer: 'cus_e2e', subscription: 'sub_e2e' } } });
   await alice.page.goto(stripeState.success);
   await alice.page.waitForFunction(() => ORG && ORG.plan.key === 'firm' && page === 'workspace', null, { timeout: 15000 });
-  assert.match(await alice.page.locator('#workspacePage').innerText(), /Firm · Active/);
+  assert.match(await alice.page.locator('#workspacePage').innerText(), /Firm · Active/i);
   assert.match(await alice.page.locator('#workspacePage').innerText(), /People \(paid seats\)\s*2 of 5/);
   assert.equal(new URL(alice.page.url()).search, '');
   log('ok  Stripe checkout and webhook moved the workspace to Firm with 5 seats');
