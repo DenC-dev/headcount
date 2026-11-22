@@ -94,6 +94,9 @@
     return true;
   };
   C.signInGoogle = async (credential, extra = {}) => startSession(await authPost('/api/auth/google', { credential, ...extra }));
+  // What "Access blocked" from Google means, and the fix. Until the Google app
+  // is published, only its listed test users can connect Gmail and Calendar.
+  const GOOGLE_BLOCKED = 'If Google said "Access blocked", this Google account is not on the app\'s test users list yet. Whoever runs Headcount adds it in Google Cloud: Google Auth Platform, then Audience, then Test users (or chooses Publish app). Until then, use Open in Gmail or Open in Google Calendar, which need no permission.';
   function googleToken(hint) {
     return new Promise((resolve, reject) => {
       const g = window.google;
@@ -101,11 +104,11 @@
       const tc = g.accounts.oauth2.initTokenClient({
         client_id: C.googleClientId(), scope: GOOGLE_SCOPES.join(' '), hint: hint || undefined,
         callback: (r) => {
-          if (r.error) return reject(new CloudError('connect', r.error === 'access_denied' ? 'Google access was not allowed.' : 'Google did not grant access. Try again.'));
+          if (r.error) return reject(new CloudError('connect', r.error === 'access_denied' ? GOOGLE_BLOCKED : 'Google did not grant access. Try again.'));
           if (!g.accounts.oauth2.hasGrantedAllScopes(r, ...GOOGLE_SCOPES)) return reject(new CloudError('connect', 'Tick both boxes (send email, and see and edit calendar events) when Google asks, then try again.'));
           resolve({ access: r.access_token, mins: Math.max(5, Math.floor((Number(r.expires_in) || 3600) / 60) - 2) });
         },
-        error_callback: (e) => reject(new CloudError('connect', e && e.type === 'popup_closed' ? 'The Google window was closed before finishing.' : 'The Google window could not open. Allow pop-ups for this site and try again.')),
+        error_callback: (e) => reject(new CloudError('connect', e && e.type === 'popup_closed' ? `The Google window closed before finishing. ${GOOGLE_BLOCKED}` : 'The Google window could not open. Allow pop-ups for this site and try again.')),
       });
       tc.requestAccessToken({ prompt: '' });
     });
