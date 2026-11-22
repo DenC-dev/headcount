@@ -465,7 +465,7 @@ try {
   // ===== The website =====
   const visitor = await person('Visitor', 'google');
   await visitor.page.goto(`${BASE}/`);
-  assert.match(await visitor.page.locator('h1').innerText(), /Know the count/);
+  assert.match(await visitor.page.locator('h1').innerText(), /Count the votes on your bill/);
   await shot(visitor.page, 'site-home', true);
   await visitor.page.fill('form.lead [name=name]', 'Pat Lee'); await visitor.page.fill('form.lead [name=email]', 'pat@leepartners.example');
   await visitor.page.fill('form.lead [name=firm]', 'Lee Partners'); await visitor.page.click('form.lead button[type=submit]');

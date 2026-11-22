@@ -55,7 +55,7 @@ document.documentElement.classList.add('js');
       const [best, gain] = bestMove(); target = best;
       if (best >= 0) {
         const s = seats[best]; ring.setAttribute('cx', s.getAttribute('cx')); ring.setAttribute('cy', s.getAttribute('cy')); ring.classList.add('on');
-        if (nextEl) nextEl.innerHTML = `Persuade Sen. ${NAMES[best % NAMES.length]} <em>+${Math.max(1, Math.round(gain * 100))} pts</em>`;
+        if (nextEl) nextEl.innerHTML = `Sen. ${NAMES[best % NAMES.length]} <em>+${Math.max(1, Math.round(gain * 100))} pts</em>`;
       } else ring.classList.remove('on');
     }
     function tick() {

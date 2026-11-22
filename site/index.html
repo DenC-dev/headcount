@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Headcount: know the count, work the room</title>
-<meta name="description" content="Vote counts with live odds, meeting requests from your own inbox, bill briefs, monitoring of bills, rules and contracts, and grassroots letters, for lobbying firms, government affairs teams and advocates.">
+<title>Headcount: whip counts and meeting requests for lobbyists</title>
+<meta name="description" content="Headcount lists every member of the chamber with their office, phone and staff. Mark where each one stands, see the odds your bill passes and who is worth a meeting, and send the request from Gmail, Outlook or your own email app.">
 <meta name="theme-color" content="#0a0f20">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,39 +21,38 @@
 <section class="hero">
   <div class="wrap hero-grid">
     <div>
-      <p class="eyebrow">For lobbyists and advocates</p>
-      <h1>Know the count. <em>Work the room.</em></h1>
-      <p class="lede">Headcount shows where every member stands on your bill, the odds it passes, and exactly whose mind to change next. Then it books the meeting from your own inbox, writes the brief, and watches every capitol for what comes next.</p>
-      <div class="ctas"><a class="button" href="/app">Start your {{trialDays}}-day trial <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="#product">Take the tour</a></div>
-      <p class="fine">Free for one or two people. No card needed to start.</p>
+      <h1>Count the votes on your bill</h1>
+      <p class="lede">Headcount lists every member of the chamber with their office, phone and staff. You mark where each one stands. It estimates the odds the bill passes, shows who is worth a meeting, and drafts the request for you to send from Gmail, Outlook or your own email app.</p>
+      <div class="ctas"><a class="button" href="/app">{{trialCta}}</a><a class="button ghost" href="/guide">How it works</a></div>
+      <p class="fine">Free for one or two people. No card needed.</p>
     </div>
     <figure class="stage" aria-label="An example vote count: a 41-seat chamber colored by each member's position, with the odds of passage and the member to see next">
-      <div class="stage-top"><span class="live"><i></i>Live example</span><span>SB 214 · State Senate</span></div>
+      <div class="stage-top"><span>Example</span><span>SB 214, a 41-seat state senate</span></div>
       {{hemicycle}}
       <div class="meterwrap"><div class="meter" aria-hidden="true"><span class="m4"></span><span class="m3"></span><span class="m2"></span><span class="m1"></span><span class="m0"></span></div><span class="need" aria-hidden="true"><b>21 to pass</b></span></div>
       <div class="readout">
         <div><span class="k">Odds of passage</span><b id="hOdds">71%</b></div>
-        <div><span class="k">Yes and leaning</span><b id="hCount">19<small> / 21</small></b></div>
-        <div class="next"><span class="k">Who to see next</span><span id="hNext">Persuade Sen. Hallstrom <em>+4 pts</em></span></div>
+        <div><span class="k">Yes and leaning yes</span><b id="hCount">19<small> / 21</small></b></div>
+        <div class="next"><span class="k">See next</span><span id="hNext">Sen. Hallstrom <em>+4 pts</em></span></div>
       </div>
     </figure>
   </div>
-  <div class="sources"><div class="wrap"><b>Built on the public record</b><span>Congress.gov</span><span>50 state legislatures</span><span>Federal Register</span><span>SAM.gov</span><span>Lobbying disclosures</span><span>USAspending</span><span>U.S. Census</span></div></div>
+  <div class="sources"><div class="wrap"><p>Members and staff come from Congress.gov, the House staff directory, the Florida Senate and House websites, and Open States for every other state. Bills, rules and contracts come from Congress.gov, Open States, the Federal Register and SAM.gov.</p></div></div>
 </section>
 
 <section class="band" id="how"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">How it works</p><h2>From the first count to the quarterly report</h2></div>
+  <div class="section-head reveal"><h2>How people use it</h2></div>
   <ol class="steps">
-    <li class="reveal"><h3>Count</h3><p>Load the U.S. House, the U.S. Senate or any state chamber with current members and offices, and mark where each one stands.</p></li>
-    <li class="reveal"><h3>Prioritize</h3><p>Headcount ranks the members whose movement would change the outcome most, counting committee seats and who takes cues from whom.</p></li>
-    <li class="reveal"><h3>Meet</h3><p>Ask the scheduler for a meeting from your own Gmail or Outlook with open times from your calendar, then send the invitation when they reply.</p></li>
-    <li class="reveal"><h3>Report</h3><p>Log each contact as it happens. The activity report groups a quarter's contacts by client and issue for your disclosure filings.</p></li>
+    <li class="reveal"><h3>Start a campaign</h3><p>Name the bill and pick the chamber. The current members load with their offices and phones, and with their staff for the U.S. House and the Florida Legislature.</p></li>
+    <li class="reveal"><h3>Mark positions</h3><p>Set each member to Yes, Lean yes, Undecided, Lean no or No as you hear from them. The odds and the list of who to see next update as you go.</p></li>
+    <li class="reveal"><h3>Ask for meetings</h3><p>The request goes to the scheduler or the right aide, offers three times, and opens in your email ready to send.</p></li>
+    <li class="reveal"><h3>Keep a record</h3><p>Log calls and meetings as they happen. The quarterly activity report lists them by client and issue for your lobbying disclosure.</p></li>
   </ol>
 </div></section>
 
 <section class="band showcase" id="product"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">The tour</p><h2>One place for the count, the calendar and the capitol</h2></div>
-  <div class="tabs" role="tablist" aria-label="Product tour">
+  <div class="section-head reveal"><h2>What's in it</h2></div>
+  <div class="tabs" role="tablist" aria-label="Parts of Headcount">
     <button class="tab" role="tab" id="t-count" aria-controls="p-count" aria-selected="true"><svg width="17" height="17" aria-hidden="true"><use href="#i-count"/></svg>Vote count</button>
     <button class="tab" role="tab" id="t-request" aria-controls="p-request" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-mail"/></svg>Meeting requests</button>
     <button class="tab" role="tab" id="t-brief" aria-controls="p-brief" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-brief"/></svg>Bill briefs</button>
@@ -63,86 +62,86 @@
   <div class="reveal">
     <div role="tabpanel" id="p-count" aria-labelledby="t-count">
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / vote count</span></div><figure><img src="/site/img/count.png" width="1280" height="820" alt="The vote count: a chamber of seats colored by position, 18 of 21 votes, and 50 percent odds of passage"></figure></div>
-      <div class="panel-copy"><h3>Every seat, and what it means for the vote</h3><ul><li>Exact odds of clearing committee and the floor</li><li>Simple majority, three-fifths or two-thirds, to pass or to defeat</li><li>The week's movement and a ranked list of who to see next</li></ul></div>
+      <div class="panel-copy"><h3>The count</h3><ul><li>Estimated odds of clearing committee and the floor, from each member's position</li><li>Simple majority, three-fifths or two-thirds, whether you want the bill passed or stopped</li><li>What moved this week, and the members whose vote would change the odds most</li></ul></div>
     </div>
     <div role="tabpanel" id="p-request" aria-labelledby="t-request" hidden>
-      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / meeting request</span></div><figure><img src="/site/img/request.png" width="1280" height="820" alt="A meeting request to a senator's scheduler with three open times from the calendar" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Meetings that actually get scheduled</h3><ul><li>Sent from your own Gmail or Outlook, to the scheduler who handles it</li><li>Three open times from your calendar, then a real invitation with a Meet or Teams link</li><li>Replies tracked, and a follow-up set for every request</li></ul></div>
+      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / meeting request</span></div><figure><img src="/site/img/request.png" width="1280" height="820" alt="A meeting request to a senator's scheduler with three times to offer" loading="lazy"></figure></div>
+      <div class="panel-copy"><h3>Meeting requests</h3><ul><li>Addressed to the scheduler or aide from the official staff list, where the chamber publishes one</li><li>Opens in Gmail, Outlook or your email app, ready to send</li><li>When they reply, send a calendar invitation and set a follow-up</li></ul></div>
     </div>
     <div role="tabpanel" id="p-brief" aria-labelledby="t-brief" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / bill brief</span></div><figure><img src="/site/img/brief.png" width="1280" height="820" alt="A bill brief with sponsors, status, the position and the summary" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>A brief for every bill, ready for the meeting</h3><ul><li>Sponsors, where the bill stands and the official summary, filled in for you</li><li>Talking points and likely objections, drafted by AI and marked for you to check</li><li>Who else is lobbying on it, from federal disclosure filings</li></ul></div>
+      <div class="panel-copy"><h3>Bill briefs</h3><ul><li>Type the bill number and the sponsors, status and official summary fill in</li><li>Add your position and talking points, or have AI draft them if it's turned on</li><li>For federal bills, who else is lobbying on it, from lobbying disclosure filings</li></ul></div>
     </div>
     <div role="tabpanel" id="p-monitor" aria-labelledby="t-monitor" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / monitor</span></div><figure><img src="/site/img/monitor.png" width="1280" height="820" alt="The Monitor: new bills, a proposed rule and a contract notice, each scored for relevance with a one-line reason" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Every capitol, watched for you</h3><ul><li>New bills in Congress and all 50 states, Federal Register rules and SAM.gov contract notices</li><li>Ranked against your priorities, with a reason you can scan in a second</li><li>Track a bill to hear when it moves; start a campaign in one click</li></ul></div>
+      <div class="panel-copy"><h3>Monitor</h3><ul><li>New bills in Congress and the states, federal rules and federal contract notices that match your words</li><li>Track a bill and get an email when it moves</li><li>Start a campaign from any bill on the list</li></ul></div>
     </div>
     <div role="tabpanel" id="p-portfolio" aria-labelledby="t-portfolio" hidden>
       <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / portfolio</span></div><figure><img src="/site/img/portfolio.png" width="1280" height="820" alt="A portfolio of four campaigns with clients, odds, counts and next votes" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Every campaign and client on one page</h3><ul><li>Odds and their weekly change, the count against the votes needed, the next vote</li><li>Meetings booked and requested, and overdue follow-ups</li><li>Clients see their own campaigns as guests</li></ul></div>
+      <div class="panel-copy"><h3>Portfolio</h3><ul><li>Each campaign's odds, count and next vote</li><li>Meetings requested and booked, and follow-ups that are overdue</li><li>Add clients as guests so they see their own campaigns</li></ul></div>
     </div>
   </div>
-  <p class="example-note">Screens show an invented example firm, campaign and bills.</p>
+  <p class="example-note">The screens show a made-up firm and bills.</p>
 </div></section>
 
 <section class="band" id="grassroots"><div class="wrap spotlight">
   <div class="reveal">
-    <p class="eyebrow">Action center</p>
-    <h2>Bring constituents into the count</h2>
-    <p class="intro">Every campaign can have a public page. Supporters find which of your targets represent them and write or call, and each letter appears beside that member in your whip count.</p>
+    <h2>A page for your supporters</h2>
+    <p class="intro">Each campaign can have a public page. A supporter types their address, sees which of their own legislators you need, and writes or calls. Their letter shows up next to that legislator in your count.</p>
     <ol class="points">
-      <li><span class="num">1</span><div><b>Find my legislators</b><span>A supporter enters their address; the U.S. Census lookup finds their districts.</span></div></li>
-      <li><span class="num">2</span><div><b>A letter in their own words</b><span>They edit your draft and send it to the office, or call with your script.</span></div></li>
-      <li><span class="num">3</span><div><b>Counted where it matters</b><span>"3 constituent letters" shows next to that member while you plan the meeting.</span></div></li>
+      <li><span class="num">1</span><div><b>They find their legislators</b><span>The address is matched to districts using the Census Bureau's lookup.</span></div></li>
+      <li><span class="num">2</span><div><b>They send a letter or call</b><span>They can edit your draft letter, or call the office with your script.</span></div></li>
+      <li><span class="num">3</span><div><b>You see it in the count</b><span>"3 constituent letters" appears next to that member before you meet.</span></div></li>
     </ol>
   </div>
   <div class="phone-wrap reveal"><div class="phone"><img src="/site/img/action.png" width="780" height="1688" alt="A public action page on a phone: the supporter's senator and the letter to send" loading="lazy"></div></div>
 </div></section>
 
 <section class="band" id="more"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">And everything around it</p><h2>The rest of the job, in the same place</h2></div>
+  <div class="section-head reveal"><h2>Also included</h2></div>
   <div class="grid3">
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-scales"/></svg></span><h3>Who else is lobbying</h3><p>Federal disclosure filings that name your bill: which clients, which firms, what they reported. For contracts, who has won the work before.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-contacts"/></svg></span><h3>Every relationship</h3><p>Agency staff, coalition partners and client contacts with owners and a shared history. Personal emails from your inbox, logged on each contact.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Any legislature</h3><p>The current members of any state senate, house or assembly, with emails and capitol and district offices, in a few seconds.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-spark"/></svg></span><h3>Drafts, clearly marked</h3><p>AI drafts summaries, talking points and objections from the bill itself, labelled so everyone knows to check them first.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-mail"/></svg></span><h3>The morning digest</h3><p>Position changes, odds movement, votes and meetings ahead, overdue follow-ups and new Monitor items, at the hour you choose.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-phone"/></svg></span><h3>In the hallway</h3><p>Add Headcount to your phone's home screen. It opens without a signal and catches up when you are back online.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-scales"/></svg></span><h3>Who else is lobbying</h3><p>Federal disclosure filings that mention your bill: the clients, the firms and what they reported. For contracts, who has won similar work.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-contacts"/></svg></span><h3>Contacts</h3><p>Agency staff, coalition partners and reporters, with notes your team shares. Email a group from your own Gmail or Outlook.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Any legislature</h3><p>Congress, the Florida Legislature, and any other state's senate, house or assembly through Open States.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-spark"/></svg></span><h3>AI, only if you want it</h3><p>Off until whoever runs your Headcount turns it on. Then it drafts summaries and talking points from the bill text, marked as drafts to check.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-mail"/></svg></span><h3>A morning email</h3><p>Position changes, votes and meetings coming up, overdue follow-ups and new Monitor items, at the hour you pick.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-phone"/></svg></span><h3>On your phone</h3><p>Add it to your home screen. It keeps working on a weak signal and catches up when you're back online.</p></div>
   </div>
 </div></section>
 
-<section class="band night-band"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">Coverage</p><h2>Every chamber you work, with the members serving now</h2></div>
-  <div class="stats reveal">
-    <div><b>535</b><span>Members of Congress, with office contacts</span></div>
-    <div><b>7,386</b><span>State legislative seats, loaded live from Open States</span></div>
-    <div><b>7</b><span>Public information sources, checked every morning</span></div>
-    <div><b>1 click</b><span>From a new bill in the Monitor to a campaign with a brief</span></div>
+<section class="band" id="coverage"><div class="wrap">
+  <div class="section-head reveal"><h2>Where the member lists come from</h2></div>
+  <div class="facts reveal">
+    <div><h3>U.S. House</h3><p>Every current member, with office phones and the staff listed in the House's own directory: names, titles and phone numbers.</p></div>
+    <div><h3>U.S. Senate</h3><p>All 100 senators with their offices. The Senate doesn't publish a staff directory, so you add the staff you know.</p></div>
+    <div><h3>Florida Legislature</h3><p>The Senate and House for the 2026&ndash;2028 term, from flsenate.gov and flhouse.gov, with legislative and district aides. Checked weekly.</p></div>
+    <div><h3>Other states</h3><p>Current members from Open States. Staff aren't included; you can add them by hand or paste a list.</p></div>
   </div>
+  <p class="intro reveal">No official directory lists staff email addresses. Headcount writes them in the format each chamber uses, like first.last@mail.house.gov, and labels them so you know to check.</p>
 </div></section>
 
 <section class="band" id="firms"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">Built for firms</p><h2>One workspace for the whole team</h2></div>
+  <div class="section-head reveal"><h2>For a team</h2></div>
   <div class="grid3">
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-people"/></svg></span><h3>Roles that match the work</h3><p>Owners and admins manage people and billing, members work the counts, and client guests see only the campaigns they are added to.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Single sign-on</h3><p>Staff sign in through your firm's own login page, such as Okta or Microsoft Entra ID, and you can require it. Colleagues can also join by verified email domain.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-log"/></svg></span><h3>Records you can stand behind</h3><p>An activity log of who changed what, a quarterly lobbying activity report, and a full export of your data at any time.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-people"/></svg></span><h3>Roles</h3><p>Owners and admins manage people and the plan. Members work the counts. Client guests see only the campaigns they're added to.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Signing in</h3><p>Passwords with optional two-step sign-in, which you can require. On the Firm plan, staff can sign in through your firm's login, such as Okta or Microsoft Entra ID.</p></div>
+    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-log"/></svg></span><h3>Records</h3><p>A log of who changed what, the quarterly activity report, and a full export of your data whenever you want it.</p></div>
   </div>
-  <p class="intro reveal"><a href="/security">How Headcount handles your data &rarr;</a></p>
+  <p class="intro reveal"><a href="/security">How Headcount handles your data</a></p>
 </div></section>
 
 <section class="band pricing" id="pricing"><div class="wrap">
-  <div class="section-head reveal"><p class="eyebrow">Pricing</p><h2>Start free. Pay per person when your team joins.</h2></div>
+  <div class="section-head reveal"><h2>Pricing</h2><p class="intro">{{planNote}}</p></div>
   <div class="grid3">
-    <div class="card reveal"><h3>Free</h3><p class="price">No charge</p><p>For one or two people trying it on a live bill.</p><ul><li>Up to 2 people</li><li>3 active campaigns</li><li>2 Monitor watches</li><li>Vote counts, meeting requests and bill briefs</li></ul><a class="button ghost" href="/app">Start free</a></div>
-    <div class="card featured reveal"><h3>Team</h3><p class="price">{{priceTeam}}</p><p>For a government affairs team or a lobbying firm.</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 Monitor watches</li><li>Action center for constituent letters</li><li>Guests for clients and partners</li><li>Lobbying activity report and activity log</li><li>Require two-step sign-in</li><li>Join by email domain</li></ul><a class="button" href="/app">Start a {{trialDays}}-day trial</a></div>
-    <div class="card reveal"><h3>Firm</h3><p class="price">{{priceFirm}}</p><p>For larger firms with an identity provider and procurement.</p><ul><li>Everything in Team</li><li>Unlimited Monitor watches</li><li>Sign in through your firm's own login page</li><li>Make that login required for staff</li><li>Unlimited guests</li><li>Invoicing on request</li></ul><a class="button ghost" href="#demo">Talk to us</a></div>
+    <div class="card reveal"><h3>Free</h3><p class="price">No charge</p><p>For one or two people.</p><ul><li>Up to 2 people</li><li>3 active campaigns</li><li>2 Monitor watches</li><li>Vote counts, meeting requests and bill briefs</li></ul><a class="button ghost" href="/app">Start free</a></div>
+    <div class="card featured reveal"><h3>Team</h3><p class="price">{{priceTeam}}</p><p>For a government affairs team or a lobbying firm.</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 Monitor watches</li><li>Supporter pages and letters</li><li>Client guests</li><li>Quarterly activity report and activity log</li><li>Require two-step sign-in</li><li>Colleagues join with their work email</li></ul><a class="button" href="/app">{{trialCta}}</a></div>
+    <div class="card reveal"><h3>Firm</h3><p class="price">{{priceFirm}}</p><p>For larger firms that sign in through their own login.</p><ul><li>Everything in Team</li><li>Unlimited Monitor watches</li><li>Sign in through your firm's login</li><li>Require that login for staff</li><li>Unlimited guests</li><li>Invoices on request</li></ul><a class="button ghost" href="#demo">Talk to us</a></div>
   </div>
-  <p class="intro reveal"><a href="/pricing">Compare plans &rarr;</a></p>
+  <p class="intro reveal"><a href="/pricing">Compare plans in detail</a></p>
 </div></section>
 
 <section class="band" id="demo"><div class="wrap demo">
-  <div class="reveal"><p class="eyebrow">Talk to us</p><h2>See it with your own chamber</h2><p class="intro">Tell us about your team and the legislature you work. We will reply by email to set up a walkthrough, or to answer questions about plans, single sign-on and invoicing.</p></div>
+  <div class="reveal"><h2>Questions?</h2><p class="intro">Tell us which legislature you work and how your team runs counts today. We'll email you back, and we're happy to walk through it on a call.</p></div>
   <form class="lead reveal" novalidate>
     <label>Name<input name="name" autocomplete="name" required></label>
     <label>Work email<input name="email" type="email" autocomplete="email" required></label>
@@ -156,9 +155,9 @@
 </div></section>
 
 <section class="band night-band closing"><div class="wrap reveal">
-  <p class="eyebrow">Your next vote</p>
-  <h2>Know the count <em>before the roll is called.</em></h2>
-  <div class="ctas"><a class="button" href="/app">Start your {{trialDays}}-day trial <span class="arr" aria-hidden="true">&rarr;</span></a><a class="button ghost" href="#demo">Talk to us</a></div>
+  <h2>Try it on a bill you're working on</h2>
+  <p class="intro">It takes about five minutes to load a chamber and mark the members you've already heard from.</p>
+  <div class="ctas"><a class="button" href="/app">{{trialCta}}</a><a class="button ghost" href="/guide">Read the guide</a></div>
 </div></section>
 
 </main>

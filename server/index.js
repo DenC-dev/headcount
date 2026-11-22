@@ -143,6 +143,10 @@ function siteVars() {
     year: String(new Date().getFullYear()),
     img: '/site/img', app: '/app', supportLine: config.supportEmail ? `<a href="mailto:${escHtml(config.supportEmail)}">${escHtml(config.supportEmail)}</a>` : 'the person who runs your Headcount',
     trialDays: String(config.trialDays),
+    // Until payments are connected, every workspace gets the Team plan at no charge; say so plainly.
+    trialCta: config.billing ? `Start a ${config.trialDays}-day trial` : 'Create a free account',
+    planNote: config.billing ? `Every new workspace starts with a ${config.trialDays}-day Team trial, no card needed. When it ends, the workspace moves to Free unless you pick a plan. Nothing is deleted.` : 'Paid plans aren\'t on sale yet. Until they are, every new workspace gets the Team plan at no charge.',
+    payNote: config.billing ? 'By card through Stripe, monthly.' : 'Paid plans aren\'t on sale yet. When they are, you\'ll pay by card through Stripe, monthly.',
     priceTeam: escHtml(config.priceLabelTeam || 'Per person, billed monthly'),
     priceFirm: escHtml(config.priceLabelFirm || 'Per person, with your firm\'s own login'),
     salesEmail: config.salesEmail || config.supportEmail ? `<a href="mailto:${escHtml(config.salesEmail || config.supportEmail)}">${escHtml(config.salesEmail || config.supportEmail)}</a>` : 'us through the form on the <a href="/#demo">home page</a>',
