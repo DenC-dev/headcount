@@ -113,6 +113,19 @@ function drawSettings(open) {
         <div class="btnrow">${[['fedreg', 'Federal Register'], ['usaspending', 'USAspending'], ['census', 'Census']].map(([id, n]) => `<button type="button" class="btn sm" data-x="svTest" data-src="${id}">Test ${n}</button>`).join('')}</div>
         ${['fedreg', 'usaspending', 'census'].map((id) => `<span class="note" id="svt_${id}"></span>`).join(' ')}</div>
       <div class="wide"><button class="btn primary">Save keys</button></div></form></details>
+  ${st.auth === 'local' ? `${o('google', false)}<summary>Google ${chip(f.googleClientId.value || f.googleClientId.env, 'On', 'Off')}</summary>
+    <form class="form" data-sv="google">
+      <p class="note wide">Turn this on and people can sign in with Google, send meeting requests from Gmail, and send Google Calendar invitations with a Google Meet link, all without leaving Headcount. It needs one setting from Google, which takes about ten minutes to get:</p>
+      <ol class="steps howto wide">
+        <li><b>Make a project.</b> Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud</a>, sign in with your Google account, name the project Headcount and choose Create.</li>
+        <li><b>Turn on Gmail and Calendar.</b> Open <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener">Gmail API</a> and choose Enable, then do the same for <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">Google Calendar API</a>.</li>
+        <li><b>Describe the app.</b> Open <a href="https://console.cloud.google.com/auth/branding" target="_blank" rel="noopener">Google Auth Platform</a> and choose Get started. App name: Headcount. Support email: yours. Audience: External. Then under <i>Data access</i>, add the scopes <code>gmail.send</code> and <code>calendar.events</code>.</li>
+        <li><b>Make the client.</b> Under <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Clients</a>, choose Create client, then Web application. Under <i>Authorized JavaScript origins</i> add <code>${esc(f.publicUrl.current || location.origin)}</code>. Choose Create and copy the <i>Client ID</i>.</li>
+        <li><b>Paste it here</b> and choose Save.</li>
+      </ol>
+      ${field('googleClientId', 'Google client ID', { wide: true, ph: '1234567890-abc123.apps.googleusercontent.com' })}
+      <p class="note wide">A new Google app starts in testing, where only the Google accounts you list under <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Audience, then Test users</a> can use it (up to 100). To let anyone sign in with Google, choose <i>Publish app</i> on that page. Until Google reviews the app, connecting Gmail and Calendar shows a "Google hasn't verified this app" notice that people can continue past; you can ask for the review on the same page.</p>
+      <div class="wide"><button class="btn primary">Save</button></div></form></details>` : ''}
   ${o('ai', false)}<summary>AI writing help ${chip(st.ai, 'On', 'Off')}</summary>
     <form class="form" data-sv="ai"><p class="note wide">Claude, an AI assistant made by Anthropic, can draft bill briefs and sort what the Monitor finds by how much it matters to you. Anthropic charges for what it uses, usually a few cents a brief. To turn it on, make an account with Anthropic, add a payment method, create a key and paste it here. <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key from Anthropic</a></p>
       ${field('anthropicKey', 'Anthropic key', { secret: true, wide: true })}<div class="wide"><button class="btn primary">Save</button></div></form></details>

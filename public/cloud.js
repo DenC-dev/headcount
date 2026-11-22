@@ -63,6 +63,7 @@
       if (s && s.token && s.user) { C.user = s.user; C.session = s.token; }
     }
     C.ready = true;
+    if (C.googleClientId()) C.loadGoogle();
     return C.user;
   };
 
@@ -70,9 +71,50 @@
   C.mailName = (p) => (p === 'microsoft' ? 'Outlook' : 'Gmail');
   C.calName = (p) => (p === 'microsoft' ? 'Outlook Calendar' : 'Google Calendar');
   C.videoName = (p) => (p === 'microsoft' ? 'Microsoft Teams' : 'Google Meet');
+  // Google for built-in accounts: Sign in with Google, and Gmail, Calendar and
+  // Meet through Google Identity Services, once the person running Headcount
+  // adds a Google client ID in Admin settings.
+  C.googleClientId = () => (C.config && C.config.auth === 'local' && C.config.google && C.config.google.clientId) || '';
+  let gsi = null;
+  C.loadGoogle = function () {
+    if (!C.googleClientId()) return Promise.resolve(null);
+    if (window.google && window.google.accounts) return Promise.resolve(window.google);
+    if (!gsi) gsi = new Promise((resolve) => {
+      const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+      s.onload = () => resolve(window.google || null); s.onerror = () => { gsi = null; resolve(null); };
+      document.head.appendChild(s);
+    });
+    return gsi;
+  };
+  // Draws Google's own "Continue with Google" button into el; onCredential gets the ID token.
+  C.googleButton = async function (el, onCredential) {
+    const g = await C.loadGoogle(); if (!g || !el) return false;
+    g.accounts.id.initialize({ client_id: C.googleClientId(), callback: (r) => onCredential(r.credential), ux_mode: 'popup', auto_select: false, itp_support: true, use_fedcm_for_prompt: true });
+    g.accounts.id.renderButton(el, { theme: 'outline', size: 'large', text: 'continue_with', shape: 'rectangular', logo_alignment: 'left', width: Math.min(360, Math.max(220, el.clientWidth || 320)) });
+    return true;
+  };
+  C.signInGoogle = async (credential, extra = {}) => startSession(await authPost('/api/auth/google', { credential, ...extra }));
+  function googleToken(hint) {
+    return new Promise((resolve, reject) => {
+      const g = window.google;
+      if (!g || !g.accounts || !g.accounts.oauth2) return reject(new CloudError('connect', 'Google is still loading. Try again in a moment.'));
+      const tc = g.accounts.oauth2.initTokenClient({
+        client_id: C.googleClientId(), scope: GOOGLE_SCOPES.join(' '), hint: hint || undefined,
+        callback: (r) => {
+          if (r.error) return reject(new CloudError('connect', r.error === 'access_denied' ? 'Google access was not allowed.' : 'Google did not grant access. Try again.'));
+          if (!g.accounts.oauth2.hasGrantedAllScopes(r, ...GOOGLE_SCOPES)) return reject(new CloudError('connect', 'Tick both boxes (send email, and see and edit calendar events) when Google asks, then try again.'));
+          resolve({ access: r.access_token, mins: Math.max(5, Math.floor((Number(r.expires_in) || 3600) / 60) - 2) });
+        },
+        error_callback: (e) => reject(new CloudError('connect', e && e.type === 'popup_closed' ? 'The Google window was closed before finishing.' : 'The Google window could not open. Allow pop-ups for this site and try again.')),
+      });
+      tc.requestAccessToken({ prompt: '' });
+    });
+  }
   C.canSignIn = () => Boolean(C.config && (C.config.auth === 'local' || ((C.config.auth === 'firebase' || C.config.auth === 'dev') && C.config.providers.length > 0)));
   // Sending from Gmail or Outlook needs Google or Microsoft sign-in (Identity Platform).
-  C.canConnect = () => Boolean(C.config && (C.config.auth === 'firebase' || C.config.auth === 'dev') && !C.session);
+  C.canConnect = () => Boolean(C.config && (((C.config.auth === 'firebase' || C.config.auth === 'dev') && !C.session) || (C.session && C.googleClientId())));
+  // Which accounts can be connected for email and calendar here.
+  C.connectable = () => (C.session ? ['google'] : ['google', 'microsoft']);
   C.local = () => Boolean(C.session);
 
   // ---------- built-in accounts ----------
@@ -189,7 +231,7 @@
   function clearToken() { try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) { /* nothing stored */ } }
   C.connected = () => Boolean(readToken());
   // Which mail and calendar account to use: the connected one, else the sign-in account if it is Google or Microsoft.
-  C.provider = () => { const t = readToken(); if (t) return t.provider; return C.user && (C.user.provider === 'google' || C.user.provider === 'microsoft') ? C.user.provider : null; };
+  C.provider = () => { const t = readToken(); if (t) return t.provider; if (C.session) return C.user && C.user.google && C.googleClientId() ? 'google' : null; return C.user && (C.user.provider === 'google' || C.user.provider === 'microsoft') ? C.user.provider : null; };
 
   // Asks the person to allow calendar and email access. Call it straight from a
   // click handler, before any await, or the browser may block the pop-up.
@@ -199,9 +241,12 @@
     const have = readToken(); if (have && (!want || have.provider === want)) return have;
     const mp = want || C.provider();
     if (mp !== 'google' && mp !== 'microsoft') throw new CloudError('connect', 'Choose Gmail or Outlook to send from.');
-    let access;
+    let access, mins = 50;
     if (C.config.auth === 'dev') access = 'dev-access-token';
-    else {
+    else if (C.session) {
+      if (mp !== 'google' || !C.googleClientId()) throw new CloudError('connect', 'Connecting Gmail and Google Calendar is not turned on here yet. The person who runs Headcount adds it under Admin settings, then Google.');
+      ({ access, mins } = await googleToken(C.user.email));
+    } else {
       const own = mp === C.user.provider, cred = (r) => (mp === 'microsoft' ? fb.OAuthProvider.credentialFromResult(r) : fb.GoogleAuthProvider.credentialFromResult(r));
       const reauth = () => fb.reauthenticateWithPopup(auth.currentUser, providerFor(mp, true, own ? C.user.email : ''));
       try {
@@ -218,7 +263,7 @@
       }
       if (!access) throw new CloudError('connect', `${C.providerName(mp)} did not grant access to your calendar and email.`);
     }
-    const t = { user: C.user.id, provider: mp, access, exp: Date.now() + 50 * 60 * 1000 };
+    const t = { user: C.user.id, provider: mp, access, exp: Date.now() + mins * 60 * 1000 };
     try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch (_) { /* this tab only */ }
     return t;
   };
@@ -342,6 +387,19 @@
       }
     }
     return out;
+  };
+
+  // A new event in Google Calendar or Outlook on the web, filled in. The person
+  // checks it and clicks Save; their calendar sends the invitations. Google
+  // adds a Meet link (vcon=meet); Outlook offers its Teams switch.
+  C.calendarLink = function (kind, { title, description, start, end, location, attendees }) {
+    const z = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    if (kind === 'outlook') {
+      const q = new URLSearchParams({ subject: title, body: description, startdt: start.toISOString(), enddt: end.toISOString(), location: location || '', to: (attendees || []).join(';'), online: '1' });
+      return `https://outlook.office.com/calendar/deeplink/compose?${q}`;
+    }
+    const q = new URLSearchParams({ text: title, dates: `${z(start)}/${z(end)}`, details: description, location: location || '', add: (attendees || []).join(','), vcon: 'meet' });
+    return `https://calendar.google.com/calendar/r/eventedit?${q}`;
   };
 
   // An .ics invitation for people who are not signed in.

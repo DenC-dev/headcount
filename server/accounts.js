@@ -69,11 +69,13 @@ export function makeAccounts(cfg, store, { seal = (v) => v, open = (v) => v } = 
     CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
   `);
   const cols = new Set(db.prepare('PRAGMA table_info(accounts)').all().map((c) => c.name));
-  for (const [c, t] of [['totp_secret', 'TEXT'], ['totp_pending', 'TEXT'], ['totp_last', 'INTEGER NOT NULL DEFAULT -1'], ['recovery', 'TEXT']]) if (!cols.has(c)) db.exec(`ALTER TABLE accounts ADD COLUMN ${c} ${t}`);
+  for (const [c, t] of [['totp_secret', 'TEXT'], ['totp_pending', 'TEXT'], ['totp_last', 'INTEGER NOT NULL DEFAULT -1'], ['recovery', 'TEXT'], ['google_sub', 'TEXT']]) if (!cols.has(c)) db.exec(`ALTER TABLE accounts ADD COLUMN ${c} ${t}`);
   const p = (sql) => db.prepare(sql);
   const q = {
     count: p('SELECT COUNT(*) AS n FROM accounts'),
     byEmail: p('SELECT * FROM accounts WHERE email = ?'),
+    byGoogle: p('SELECT * FROM accounts WHERE google_sub = ?'),
+    linkGoogle: p('UPDATE accounts SET google_sub = ?, verified = 1 WHERE id = ?'),
     byId: p('SELECT * FROM accounts WHERE id = ?'),
     insert: p('INSERT INTO accounts (id, email, name, pw_hash, verified, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
     setPw: p('UPDATE accounts SET pw_hash = ?, token_hash = NULL, token_kind = NULL, token_expires = NULL WHERE id = ?'),
@@ -95,7 +97,7 @@ export function makeAccounts(cfg, store, { seal = (v) => v, open = (v) => v } = 
     usedStep: p('UPDATE accounts SET totp_last = ? WHERE id = ?'),
     setRecovery: p('UPDATE accounts SET recovery = ? WHERE id = ?'),
   };
-  const userOf = (a) => ({ id: a.id, email: a.email, emailVerified: Boolean(a.verified), name: a.name, provider: 'password', twoFactor: Boolean(a.totp_secret) });
+  const userOf = (a) => ({ id: a.id, email: a.email, emailVerified: Boolean(a.verified), name: a.name, provider: 'password', google: Boolean(a.google_sub), twoFactor: Boolean(a.totp_secret) });
 
   // ---------- second step ----------
   // After the password, an account with two-step sign-in gets a short-lived
@@ -212,6 +214,24 @@ export function makeAccounts(cfg, store, { seal = (v) => v, open = (v) => v } = 
     if (a.totp_secret) return ticketFor(a);
     return { token: startSession(a, agent), user: userOf(a) };
   }
+  // Sign in with Google: the same account as the email, linked the first time;
+  // a new account when there is none (if sign-ups are open or there is an invitation).
+  async function googleSignIn({ sub, email, name }, agent, { invite } = {}) {
+    let a = q.byGoogle.get(sub) || q.byEmail.get(email);
+    let created = false, first = false;
+    if (!a) {
+      first = q.count.get().n === 0;
+      if (!first && !signupsOpen() && !(invite && store.inviteExists(String(invite)))) throw new HttpError(403, 'New accounts here need an invitation. Ask the person who runs your Headcount for one.');
+      const id = 'loc:' + b64(12);
+      q.insert.run(id, email, clean(name, 80) || email.split('@')[0], await hashPassword(b64(32)), 1, Date.now());
+      if (first) store.putSetting('operator', id);
+      a = q.byId.get(id); created = true;
+    }
+    if (a.google_sub !== sub) { if (a.google_sub) throw new HttpError(409, 'That email is linked to a different Google account.'); q.linkGoogle.run(sub, a.id); a = q.byId.get(a.id); }
+    store.touchUser(userOf(a));
+    if (a.totp_secret) return ticketFor(a);
+    return { token: startSession(a, agent), user: userOf(a), created, operator: first };
+  }
   function logout(sessionId, everywhere, uid) { if (everywhere) q.endAll.run(uid); else q.endSession.run(sessionId); return { ok: true }; }
 
   // One-time tokens for password reset and email confirmation, stored as hashes.
@@ -248,5 +268,5 @@ export function makeAccounts(cfg, store, { seal = (v) => v, open = (v) => v } = 
   const remove = (uid) => q.remove.run(uid);
   const hasAccounts = () => q.count.get().n > 0;
   setInterval(() => q.sweep.run(Date.now()), 6 * 3600e3).unref();
-  return { loginCode, totpStart, totpEnable, totpDisable, newRecovery, recoveryLeft, signup, login, logout, verify, resetRequest, reset, confirm, newVerifyToken, changePassword, rename, remove, hasAccounts, signupsOpen, isLocal: (uid) => String(uid).startsWith('loc:') };
+  return { googleSignIn, loginCode, totpStart, totpEnable, totpDisable, newRecovery, recoveryLeft, signup, login, logout, verify, resetRequest, reset, confirm, newVerifyToken, changePassword, rename, remove, hasAccounts, signupsOpen, isLocal: (uid) => String(uid).startsWith('loc:') };
 }

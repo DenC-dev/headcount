@@ -12,7 +12,7 @@ import { setupStripe, removeStripeHook, readDollars } from './stripe-setup.js';
 import { forJson, PLANS } from './plans.js';
 import { makeMailer, htmlEmail } from './mail.js';
 import { makeNotifier } from './notify.js';
-import { makeAuthenticator } from './auth.js';
+import { makeAuthenticator, verifyGoogleIdToken } from './auth.js';
 import { lookupBill, STATES } from './bills.js';
 import { billRecord } from './record.js';
 import { makeMonitor } from './monitor.js';
@@ -69,11 +69,11 @@ function csp() {
   const authDomain = config.firebase.authDomain ? `https://${config.firebase.authDomain}` : '';
   return [
     "default-src 'self'",
-    `script-src 'self' https://www.gstatic.com https://apis.google.com`,
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    `script-src 'self' https://www.gstatic.com https://apis.google.com https://accounts.google.com/gsi/client`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data:",
-    `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://gmail.googleapis.com https://graph.microsoft.com ${authDomain}`.trim(),
+    `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://gmail.googleapis.com https://graph.microsoft.com https://accounts.google.com/gsi/ ${authDomain}`.trim(),
     `frame-src ${authDomain ? authDomain + ' ' : ''}https://accounts.google.com`,
     "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
   ].join('; ');
@@ -242,6 +242,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     accounts: localAccounts() ? { signups: accounts.signupsOpen() ? 'open' : 'invite', setup: !accounts.hasAccounts() } : null,
     firebase: config.authMode === 'firebase' ? { ...config.firebase, sdkVersion: FIREBASE_VERSION } : null,
     providers: config.authMode === 'none' ? [] : config.providers,
+    google: localAccounts() && config.googleClientId ? { clientId: config.googleClientId } : null,
     bills: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey) },
     states: STATES,
     ai: aiOn(),
@@ -452,6 +453,15 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
         if (r.operator && !config.publicUrl && /^https?:\/\/[^\s/]+$/.test(origin)) settings.save({ publicUrl: origin });
         accountMail('verify', r.user, r.verifyToken);
         return send(res, 200, { token: r.token, user: r.user, operator: r.operator });
+      }
+      if (p === '/api/auth/google' && m === 'POST') {
+        limit('google:' + ip, 20);
+        const b = await readJson(req, 20_000);
+        const g = await verifyGoogleIdToken(b.credential, { clientId: config.googleClientId, certsUrl: config.googleCertsUrl });
+        const r = await accounts.googleSignIn(g, ua, { invite: b.invite });
+        if (r.created && !b.invite && r.operator) { try { store.createOrg(r.user.id, clean(b.workspace, 80) || `${r.user.name.split(' ')[0]}'s workspace`); } catch (e) { console.error('Could not create the first workspace:', e.message); } }
+        if (r.operator) { const origin = String(req.headers.origin || ''); if (!config.publicUrl && /^https?:\/\/[^\s/]+$/.test(origin)) settings.save({ publicUrl: origin }); }
+        return send(res, 200, r.twoFactor ? r : { token: r.token, user: r.user, created: r.created, operator: r.operator });
       }
       if (p === '/api/auth/login' && m === 'POST') {
         const b = await readJson(req, 10_000);

@@ -518,6 +518,37 @@ test('the public record: which questions count as a vote on the bill, and readin
   assert.equal(sn.date, '2025-07-01'); assert.deepEqual(sn.votes.map((v) => [v.last, v.state, v.v]), [['Alsobrooks', 'MD', 'no'], ['Murkowski', 'AK', 'other']]);
 });
 
+test('Continue with Google: the token is checked against Google\'s keys and this site, then signs in or makes the account', async () => {
+  const { verifyGoogleIdToken } = await import('../server/auth.js');
+  const { makeAccounts } = await import('../server/accounts.js');
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
+  const certs = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=3600' }); res.end(JSON.stringify({ keys: [jwk] })); });
+  await new Promise((r) => certs.listen(0, r));
+  const certsUrl = `http://127.0.0.1:${certs.address().port}/certs`, clientId = '123-abc.apps.googleusercontent.com';
+  const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const sign = (claims, key = privateKey) => { const h = b64u({ alg: 'RS256', kid: 'k1', typ: 'JWT' }), p = b64u(claims); return `${h}.${p}.${crypto.sign('RSA-SHA256', Buffer.from(`${h}.${p}`), key).toString('base64url')}`; };
+  const now = Math.floor(Date.now() / 1000), good = { iss: 'https://accounts.google.com', aud: clientId, sub: 'g-111', email: 'Dana@Example.org', email_verified: true, name: 'Dana Lee', iat: now, exp: now + 3600 };
+  try {
+    assert.deepEqual(await verifyGoogleIdToken(sign(good), { clientId, certsUrl }), { sub: 'g-111', email: 'dana@example.org', name: 'Dana Lee' });
+    await assert.rejects(verifyGoogleIdToken(sign({ ...good, aud: 'someone-else.apps.googleusercontent.com' }), { clientId, certsUrl }), /different site/);
+    await assert.rejects(verifyGoogleIdToken(sign({ ...good, exp: now - 600 }), { clientId, certsUrl }), /expired/);
+    await assert.rejects(verifyGoogleIdToken(sign({ ...good, email_verified: false }), { clientId, certsUrl }), /not confirmed/);
+    await assert.rejects(verifyGoogleIdToken(sign(good, crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey), { clientId, certsUrl }), /could not be checked/);
+    // An existing account with that email is linked, not duplicated; a new email makes an account.
+    const s2 = mods.db.openDb(':memory:', { billing: false }), acc = makeAccounts({}, s2);
+    const first = await acc.signup({ name: 'Dana Lee', email: 'dana@example.org', password: 'a long sample password' }, 'test');
+    const r = await acc.googleSignIn({ sub: 'g-111', email: 'dana@example.org', name: 'Dana' }, 'test');
+    assert.equal(r.user.id, first.user.id); assert.equal(r.user.google, true); assert.equal(r.user.emailVerified, true); assert.ok(r.token);
+    const n = await acc.googleSignIn({ sub: 'g-222', email: 'sam@example.org', name: 'Sam Ruiz' }, 'test');
+    assert.equal(n.created, true); assert.equal(n.user.name, 'Sam Ruiz');
+    assert.equal((await acc.googleSignIn({ sub: 'g-222', email: 'sam@example.org', name: 'Sam' }, 'test')).user.id, n.user.id);
+    await assert.rejects(acc.googleSignIn({ sub: 'g-999', email: 'dana@example.org', name: 'Not Dana' }, 'test'), /different Google account/);
+    s2.putSetting('cfg.signups', 'invite');
+    await assert.rejects(acc.googleSignIn({ sub: 'g-333', email: 'new@example.org', name: 'New' }, 'test'), /need an invitation/);
+  } finally { certs.close(); }
+});
+
 test('the demo request form stores the lead and emails sales', async () => {
   const post = (b) => fetch(base + '/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
   assert.equal((await post({ name: 'Pat', email: 'nope' })).status, 400);

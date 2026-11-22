@@ -45,6 +45,45 @@ export async function verifyFirebaseToken(token, { projectId, jwksUrl }) {
   return { id: 'fb:' + payload.sub, email: payload.email || '', emailVerified: payload.email_verified === true, name: payload.name || payload.email || 'Signed-in user', provider: provider === 'microsoft.com' ? 'microsoft' : provider === 'google.com' ? 'google' : provider };
 }
 
+// Sign in with Google for built-in accounts: the browser gets an ID token from
+// Google (Google Identity Services) and the server checks it against Google's
+// published keys and this site's client ID.
+const GOOGLE_ISS = ['accounts.google.com', 'https://accounts.google.com'];
+let gkeys = { keys: new Map(), expires: 0, loading: null };
+async function googleKey(kid, url) {
+  if (Date.now() > gkeys.expires || !gkeys.keys.has(kid)) {
+    if (!gkeys.loading) {
+      gkeys.loading = (async () => {
+        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) throw new Error(`Key fetch failed (${res.status})`);
+        const keys = new Map();
+        for (const k of (await res.json()).keys || []) if (k.kid && k.kty === 'RSA') keys.set(k.kid, crypto.createPublicKey({ key: k, format: 'jwk' }));
+        const m = /max-age=(\d+)/.exec(res.headers.get('cache-control') || '');
+        gkeys = { keys, expires: Date.now() + Math.min(Number(m ? m[1] : 3600), 86400) * 1000, loading: null };
+      })().catch((e) => { gkeys.loading = null; throw e; });
+    }
+    await gkeys.loading;
+  }
+  return gkeys.keys.get(kid);
+}
+export async function verifyGoogleIdToken(token, { clientId, certsUrl = 'https://www.googleapis.com/oauth2/v3/certs' }) {
+  if (!clientId) throw new HttpError(400, 'Sign in with Google is not turned on here.');
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) throw new HttpError(401, 'Google sign-in did not complete. Try again.');
+  let header, payload;
+  try { header = b64json(parts[0]); payload = b64json(parts[1]); } catch (_) { throw new HttpError(401, 'Google sign-in did not complete. Try again.'); }
+  if (header.alg !== 'RS256' || !header.kid) throw new HttpError(401, 'Google sign-in did not complete. Try again.');
+  let key;
+  try { key = await googleKey(header.kid, certsUrl); } catch (_) { throw new HttpError(503, 'Could not reach Google to check your sign-in. Try again shortly.'); }
+  if (!key || !crypto.verify('RSA-SHA256', Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], 'base64url'))) throw new HttpError(401, 'Google sign-in could not be checked. Try again.');
+  const t = Math.floor(Date.now() / 1000);
+  if (payload.aud !== clientId || !GOOGLE_ISS.includes(payload.iss)) throw new HttpError(401, 'That Google sign-in was meant for a different site.');
+  if (!(payload.exp > t - 60) || !(payload.iat <= t + 60)) throw new HttpError(401, 'That Google sign-in expired. Try again.');
+  if (typeof payload.sub !== 'string' || !payload.sub) throw new HttpError(401, 'Google did not say who you are. Try again.');
+  if (!payload.email || payload.email_verified !== true) throw new HttpError(401, 'Google has not confirmed that email address, so it cannot sign in here.');
+  return { sub: payload.sub, email: String(payload.email).toLowerCase(), name: payload.name || String(payload.email).split('@')[0] };
+}
+
 // Local testing only: "dev.<base64url JSON {id,name,email,provider}>".
 export function verifyDevToken(token) {
   const m = /^dev\.([A-Za-z0-9_-]+)$/.exec(String(token));

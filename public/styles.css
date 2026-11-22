@@ -253,3 +253,7 @@ details.adv[open] > summary { margin-bottom: 8px; }
 .pickchamber b { font-size: 17px; }
 .pickchamber .btnrow select { min-width: min(320px, 100%); }
 a.btn#helpBtn { color: inherit; }
+/* Continue with Google, above the email sign-in */
+.gsiwrap { display: grid; gap: 6px; justify-items: start; min-height: 44px; }
+.orline { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13.5px; margin: 4px 0 2px; }
+.orline::before, .orline::after { content: ""; flex: 1; height: 1px; background: var(--line); }

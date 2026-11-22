@@ -13,6 +13,8 @@ Open source under the Apache License 2.0. Project website and data source status
 
 **A firm's own staff list.** Official directories have no staff email addresses. A workspace admin can upload a staff export from LegiStorm (or any CSV with each person's name and office) on the Workspace page; the server matches it to each campaign's members and its real addresses replace the usual-format ones. Upload only what your LegiStorm agreement allows.
 
+**Google.** Meeting invitations open in Google Calendar filled in, with the office invited and a Google Meet link, with no setup. Add a Google client ID (Admin settings, then Google, which lists the steps; or `GOOGLE_CLIENT_ID`) and people can also choose *Continue with Google* to sign in or create an account (the server checks Google's ID token against Google's keys and this site's client ID, and links it to the account with the same email), send meeting requests straight from Gmail, and send Google Calendar invitations with a Meet link from inside Headcount. Gmail and Calendar access stays in the person's browser tab.
+
 **Try it free in your browser**, no account and nothing to install: https://denc-dev.github.io/headcount/app/ (your work stays in that browser).
 
 **Run your own, with sign-in and team workspaces, without the command line:**

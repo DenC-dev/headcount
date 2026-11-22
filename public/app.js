@@ -1246,7 +1246,7 @@ function rqHtml(m) {
     <label class="wide" ${RQ.other ? '' : 'hidden'}>Email address<input id="rq_other" type="email" value="${RQ.other ? esc(RQ.to) : ''}" placeholder="scheduler@senate.example.gov"></label>
     <label>Length<select id="rq_mins">${[15, 30, 45, 60].map((n) => `<option value="${n}" ${RQ.mins === n ? 'selected' : ''}>${n} minutes</option>`).join('')}</select></label>
     ${signed && prov ? `<div style="align-self:end"><button type="button" class="btn" data-act="rqFind">${RQ.mode === 'email' ? 'Offer open times from my calendar' : 'Use my next open time'}</button></div>` : '<div></div>'}`;
-  const sendAs = prov ? [prov] : ['google', 'microsoft'];
+  const sendAs = prov ? [prov] : CLOUD.connectable();
   const signNote = !signed && canSign ? `<p class="wide note">Sign in with ${CLOUD.config.providers.map(CLOUD.providerName).join(' or ')} to send this from your own email and calendar. <button type="button" class="btn sm" data-act="signin">Sign in</button></p>` : '';
   let body;
   if (RQ.mode === 'email') {
@@ -1258,10 +1258,11 @@ function rqHtml(m) {
   } else {
     body = `<label>Date and time<input type="datetime-local" id="rq_start" value="${RQ.start ? toInput(new Date(RQ.start)) : ''}"></label>
       <label>Where<input id="rq_where" value="${esc(RQ.where)}" placeholder="Office, phone or video"></label>
-      ${signed ? `<label class="wide check"><input type="checkbox" id="rq_video" ${RQ.video ? 'checked' : ''}> Add a ${prov ? CLOUD.videoName(prov) : 'video meeting'} link</label>` : ''}
+      ${signed ? `<label class="wide check"><input type="checkbox" id="rq_video" ${RQ.video !== false ? 'checked' : ''}> Add a ${prov ? CLOUD.videoName(prov) : 'Google Meet'} link</label>` : ''}
       <label class="wide">Note in the invitation <span class="note">optional</span><textarea id="rq_note">${esc(RQ.note)}</textarea></label>
       ${signNote}
-      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqInvite" data-mp="${x}">Send invitation from ${CLOUD.calName(x)}</button>`).join('') : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqIcs">Download a calendar invitation</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
+      ${signed ? '' : '<p class="wide note">Google Calendar opens with the meeting filled in, the office invited and a Google Meet link added. Check it and click Save, and Google sends the invitation. Outlook works the same way, with its Teams switch.</p>'}
+      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqInvite" data-mp="${x}">Send invitation from ${CLOUD.calName(x)}</button>`).join('') + '<button type="button" class="btn" data-act="rqCalLink" data-cal="google">Open in Google Calendar</button>' : '<button type="button" class="btn primary" data-act="rqCalLink" data-cal="google">Open in Google Calendar</button><button type="button" class="btn" data-act="rqCalLink" data-cal="outlook">Open in Outlook</button>'}<button type="button" class="btn" data-act="rqIcs">Download a calendar invitation</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
   }
   return `<form id="rqForm" class="form">${tabs}${common}${body}<p class="wide note" id="rqMsg" role="status">${esc(RQ.msg)}</p></form>`;
 }
@@ -1324,7 +1325,7 @@ function recordInvite(m, ev, via) {
     eventId: ev ? ev.id : '', link: ev ? ev.link : '', video: ev ? ev.video : '', provider: ev ? CLOUD.provider() : '', replies: ev ? { [RQ.to.toLowerCase()]: 'waiting' } : {}, by: (existing && existing.by) || ME || undefined });
   if (!existing) S.meetings.push(rec);
   const to = RQ.to; RQ = null; schedOpen = false;
-  commit(ev ? `Invitation sent to ${to} from your ${CLOUD.calName(CLOUD.provider())}` : 'Invitation downloaded. Open it to add the meeting to your calendar, or attach it to an email.');
+  commit(ev ? `Invitation sent to ${to} from your ${CLOUD.calName(CLOUD.provider())}${ev.video ? ', with a Google Meet link' : ''}` : via === 'gcal-web' ? 'Google Calendar opened. Click Save there to send the invitation.' : via === 'outlook-web' ? 'Outlook opened. Click Send there to send the invitation.' : 'Invitation downloaded. Open it to add the meeting to your calendar, or attach it to an email.');
   memberDrawer(m.id);
 }
 async function findTimes(m) {
@@ -2018,6 +2019,7 @@ function localSignInDrawer(mode) {
   ${m === 'code' ? '<p class="note">Open your authenticator app and enter the six-digit code for Headcount. If you no longer have your phone, enter one of your recovery codes instead.</p>' : ''}
   ${first ? '<p class="note">You are the first person here, so your account will also manage the settings for Headcount: email, bill data, payments and who can sign up.</p>' : ''}
   ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts here need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
+  ${(m === 'signin' || m === 'signup') && CLOUD.googleClientId() ? `<div class="gsiwrap"><div id="gsiBtn"></div><p class="note" id="gsiMsg" role="status"></p></div><p class="orline"><span>or with your email</span></p>` : ''}
   <form id="locForm" class="form" data-mode="${m}">
     ${m === 'signup' ? field('loc_name', 'Your name', 'text', 'name') : ''}
     ${m === 'signup' && !JOIN ? field('loc_org', 'Firm or team name', 'text', 'organization', 'maxlength="80" placeholder="For example, Capitol Strategies"') : ''}
@@ -2029,6 +2031,20 @@ function localSignInDrawer(mode) {
     <p class="note wide" id="locMsg" role="status"></p>
   </form>
   ${first || m === 'reset' ? '' : m === 'code' ? '<p class="note"><button class="linkbtn" data-act="locMode" data-m="signin">Start over</button></p>' : `<p class="note">${m === 'signin' ? `New here? <button class="linkbtn" data-act="locMode" data-m="signup">Create an account</button> · <button class="linkbtn" data-act="locMode" data-m="forgot">Forgot your password?</button>` : `Already have an account? <button class="linkbtn" data-act="locMode" data-m="signin">Sign in</button>`}</p>`}`);
+  drawGoogleButton();
+}
+// Continue with Google: signs in, or makes the account the first time.
+function drawGoogleButton() {
+  const el = $('#gsiBtn'); if (!el) return;
+  CLOUD.googleButton(el, async (credential) => {
+    const msg = $('#gsiMsg'); if (msg) msg.textContent = 'Signing in';
+    try {
+      const r = await CLOUD.signInGoogle(credential, { invite: JOIN ? JOIN.code : undefined, workspace: $('#loc_org') ? $('#loc_org').value : undefined });
+      if (r && r.twoFactor) { LOC.ticket = r.ticket; return localSignInDrawer('code'); }
+      if (CLOUD.config.accounts) CLOUD.config.accounts.setup = false;
+      closeDrawer(); if (r && r.created) toast('Welcome to Headcount');
+    } catch (e) { if (msg) msg.textContent = e.message; }
+  }).then((ok) => { if (!ok) el.closest('.gsiwrap')?.remove(); });
 }
 async function submitLocal(form) {
   const m = form.dataset.mode, msg = $('#locMsg'), btn = $('button.primary', form), v = (id) => ($('#' + id) ? $('#' + id).value : '');
@@ -2121,7 +2137,7 @@ async function twoFactorForm(id) {
 function accountDrawer(scrollToEmail) {
   const u = CLOUD.user, p = CLOUD.provider(), cfg = CLOUD.config || {}, pr = PREFS || { digest: 'weekly', digestHour: 8, notifyAssigned: true, notifyAdded: true };
   const how = CLOUD.local() ? 'Email and password' : CLOUD.isSSO() ? 'Single sign-on' : CLOUD.providerName(u.provider);
-  const choices = p ? [p] : ['google', 'microsoft'];
+  const choices = p ? [p] : CLOUD.connectable();
   showDrawer(`<div class="row"><h2>Account</h2><button class="btn sm" data-act="close">Close</button></div>
   <dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Signed in with</dt><dd>${esc(how)}</dd>
   ${CLOUD.local() ? `<dt>Email confirmed</dt><dd>${u.emailVerified ? '<span class="status ok">Yes</span>' : `<span class="status wait">Not yet</span> <button class="btn sm" data-act="resendVerify">Send the link again</button>`}</dd>` : ''}
@@ -2301,6 +2317,15 @@ document.addEventListener('click', async (e) => {
       t.disabled = true; rqMsg('Sending');
       try { await CLOUD.mail.send({ to: [RQ.to], subject: RQ.subject, body: RQ.body }); } catch (err) { t.disabled = false; return rqMsg(err.message); }
       return recordRequest(m, CLOUD.mailName(CLOUD.provider()));
+    }
+    case 'rqCalLink': {
+      rqRead(); if (!rqCheckTo()) return;
+      const start = new Date(RQ.start), end = new Date(start.getTime() + RQ.mins * 60000);
+      if (Number.isNaN(start.getTime())) return rqMsg('Pick a date and time.');
+      if (start.getTime() < Date.now()) return rqMsg('Pick a time in the future.');
+      const st = rqStaffer(m), cal = t.dataset.cal === 'outlook' ? 'outlook' : 'google';
+      window.open(CLOUD.calendarLink(cal, { title: meetingTitle(m, st), description: inviteText(m), start, end, location: RQ.where, attendees: [RQ.to] }), '_blank', 'noopener');
+      return recordInvite(m, null, cal === 'outlook' ? 'outlook-web' : 'gcal-web');
     }
     case 'rqInvite': case 'rqIcs': {
       rqRead(); if (!rqCheckTo()) return;
