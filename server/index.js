@@ -210,6 +210,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   const scoreItems = score !== undefined ? score : (input) => import('./ai.js').then((m) => m.scoreItems(input));
   const monitor = makeMonitor(config, store, { score: scoreItems, aiOn: () => (score !== undefined ? Boolean(score) : config.aiEnabled) }), crm = makeCrm(config, store), staffLists = makeStaffLists(store);
   mail = makeMailer(config, store);
+  // Email that could not be sent before a restart (a new password, a fixed setting) gets another try right away.
+  try { store.q.retryEmails.run(Date.now() - 3 * 864e5); } catch (_) { /* older database */ }
   const notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
   // Rebuilds the Florida lists and official staff from the official sources
