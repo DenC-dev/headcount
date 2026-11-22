@@ -506,6 +506,18 @@ test('a workspace staff list (a LegiStorm export) fills in staff with real email
   ok(await api('alice', 'PATCH', `/api/workspaces/${W}/members/dev:bob`, { role: 'admin' }));
 });
 
+test('the public record: which questions count as a vote on the bill, and reading House and Senate roll calls', async () => {
+  const { stance, parseHouseRoll, parseSenateRoll } = await import('../server/record.js');
+  assert.equal(stance('On Passage'), 'for'); assert.equal(stance('On Motion to Concur in the Senate Amendment'), 'for');
+  assert.equal(stance('Passage, Third Reading'), 'for'); assert.equal(stance('Favorable with Committee Substitute'), 'for');
+  assert.equal(stance('On Motion to Recommit'), ''); assert.equal(stance('On the Cloture Motion'), ''); assert.equal(stance('On the Amendment (Smith Amdt. No. 3)'), '');
+  assert.equal(stance('On the Motion (Warnock Motion to Commit H.R. 1 to the Committee on Finance)'), '');
+  const h = parseHouseRoll('<rollcall-vote><vote-metadata><vote-question>On Passage</vote-question><vote-result>Passed</vote-result><action-date>10-Apr-2025</action-date></vote-metadata><vote-data><recorded-vote><legislator name-id="B001323" sort-field="Begich" unaccented-name="Begich" party="R" state="AK" role="legislator">Begich</legislator><vote>Yea</vote></recorded-vote><recorded-vote><legislator name-id="A000370" unaccented-name="Adams" party="D" state="NC" role="legislator">Adams</legislator><vote>No</vote></recorded-vote></vote-data></rollcall-vote>');
+  assert.equal(h.date, '2025-04-10'); assert.deepEqual(h.votes.map((v) => [v.id, v.v]), [['B001323', 'yes'], ['A000370', 'no']]);
+  const sn = parseSenateRoll('<roll_call_vote><vote_date>July 1, 2025, 11:59 AM</vote_date><vote_question_text>On Passage of the Bill H.R. 1</vote_question_text><members><member><last_name>Alsobrooks</last_name><first_name>Angela</first_name><state>MD</state><vote_cast>Nay</vote_cast></member><member><last_name>Murkowski</last_name><state>AK</state><vote_cast>Not Voting</vote_cast></member></members></roll_call_vote>');
+  assert.equal(sn.date, '2025-07-01'); assert.deepEqual(sn.votes.map((v) => [v.last, v.state, v.v]), [['Alsobrooks', 'MD', 'no'], ['Murkowski', 'AK', 'other']]);
+});
+
 test('the demo request form stores the lead and emails sales', async () => {
   const post = (b) => fetch(base + '/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
   assert.equal((await post({ name: 'Pat', email: 'nope' })).status, 400);

@@ -14,6 +14,7 @@ import { makeMailer, htmlEmail } from './mail.js';
 import { makeNotifier } from './notify.js';
 import { makeAuthenticator } from './auth.js';
 import { lookupBill, STATES } from './bills.js';
+import { billRecord } from './record.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
@@ -412,6 +413,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['POST', `/api/campaigns/${C}/invites`, async (m, x) => store.createInvite(m[1], x.user.id, (await x.body()).role)],
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
+    ['GET', '/api/bills/record', async (m, x) => { limit('record:' + x.user.id, 30); const q = x.url.searchParams; return billRecord(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
     ['POST', '/api/bills/draft', async (m, x) => {
       if (!draftBrief) throw new HttpError(501, 'AI drafting is not turned on. An admin can add it under Admin settings, AI writing help.');
       limit('draft:' + x.user.id, 3);

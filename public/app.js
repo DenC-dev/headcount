@@ -984,6 +984,11 @@ async function lookupBill(form) {
   try {
     const q = new URLSearchParams({ jurisdiction: fd.get('j'), number: String(fd.get('n')).trim() }); if (String(fd.get('s') || '').trim()) q.set('session', String(fd.get('s')).trim());
     const r = await CLOUD.api('GET', `/api/bills/lookup?${q}`);
+    fillBrief(r, other);
+    briefPanel = ''; save(); render(); toast(`${r.number} filled in from ${r.source}`);
+  } catch (e) { btn.disabled = false; btn.textContent = 'Look it up'; btn.dataset.sure = ''; if (msgEl) msgEl.textContent = e.message; else fail(e); }
+}
+function fillBrief(r, other) {
     const b = S.brief;
     if (other) { const blank = blankBrief(); ['plainSummary', 'keyProvisions', 'whoItAffects', 'fiscalImpact', 'supporters', 'opponents', 'talkingPoints', 'objections', 'needsChecking', 'draftedAt'].forEach((k) => { b[k] = blank[k]; }); }
     Object.assign(b, { number: r.number, title: r.title, jurisdiction: r.jurisdiction, session: r.session,
@@ -991,8 +996,96 @@ async function lookupBill(form) {
       status: r.latestAction ? `${r.latestAction.text}${r.latestAction.date ? ` (${r.latestAction.date})` : ''}` : '', committees: r.committees.join('; '), introduced: r.introduced,
       url: r.url, officialSummary: r.officialSummary, officialSummaryLabel: r.officialSummaryLabel, source: r.source, fetchedAt: r.fetchedAt });
     if (!S.campaign.bill || /^(your bill|new campaign|untitled)/i.test(S.campaign.bill)) S.campaign.bill = `${r.number}: ${r.title}`.slice(0, 140);
-    briefPanel = ''; save(); render(); toast(`${r.number} filled in from ${r.source}`);
-  } catch (e) { btn.disabled = false; btn.textContent = 'Look it up'; btn.dataset.sure = ''; if (msgEl) msgEl.textContent = e.message; else fail(e); }
+}
+
+// ---------- filling the count from the public record ----------
+// Sponsors and cosponsors, the committee that has the bill and its members,
+// and how each member voted on it. Only members nobody has worked yet change;
+// what you learned yourself always wins. Runs when a campaign is created and
+// again once a day while it is open, so new cosponsors and votes show up.
+const FED_NUM = /\b(H\.?\s?R\.?|S\.?|H\.?\s?Res\.?|S\.?\s?Res\.?|H\.?\s?J\.?\s?Res\.?|S\.?\s?J\.?\s?Res\.?|H\.?\s?Con\.?\s?Res\.?|S\.?\s?Con\.?\s?Res\.?)\s?(\d{1,5})\b/i;
+function billNumberOf(st = S) {
+  if (st.brief && st.brief.number) return st.brief.number;
+  const head = String(st.campaign.bill || '').split(':')[0];
+  const f = FED_NUM.exec(head); if (f) return `${f[1]} ${f[2]}`;
+  const m = /\b([A-Z]{1,4})\.?\s?(\d{1,5})\b/.exec(head); return m ? `${m[1]} ${m[2]}` : '';
+}
+function recordReady(st = S) {
+  const ch = campaignChamber(st);
+  return Boolean(signedIn() && CLOUD.api && ch.level && (ch.level === 'us' || ch.state) && billNumberOf(st) && !st.example);
+}
+function personMatch(p, ch, idx) {
+  if (p.id && idx.ref.has(p.id)) return idx.ref.get(p.id);
+  const last = nameKey(p.last || lastName(p.name)); if (!last) return null;
+  let c = idx.last.get(last) || [];
+  if (ch.level === 'us') {
+    if (ch.chamber === 'lower' && p.district === '' && !p.state) return null;
+    if (ch.chamber === 'upper' && p.district) return null; // a House member
+    if (p.state) c = c.filter((m) => String(m.district || '').toUpperCase().startsWith(p.state.toUpperCase()));
+    if (ch.chamber === 'lower' && p.district) c = c.filter((m) => { const d = String(m.district).split('-')[1] || ''; return d === String(p.district) || (/^(al|0)$/i.test(d) && /^(0|al|)$/i.test(String(p.district))); });
+  } else {
+    if (p.chamber && p.chamber !== ch.chamber) return null;
+    if (p.district) c = c.filter((m) => String(m.district).replace(/^0+/, '') === String(p.district).replace(/^0+/, ''));
+  }
+  if (c.length > 1 && p.first) c = c.filter((m) => nameKey(m.name).startsWith(nameKey(p.first)));
+  return c.length === 1 ? c[0] : null;
+}
+function applyRecord(r, ch) {
+  const idx = { ref: new Map(), last: new Map() };
+  for (const m of S.members) { if (m.ref) idx.ref.set(m.ref, m); const k = nameKey(lastName(m.name)); if (!idx.last.has(k)) idx.last.set(k, []); idx.last.get(k).push(m); }
+  const free = (m) => !lastContact(m) && (m.pos === 2 || m.posFrom === 'record');
+  const ev = new Map(), set = (m, pos, why, mov) => { if (m && !ev.has(m.id)) ev.set(m.id, { pos, why, mov }); };
+  // A recorded vote on the bill itself is the strongest sign, newest first.
+  for (const v of r.votes.filter((x) => x.stance === 'for' && (!x.chamber || x.chamber === ch.chamber))) {
+    const when = v.date ? fmtDay(v.date) : '';
+    for (const x of v.votes) if (x.v !== 'other') set(personMatch(x, ch, idx), x.v === 'yes' ? 4 : 0, `Voted ${x.v} on "${v.motion}"${when ? `, ${when}` : ''}`, 2);
+  }
+  r.sponsors.forEach((p) => set(personMatch(p, ch, idx), 4, `Sponsor of ${r.bill}`, 1));
+  r.cosponsors.forEach((p) => set(personMatch(p, ch, idx), 4, `Cosponsor of ${r.bill}`, 1));
+  const out = { yes: 0, no: 0, skipped: 0, committee: '', cmte: 0 };
+  for (const m of S.members) {
+    const e = ev.get(m.id); if (!e) continue;
+    if (!free(m)) { if (m.pos !== e.pos) out.skipped++; continue; }
+    if (m.pos !== e.pos) m.history.push({ d: iso(new Date()), type: 'Count update', from: m.pos, to: e.pos, note: `From the public record (${r.source}): ${e.why}`, by: ME || '' });
+    m.pos = e.pos; m.mov = e.mov; m.posFrom = 'record'; m.recordNote = e.why;
+    if (e.pos === 4) out.yes++; else out.no++;
+  }
+  // The committee that has the bill now, in this chamber
+  const cm = r.committees.filter((x) => (!x.chamber || x.chamber === ch.chamber) && x.members.length);
+  const now = cm.find((x) => x.now) || cm.find((x) => !x.reported) || null;
+  if (now && (!S.campaign.committee || S.campaign.cmteFrom === 'record')) {
+    S.campaign.committee = now.name.replace(/^(House|Senate) /, '').slice(0, 80); S.campaign.cmteFrom = 'record';
+    const on = new Map(); for (const p of now.members) { const m = personMatch(p, ch, idx); if (m) on.set(m.id, p.role || ''); }
+    for (const m of S.members) { const was = m.cmte; m.cmte = on.has(m.id); if (m.cmte) m.role = /chair|ranking/i.test(on.get(m.id)) ? on.get(m.id) : (was ? m.role : ''); else if (m.role && /chair|ranking/i.test(m.role)) m.role = ''; }
+    out.committee = S.campaign.committee; out.cmte = on.size;
+  }
+  S.record = { at: Date.now(), bill: r.bill, source: r.source };
+  return out;
+}
+async function fillFromRecord({ auto = false } = {}) {
+  if (!recordReady()) { if (!auto) toast(signedIn() ? 'Add the bill number to the campaign name (for example HB 123 or H.R. 1234) and pick the chamber first.' : 'Sign in to fill the count from the public record.'); return null; }
+  if (!canEditNow()) return null;
+  const ch = campaignChamber(), camp = S.id;
+  const q = new URLSearchParams({ jurisdiction: ch.level === 'us' ? 'US' : ch.state, number: billNumberOf() });
+  if (S.brief.session && ch.level !== 'us') q.set('session', S.brief.session);
+  if (!auto) toast('Checking the public record');
+  try {
+    const r = await CLOUD.api('GET', `/api/bills/record?${q}`);
+    if (S.id !== camp) return null;
+    if (!hasBrief(S.brief) && !S.brief.number) { try { fillBrief(await CLOUD.api('GET', `/api/bills/lookup?${new URLSearchParams({ jurisdiction: q.get('jurisdiction'), number: q.get('number') })}`), false); } catch (_) { /* the count still fills */ } }
+    const out = applyRecord(r, ch);
+    commit();
+    const bits = [out.yes ? `${out.yes} marked Yes` : '', out.no ? `${out.no} marked No` : '', out.committee ? `committee: ${out.committee} (${out.cmte})` : ''].filter(Boolean);
+    if (!auto || bits.length) toast(bits.length ? `From the public record: ${bits.join(', ')}` : `Nothing new on the record for ${r.bill} yet`);
+    return out;
+  } catch (e) { if (!auto) fail(e); else S.recordTried = Date.now(); return null; }
+}
+let RECORD_CHECK = '';
+function recordDaily() {
+  if (!S.cloud || !recordReady() || !canEditNow()) return;
+  const due = !S.record || Date.now() - S.record.at > 864e5, tried = S.recordTried && Date.now() - S.recordTried < 36e5;
+  if (!due || tried || RECORD_CHECK === S.id) return;
+  RECORD_CHECK = S.id; setTimeout(() => { if (RECORD_CHECK === S.id) fillFromRecord({ auto: true }).finally(() => { RECORD_CHECK = ''; }); }, 800);
 }
 async function draftAnalysis(form) {
   const go = $('#dfGo'), msg = $('#dfMsg');
@@ -1714,7 +1807,8 @@ function renderAcct() {
   else el.innerHTML = '';
 }
 function render() {
-  autoStaff();
+  autoStaff(); recordDaily();
+  { const mr = $('#menuRecord'); if (mr) mr.hidden = !(signedIn() && S.cloud && !S.example && canEditNow()); }
   const c = S.campaign, cfg = CLOUD.config || {}, campaignPage = page === 'count' || page === 'brief', team = signedIn() && ORG && ORG.role !== 'guest';
   if ((page === 'monitor' || page === 'contacts') && !team && signedIn() && ORG) page = 'portfolio';
   renderSwitcher();
@@ -2245,6 +2339,7 @@ document.addEventListener('click', async (e) => {
     case 'editStaff': staffEdit = t.dataset.sid; memberDrawer(openId); { const f = $('#st_name'); if (f) f.focus(); } return;
     case 'cancelStaff': staffEdit = null; return memberDrawer(openId);
     case 'logStaff': tab = 'act'; schedOpen = false; outKind = null; memberDrawer(openId); if ($('#c_who')) { $('#c_who').value = t.dataset.sid; $('#logHead').scrollIntoView({ block: 'start' }); $('#c_note').focus(); } return;
+    case 'fromRecord': $('#moreMenu').open = false; await fillFromRecord(); return;
     case 'slRemove': if (sure('Click again to remove')) { try { await CLOUD.api('DELETE', wsPath('/staff-list')); ORG_STAFF.list = null; renderWorkspace(true); toast('Staff list removed'); } catch (e) { fail(e); } } return;
     case 'rmStaff': if (m && sure('Confirm remove')) { const gone = m.staffers.find((s) => s.id === t.dataset.sid); if (gone && gone.src === 'directory') m.dirGone = [...(m.dirGone || []), nameKey(gone.name)].slice(-40); m.staffers = m.staffers.filter((s) => s.id !== t.dataset.sid); save(); toast('Staff member removed'); memberDrawer(openId); renderRows(); } return;
     case 'saveRep': return download(`headcount-${repKind}-${today()}.${REPORTS[repKind][1]}`, reportText(), repKind === 'client' ? 'text/plain' : 'text/csv');
@@ -2263,7 +2358,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'bulk': {
       const party = $('#b_party').value, to = +$('#b_pos').value; let n = 0;
-      S.members.forEach((x) => { if (x.party === party && x.pos !== to) { x.pos = to; n++; } });
+      S.members.forEach((x) => { if (x.party === party && x.pos !== to) { x.pos = to; delete x.posFrom; n++; } });
       closeDrawer(); return commit(`${n} member${n === 1 ? '' : 's'} set to ${POS[to]}`);
     }
     case 'import': {
@@ -2309,7 +2404,7 @@ document.addEventListener('change', async (e) => {
   }
   if (t.dataset.pos) {
     const m = S.members.find((x) => x.id === t.dataset.pos), to = +t.value;
-    if (m && m.pos !== to) { m.history.push(stamp({ d: today(), type: 'Count update', from: m.pos, to, note: '' })); m.pos = to; commit(`${m.name}: ${POS[to]}`); if (openId === m.id && !$('#drawer').hidden) memberDrawer(m.id); }
+    if (m && m.pos !== to) { m.history.push(stamp({ d: today(), type: 'Count update', from: m.pos, to, note: '' })); m.pos = to; delete m.posFrom; commit(`${m.name}: ${POS[to]}`); if (openId === m.id && !$('#drawer').hidden) memberDrawer(m.id); }
   } else if (t.dataset.plan) {
     S.plan = t.checked ? S.plan.concat(t.dataset.plan) : S.plan.filter((x) => x !== t.dataset.plan);
     const nd = needs(S); renderCalls(nd, passage(S.members, baseProbs(S), nd));
@@ -2379,6 +2474,7 @@ document.addEventListener('submit', async (e) => {
     }
     closeDrawer(); page = 'count'; await addCampaign(st);
     toast(st.members.length ? `Campaign created with ${st.members.length} members` : 'Campaign created. Add members with Edit campaign.');
+    if (st.members.length && recordReady()) { RECORD_CHECK = S.id; fillFromRecord({ auto: true }).finally(() => { RECORD_CHECK = ''; }); }
     return;
   }
   if (id === 'sForm') {
@@ -2407,7 +2503,7 @@ document.addEventListener('submit', async (e) => {
     m.history.push(stamp({ d: fd.get('d') || today(), type: fd.get('type'), who: st ? st.name : '', from: m.pos, to, note: cut('note', 1000) }));
     if (m.history.length > 60) m.history = m.history.slice(-60);
     if (cut('fu', 200)) S.tasks.push(stamp({ id: uid(), text: cut('fu', 200), due: fd.get('fud') || '', mid: m.id, done: false, assignee: S.cloud ? String(fd.get('fufor') || '') : '' }));
-    m.pos = to; commit('Contact logged'); tab = 'history'; return memberDrawer(m.id);
+    m.pos = to; delete m.posFrom; commit('Contact logged'); tab = 'history'; return memberDrawer(m.id);
   }
 });
 

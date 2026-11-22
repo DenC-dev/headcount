@@ -469,7 +469,7 @@ try {
   await shot(visitor.page, 'site-home', true);
   await visitor.page.fill('form.lead [name=name]', 'Pat Lee'); await visitor.page.fill('form.lead [name=email]', 'pat@leepartners.example');
   await visitor.page.fill('form.lead [name=firm]', 'Lee Partners'); await visitor.page.click('form.lead button[type=submit]');
-  await visitor.page.waitForFunction(() => /Thank you/.test(document.querySelector('form.lead .status').textContent));
+  await visitor.page.waitForFunction(() => /Your message was sent/.test(document.querySelector('form.lead .status').textContent));
   assert.ok((await outbox()).some((x) => x.kind === 'lead' && x.to_addr === 'sales@headcount.test'));
   await visitor.page.goto(`${BASE}/pricing`); await shot(visitor.page, 'site-pricing', true);
   assert.match(await visitor.page.locator('table.plans').innerText(), /Sign in through your firm's own login page/);
