@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Headcount: whip counts and meeting requests for lobbyists and advocates</title>
-<meta name="description" content="Headcount lists every legislator in the chamber with their office, phone and staff. Mark where each one stands, see the odds your bill passes and who is worth a meeting, and send the request from Gmail, Outlook or your own email app. Free to try in your browser.">
-<meta name="theme-color" content="#0a0f20">
+<title>Headcount: whip counts for lobbyists, advocates and citizens</title>
+<meta name="description" content="A whip count for your bill: every legislator with their office and staff, the odds it passes, who to see next, and meeting requests you send from Gmail, Outlook or your own email app. Free to try in your browser.">
+<meta name="theme-color" content="#ffffff">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@125,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,380..600;1,6..72,400..500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="site.css">
 <link rel="stylesheet" href="pages.css">
 </head>
@@ -18,135 +18,108 @@
 {{header}}
 <main id="main">
 
-<section class="hero">
-  <div class="wrap hero-grid">
-    <div>
-      <h1>Count the votes on your bill</h1>
-      <p class="lede">Headcount lists every legislator in the chamber with their office, phone and staff. You mark where each one stands. It estimates the odds the bill passes, shows who is worth a meeting, and drafts the request for you to send from Gmail, Outlook or your own email app.</p>
-      <div class="ctas"><a class="button" href="./app/">Try it free</a><a class="button ghost" href="{{signin}}">Create an account</a></div>
-      <p class="fine">Works in your browser. Trying it needs no account and no card. <span id="srcLine"><a href="./status.html">Data sources</a></span></p>
-    </div>
-    <figure class="stage" aria-label="An example vote count: a 41-seat chamber colored by each member's position, with the odds of passage and the member to see next">
-      <div class="stage-top"><span>Example</span><span>SB 214, a 41-seat state senate</span></div>
-      {{hemicycle}}
-      <div class="meterwrap"><div class="meter" aria-hidden="true"><span class="m4"></span><span class="m3"></span><span class="m2"></span><span class="m1"></span><span class="m0"></span></div><span class="need" aria-hidden="true"><b>21 to pass</b></span></div>
-      <div class="readout">
-        <div><span class="k">Odds of passage</span><b id="hOdds">71%</b></div>
-        <div><span class="k">Yes and leaning yes</span><b id="hCount">19<small> / 21</small></b></div>
-        <div class="next"><span class="k">See next</span><span id="hNext">Sen. Hallstrom <em>+4 pts</em></span></div>
-      </div>
-    </figure>
-  </div>
-  <div class="sources"><div class="wrap"><b>Data from</b><span data-src="Congress.gov">Congress.gov</span><span data-src="Open States">Open States</span><span>House staff directory</span><span>flsenate.gov and flhouse.gov</span><span data-src="Federal Register">Federal Register</span><span data-src="SAM.gov">SAM.gov</span><span data-src="LDA.gov">Lobbying disclosures</span><span data-src="USAspending">USAspending.gov</span><span data-src="Census">Census Bureau</span></div></div>
-</section>
-
-<section class="band" id="how"><div class="wrap">
-  <div class="section-head reveal"><h2>How people use it</h2></div>
-  <ol class="steps">
-    <li class="reveal"><h3>Start a campaign</h3><p>Name the bill and pick the chamber. The current members load with their offices and phones, and with their staff for the U.S. House and the Florida Legislature.</p></li>
-    <li class="reveal"><h3>Mark positions</h3><p>Set each member to Yes, Lean yes, Undecided, Lean no or No as you hear from them. The odds and the list of who to see next update as you go.</p></li>
-    <li class="reveal"><h3>Ask for meetings</h3><p>The request goes to the scheduler or the right aide, offers three times, and opens in your email ready to send.</p></li>
-    <li class="reveal"><h3>Keep a record</h3><p>Log calls and meetings as they happen. The quarterly activity report lists them by client and issue for your lobbying disclosure.</p></li>
-  </ol>
+<section class="hero"><div class="wrap">
+  <h1>Count the votes on your bill</h1>
+  <p class="lede">Pick the chamber and Headcount lists every legislator with their office, phone and staff. Mark where each one stands and it works out the odds the bill passes, who is worth a meeting, and drafts the request for you to send from Gmail, Outlook or your own email app.</p>
+  <div class="ctas"><a class="button" href="./app/">Try it free</a><a class="button ghost" href="{{signin}}">Create an account</a></div>
+  <p class="fine">Trying it needs no account and no card; it's saved in your browser. <span id="srcLine"><a href="./status.html">Data sources</a></span></p>
+  <figure class="shot"><img src="img/site-count.png" width="1148" height="516" alt="The U.S. House colored by position on H.R. 3633: 291 yes, 131 no, 11 undecided, with the odds of passage">
+    <figcaption>H.R. 3633, the CLARITY Act, filled in from the House roll call of July 17, 2025. Members who didn't vote, or who joined the House later, show as undecided.</figcaption></figure>
 </div></section>
 
-<section class="band showcase" id="product"><div class="wrap">
-  <div class="section-head reveal"><h2>What's in it</h2></div>
-  <div class="tabs" role="tablist" aria-label="Parts of Headcount">
-    <button class="tab" role="tab" id="t-count" aria-controls="p-count" aria-selected="true"><svg width="17" height="17" aria-hidden="true"><use href="#i-count"/></svg>Vote count</button>
-    <button class="tab" role="tab" id="t-request" aria-controls="p-request" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-mail"/></svg>Meeting requests</button>
-    <button class="tab" role="tab" id="t-brief" aria-controls="p-brief" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-brief"/></svg>Bill briefs</button>
-    <button class="tab" role="tab" id="t-monitor" aria-controls="p-monitor" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-radar"/></svg>Monitor</button>
-    <button class="tab" role="tab" id="t-portfolio" aria-controls="p-portfolio" aria-selected="false" tabindex="-1"><svg width="17" height="17" aria-hidden="true"><use href="#i-grid"/></svg>Portfolio</button>
+<section class="band" id="record"><div class="wrap">
+  <h2>With an account, it starts from the public record</h2>
+  <div class="text">
+    <p>Start a campaign with the bill number and Headcount looks the bill up on Congress.gov or Open States:</p>
+    <ul>
+      <li>Sponsors and cosponsors are marked Yes.</li>
+      <li>Members who voted on the bill itself are marked the way they voted. Procedural votes like motions to recommit are left out.</li>
+      <li>The committee that has the bill is set, with its members, chair and ranking member.</li>
+      <li>The bill brief gets the sponsors, status, committees and official summary.</li>
+    </ul>
+    <p>It checks again every day. Anyone you've already talked to is left exactly as you marked them. The free browser version doesn't do this part; you mark positions yourself.</p>
   </div>
-  <div class="reveal">
-    <div role="tabpanel" id="p-count" aria-labelledby="t-count">
-      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / vote count</span></div><figure><img src="img/count.png" width="1280" height="820" alt="The vote count: a chamber of seats colored by position, 18 of 21 votes, and 50 percent odds of passage"></figure></div>
-      <div class="panel-copy"><h3>The count</h3><ul><li>Estimated odds of clearing committee and the floor, from each member's position</li><li>Simple majority, three-fifths or two-thirds, whether you want the bill passed or stopped</li><li>What moved this week, and the members whose vote would change the odds most</li></ul></div>
-    </div>
-    <div role="tabpanel" id="p-request" aria-labelledby="t-request" hidden>
-      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / meeting request</span></div><figure><img src="img/request.png" width="1280" height="820" alt="A meeting request to a senator's scheduler with three times to offer" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Meeting requests</h3><ul><li>Addressed to the scheduler or aide from the official staff list, where the chamber publishes one</li><li>Opens in Gmail, Outlook or your email app, ready to send</li><li>When they reply, send a calendar invitation and set a follow-up</li></ul></div>
-    </div>
-    <div role="tabpanel" id="p-brief" aria-labelledby="t-brief" hidden>
-      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / bill brief</span></div><figure><img src="img/brief.png" width="1280" height="820" alt="A bill brief with sponsors, status, the position and the summary" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Bill briefs</h3><ul><li>Type the bill number and the sponsors, status and official summary fill in</li><li>Add your position and talking points, or have AI draft them if it's turned on</li><li>For federal bills, who else is lobbying on it, from lobbying disclosure filings</li></ul></div>
-    </div>
-    <div role="tabpanel" id="p-monitor" aria-labelledby="t-monitor" hidden>
-      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / monitor</span></div><figure><img src="img/monitor.png" width="1280" height="820" alt="The Monitor: new bills, a proposed rule and a contract notice, each scored for relevance with a one-line reason" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Monitor</h3><ul><li>New bills in Congress and the states, federal rules and federal contract notices that match your words</li><li>Track a bill and get an email when it moves</li><li>Start a campaign from any bill on the list</li></ul></div>
-    </div>
-    <div role="tabpanel" id="p-portfolio" aria-labelledby="t-portfolio" hidden>
-      <div class="browser"><div class="bar"><i></i><i></i><i></i><span class="url">headcount / portfolio</span></div><figure><img src="img/portfolio.png" width="1280" height="820" alt="A portfolio of four campaigns with clients, odds, counts and next votes" loading="lazy"></figure></div>
-      <div class="panel-copy"><h3>Portfolio</h3><ul><li>Each campaign's odds, count and next vote</li><li>Meetings requested and booked, and follow-ups that are overdue</li><li>Add clients as guests so they see their own campaigns</li></ul></div>
-    </div>
-  </div>
-  <p class="example-note">The screens show a made-up firm and bills.</p>
 </div></section>
 
-<section class="band" id="grassroots"><div class="wrap spotlight">
-  <div class="reveal">
-    <h2>A page for your supporters</h2>
-    <p class="intro">Each campaign can have a public page. A supporter types their address, sees which of their own legislators you need, and writes or calls. Their letter shows up next to that legislator in your count.</p>
-    <ol class="points">
-      <li><span class="num">1</span><div><b>They find their legislators</b><span>The address is matched to districts using the Census Bureau's lookup.</span></div></li>
-      <li><span class="num">2</span><div><b>They send a letter or call</b><span>They can edit your draft letter, or call the office with your script.</span></div></li>
-      <li><span class="num">3</span><div><b>You see it in the count</b><span>"3 constituent letters" appears next to that member before you meet.</span></div></li>
-    </ol>
+<section class="band" id="product"><div class="wrap">
+  <h2>Then you work the undecided</h2>
+  <div class="pair">
+    <figure class="shot"><img src="img/site-request.png" width="480" height="719" alt="A meeting request to a congressional office's director of operations, with three times to offer and the drafted email"></figure>
+    <div class="text">
+      <h3>Meeting requests</h3>
+      <p>Open a member and choose Request a meeting. The request goes to the scheduler or the right aide, from the official staff list where the chamber publishes one. Headcount offers three times, drafts the email and opens it in Gmail, Outlook or your own email app.</p>
+      <p>No official list publishes staff email addresses, so Headcount writes them in the format each chamber uses and labels them. If your firm subscribes to LegiStorm, upload its staff export and the real addresses are used instead.</p>
+      <h3>Who to see next</h3>
+      <p>A short list of the members who would move your odds the most, with how movable each one is and when anyone last talked to them.</p>
+      <h3>Notes and follow-ups</h3>
+      <p>Log a call or meeting on the member, set the follow-up, and the whole team sees it within seconds.</p>
+    </div>
   </div>
-  <div class="phone-wrap reveal"><div class="phone"><img src="img/action.png" width="780" height="1688" alt="A public action page on a phone: the supporter's senator and the letter to send" loading="lazy"></div></div>
+</div></section>
+
+<section class="band" id="brief"><div class="wrap">
+  <h2>A brief for the meeting</h2>
+  <p class="intro">Sponsors, status, committees and the official summary, filled in from the bill. Add your position and talking points, then print it or save it as a PDF.</p>
+  <figure class="shot"><img src="img/site-brief.png" width="1148" height="650" alt="A bill brief for H.R. 3633 with sponsors, status, committees and the Congressional Research Service summary" loading="lazy"></figure>
 </div></section>
 
 <section class="band" id="more"><div class="wrap">
-  <div class="section-head reveal"><h2>Also included</h2></div>
-  <div class="grid3">
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-scales"/></svg></span><h3>Who else is lobbying</h3><p>Federal disclosure filings that mention your bill: the clients, the firms and what they reported. For contracts, who has won similar work.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-contacts"/></svg></span><h3>Contacts</h3><p>Agency staff, coalition partners and reporters, with notes your team shares. Email a group from your own Gmail or Outlook.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-dome"/></svg></span><h3>Any legislature</h3><p>Congress, the Florida Legislature, and any other state's senate, house or assembly through Open States.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-spark"/></svg></span><h3>AI, only if you want it</h3><p>Off until whoever runs your Headcount turns it on. Then it drafts summaries and talking points from the bill text, marked as drafts to check.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-mail"/></svg></span><h3>A morning email</h3><p>Position changes, votes and meetings coming up, overdue follow-ups and new Monitor items, at the hour you pick.</p></div>
-    <div class="card reveal"><span class="icon"><svg width="24" height="24" aria-hidden="true"><use href="#i-phone"/></svg></span><h3>On your phone</h3><p>Add it to your home screen. It keeps working on a weak signal and catches up when you're back online.</p></div>
+  <h2>Also in Headcount</h2>
+  <div class="notes">
+    <div><h3>Monitor</h3><p>Tell it a few words, like "broadband" or "flood insurance", and it checks Congress, the states and new federal rules every day, and tells you what matches.</p></div>
+    <div><h3>Supporter pages</h3><p>A public page for each campaign. Supporters type their address, see their own legislators, and send a letter or call. Letters show up next to that member in your count.</p></div>
+    <div><h3>Who else is lobbying</h3><p>Federal lobbying disclosures that mention your bill: the clients, the firms and what they reported.</p></div>
+    <div><h3>Contacts</h3><p>Agency staff, coalition partners and reporters, with notes the team shares. Email a group from your own Gmail or Outlook.</p></div>
+    <div><h3>Reports</h3><p>A client update, the full whip count, or a quarter's contacts by client and issue for your lobbying disclosure.</p></div>
+    <div><h3>On your phone</h3><p>Add it to your home screen. It keeps working on a weak signal in the Capitol and catches up when you're back online.</p></div>
   </div>
 </div></section>
 
 <section class="band" id="coverage"><div class="wrap">
-  <div class="section-head reveal"><h2>Where the member lists come from</h2></div>
-  <div class="facts reveal">
-    <div><h3>U.S. House</h3><p>Every current member, with office phones and the staff listed in the House's own directory: names, titles and phone numbers.</p></div>
-    <div><h3>U.S. Senate</h3><p>All 100 senators with their offices. The Senate doesn't publish a staff directory, so you add the staff you know.</p></div>
+  <h2>Where the information comes from</h2>
+  <div class="notes">
+    <div><h3>U.S. House</h3><p>Every current member, with office phones and the staff listed in the House's own directory. Votes from the House Clerk.</p></div>
+    <div><h3>U.S. Senate</h3><p>All 100 senators and their offices, with votes from the Senate. The Senate publishes no staff directory, so you add the staff you know.</p></div>
     <div><h3>Florida Legislature</h3><p>The Senate and House for the 2026&ndash;2028 term, from flsenate.gov and flhouse.gov, with legislative and district aides. Checked weekly.</p></div>
-    <div><h3>Other states</h3><p>Current members from Open States. Staff aren't included; you can add them by hand or paste a list.</p></div>
+    <div><h3>Other states</h3><p>Current members, bills, votes and committees from Open States.</p></div>
   </div>
-  <p class="intro reveal">No official directory lists staff email addresses. Headcount writes them in the format each chamber uses, like first.last@mail.house.gov, and labels them so you know to check.</p>
 </div></section>
 
-<section class="band pricing" id="plans"><div class="wrap">
-  <div class="section-head reveal"><h2>Plans</h2><p class="intro">Paid plans aren't on sale yet. Until they are, a free account includes everything in Team.</p></div>
-  <div class="plans4">
-    <div class="card reveal"><h3>Free</h3><p class="price">In your browser · no account</p><ul><li>Vote counts with live odds</li><li>Who to see next</li><li>Congress and the Florida Legislature, with staff where published</li><li>Bill briefs, written by hand</li><li>Meeting requests in Gmail, Outlook or your email app</li><li>Saved in this browser only</li></ul><a class="button ghost" href="./app/">Try it free</a></div>
-    <div class="card reveal"><h3>Free account</h3><p class="price">Sign in · no card</p><ul><li>Everything in Free</li><li>Saved to your account, on any device</li><li>For now, everything in Team as well</li><li>Any state legislature</li><li>Contacts and email digests</li><li>Two-step sign-in</li><li>Calendar feed for Outlook and Google</li></ul><a class="button ghost" href="{{signin}}">Sign in</a></div>
-    <div class="card featured reveal"><h3>Team <span class="tier">Premium</span></h3><p class="price">Per person, monthly</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 Monitor watches for bills, rules and contracts</li><li>Supporter pages and letters</li><li>See who else is lobbying on a bill</li><li>Quarterly activity report and client guests</li><li>Require two-step sign-in</li></ul><a class="button" href="{{signin}}">Create an account</a></div>
-    <div class="card reveal"><h3>Firm <span class="tier">Premium</span></h3><p class="price">Per person, monthly · for larger firms</p><ul><li>Everything in Team</li><li>Sign in through your firm's own login page</li><li>Unlimited Monitor watches and guests</li><li>Invoices on request</li></ul><a class="button ghost" href="{{contact}}">Talk to us</a></div>
+<section class="band" id="plans"><div class="wrap">
+  <h2>Plans</h2>
+  <p class="intro">Paid plans aren't on sale yet. Until they are, a free account includes everything in Team.</p>
+  <div class="plans4" style="margin-top:22px">
+    <div class="card"><h3>Free</h3><p class="price">In your browser, no account</p><ul><li>Vote counts with live odds</li><li>Who to see next</li><li>Congress and the Florida Legislature, with staff where published</li><li>Meeting requests in Gmail, Outlook or your email app</li><li>Saved in this browser only</li></ul><a class="button ghost" href="./app/">Try it free</a></div>
+    <div class="card"><h3>Free account</h3><p class="price">Sign in, no card</p><ul><li>Everything in Free</li><li>Filled in from the public record</li><li>Saved to your account, on any device</li><li>Any state legislature</li><li>Bill briefs looked up for you</li><li>For now, everything in Team as well</li></ul><a class="button ghost" href="{{signin}}">Create an account</a></div>
+    <div class="card featured"><h3>Team <span class="tier">Premium</span></h3><p class="price">Per person, monthly</p><ul><li>As many people as you need</li><li>Unlimited campaigns and clients</li><li>25 Monitor watches</li><li>Supporter pages and letters</li><li>Who else is lobbying on a bill</li><li>Quarterly activity report and client guests</li></ul><a class="button" href="{{signin}}">Create an account</a></div>
+    <div class="card"><h3>Firm <span class="tier">Premium</span></h3><p class="price">Per person, monthly</p><ul><li>Everything in Team</li><li>Sign in through your firm's login</li><li>Unlimited Monitor watches and guests</li><li>Invoices on request</li></ul><a class="button ghost" href="#ask">Ask us</a></div>
   </div>
 </div></section>
 
 <section class="band" id="faq"><div class="wrap">
-  <div class="section-head reveal"><h2>Questions</h2></div>
+  <h2 style="margin-bottom:22px">Common questions</h2>
   <div class="faq">
-    <div class="reveal"><h3>Do I need to install anything?</h3><p>No. It works in the browser on a computer, tablet or phone. On a phone you can add it to your home screen and it opens like an app.</p></div>
-    <div class="reveal"><h3>What does it cost?</h3><p>Trying it in your browser is free and needs no account. A free account saves your work so you can use it on any device and share it with a colleague. Paid plans for bigger teams aren't on sale yet.</p></div>
-    <div class="reveal"><h3>Where do the member lists come from?</h3><p>Congress.gov for Congress, the House's own staff directory for House staff, flsenate.gov and flhouse.gov for Florida, and Open States for every other state. Florida's lists are for the 2026&ndash;2028 term. <a href="./status.html">See whether each source is working today</a>.</p></div>
-    <div class="reveal"><h3>Are the staff email addresses right?</h3><p>No official directory publishes them, so Headcount writes each one in the format that chamber uses, such as first.last@mail.house.gov, and labels it. They're usually right. If one bounces, call the office number shown.</p></div>
-    <div class="reveal"><h3>My email app doesn't open. What now?</h3><p>Use Open in Gmail or Open in Outlook instead; both open a new message in your browser with everything filled in. Copy message also works with any email service.</p></div>
-    <div class="reveal"><h3>Who can see my counts?</h3><p>In the free browser version, only you: it's saved in that browser. With an account, you and the colleagues you invite. Clients added as guests see only the campaigns you share with them. Your data isn't sold or shared.</p></div>
-    <div class="reveal"><h3>Can my supporters use it?</h3><p>Yes, without an account. Share a campaign's supporter page: they type their address, see their own legislators, and send a letter or call with your talking points.</p></div>
+    <div><h3>Do I need to install anything?</h3><p>No. It works in the browser on a computer, tablet or phone. On a phone you can add it to your home screen and it opens like an app.</p></div>
+    <div><h3>What does it cost?</h3><p>Trying it in your browser is free and needs no account. A free account saves your work so you can use it on any device and share it with a colleague. Paid plans for bigger teams aren't on sale yet.</p></div>
+    <div><h3>Are the staff email addresses right?</h3><p>No official directory publishes them, so Headcount writes each one in the format that chamber uses, such as first.last@mail.house.gov, and labels it. They're usually right. If one bounces, call the office number shown. Firms with LegiStorm can upload its export to use the real addresses.</p></div>
+    <div><h3>My email app doesn't open. What now?</h3><p>Use Open in Gmail or Open in Outlook instead; both open a new message in your browser with everything filled in. Copy message works with any email service.</p></div>
+    <div><h3>Who can see my counts?</h3><p>In the free browser version, only you. With an account, you and the colleagues you invite. Clients added as guests see only the campaigns you share with them. Your data isn't sold or shared.</p></div>
+    <div><h3>Can my supporters use it?</h3><p>Yes, without an account. Share a campaign's supporter page: they type their address, see their own legislators, and send a letter or call with your talking points.</p></div>
   </div>
 </div></section>
 
-<section class="band night-band closing"><div class="wrap reveal">
-  <h2>Try it on a bill you're working on</h2>
-  <p class="intro">It takes about five minutes to load a chamber and mark the members you've already heard from.</p>
-  <div class="ctas"><a class="button" href="./app/">Try it free</a><a class="button ghost" href="./guide.html">Read the guide</a></div>
+<section class="band" id="ask"><div class="wrap demo">
+  <div><h2>Questions?</h2><p class="intro">Ask anything: how it would work for your team, which legislature you work, prices. We'll answer by email.</p></div>
+  <form class="lead" data-action="{{appsite}}/api/contact" novalidate>
+    <label>Name<input name="name" autocomplete="name" required></label>
+    <label>Email<input name="email" type="email" autocomplete="email" required></label>
+    <label>Organization <span class="note">(optional)</span><input name="firm" autocomplete="organization"></label>
+    <label>Team size<select name="size"><option>Just me</option><option>2 to 5</option><option>6 to 20</option><option>21 to 100</option><option>More than 100</option></select></label>
+    <label class="wide">Your question<textarea name="message" required></textarea></label>
+    <label class="hp" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
+    <div class="wide"><button class="button" type="submit">Send</button></div>
+    <p class="status" role="status"></p>
+  </form>
 </div></section>
 
 </main>

@@ -9,6 +9,10 @@ Open source under the Apache License 2.0. Project website and data source status
 
 **Current members and their staff, from the official sources.** The U.S. House, U.S. Senate, Florida House and Florida Senate come built in. Florida's lists are read from flsenate.gov and flhouse.gov, and each member comes with their staff: every U.S. House office's staff from the House's own directory (directory.house.gov: names, titles, direct phones) and Florida legislators' aides from their official pages. None of these publish staff email addresses, so Headcount writes them in each chamber's usual format (first.last@mail.house.gov, first.last@flhouse.gov, last.first@flsenate.gov) and marks them "usual format, confirm"; published addresses are never marked. A Headcount server refreshes these lists every week (`OFFICIALS_REFRESH=off` turns that off), and `npm run rosters` updates the copy built into the app.
 
+**Counts that start from the public record.** Name a campaign with its bill number (H.R. 1234, SB 56) and pick the chamber, and Headcount reads the bill's record: recorded votes on the bill itself (House Clerk and Senate roll calls for Congress, Open States for the states), sponsors and cosponsors, and the committee that has the bill with its members, chair and ranking member (committee rosters from the congress-legislators project). Procedural votes such as motions to recommit are left out, members someone has already worked are never changed, and the record is checked again daily. *More, then Update from the public record* runs it on demand.
+
+**A firm's own staff list.** Official directories have no staff email addresses. A workspace admin can upload a staff export from LegiStorm (or any CSV with each person's name and office) on the Workspace page; the server matches it to each campaign's members and its real addresses replace the usual-format ones. Upload only what your LegiStorm agreement allows.
+
 **Try it free in your browser**, no account and nothing to install: https://denc-dev.github.io/headcount/app/ (your work stays in that browser).
 
 **Run your own, with sign-in and team workspaces, without the command line:**
@@ -208,7 +212,7 @@ Headcount sends its own email (digests, notifications, invitations, billing noti
 
 Emails wait in a queue in the database and are retried with growing gaps for about eight hours, so a slow mail service never holds up the app. Digests go out at each person's chosen hour in their own time zone (8 a.m. by default): weekly on Mondays unless they pick daily, and only when something happened. `DIGEST_INTERVAL_MS` sets how often the server checks for digests that are due (default every 10 minutes). Every notification and digest carries `List-Unsubscribe` headers for one-click unsubscribe in Gmail and Outlook. `EMAIL_MODE=off` stops all email; without `SMTP_URL` no email is sent.
 
-Demo requests from the website are saved in the `leads` table and emailed to `SALES_EMAIL` when email is set up. Constituent letters from action pages go out through the same service, so check your provider's sending limits before a big push.
+Questions from the website's form are saved in the `leads` table, listed in Admin settings under *Messages from the website*, and emailed to `LEADS_EMAIL` (never shown on the site), else `SALES_EMAIL`, else whoever runs Headcount, when email is set up. If sending fails, for example Gmail refusing a normal password where it needs an app password, Admin settings shows *Not sending* with the fix, and waiting email goes out once it works. Constituent letters from action pages go out through the same service, so check your provider's sending limits before a big push.
 
 ### 9. Single sign-on for firms
 
@@ -259,7 +263,7 @@ docker run -p 3000:3000 -v headcount-data:/data --env-file .env headcount
 - The lobbying activity report lists what people logged in Headcount. It is not a filing: disclosure laws define lobbying contacts in their own terms, and work done outside the app is not in it. Check it against your records and with counsel.
 - A database created by the first version of Headcount is moved into workspaces automatically on start: each owner gets a workspace, and the people they had shared campaigns with become guests on those campaigns.
 - The Florida rosters predate the November 3, 2026 election and include members who may have left office; check them against the official sites. The congressional rosters reflect the Congress sitting until January 3, 2027.
-- Members of Congress do not publish direct email addresses; add schedulers and staff yourself.
+- Official directories do not publish staff email addresses; Headcount writes them in each chamber's usual format and labels them, or uses a firm's uploaded LegiStorm list.
 - Teams links need a work or school Microsoft account; for personal accounts the invitation goes out without one.
 - Pasted bill text and drafting requests are sent to Anthropic; bill numbers are sent to Congress.gov or Open States. Notification and digest emails, which name campaigns, members and teammates, go through your SMTP provider.
 - Monitor scores are a reading aid. Check anything important against the source before acting on it.

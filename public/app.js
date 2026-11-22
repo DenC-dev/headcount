@@ -866,7 +866,10 @@ let briefEdit = false, briefPanel = '';
 const hasBrief = (b) => Boolean(b && (b.number || b.title || b.plainSummary || b.officialSummary));
 const lines = (v) => (Array.isArray(v) ? v : String(v || '').split('\n')).map((s) => String(s).trim()).filter(Boolean);
 function firstSentences(text, max = 260) {
-  const t = String(text || '').replace(/\s+/g, ' ').trim(); if (!t) return '';
+  // CRS summaries open with the bill's short title on a line of its own ("CLARITY Act of 2025"); skip it.
+  const ls = String(text || '').split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  if (ls.length > 1 && !/[.!?:]$/.test(ls[0]) && ls[0].length < 160) ls.shift();
+  const t = ls.join(' ').replace(/\s+/g, ' ').trim(); if (!t) return '';
   const m = t.match(/^(.{40,}?[.!?])(\s|$)/); const s = m ? m[1] : t;
   return s.length > max ? s.slice(0, max - 1).replace(/\s+\S*$/, '') + '…' : s;
 }
