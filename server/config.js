@@ -76,3 +76,5 @@ config.monitorEvery = Number(env.MONITOR_INTERVAL_MS) || 6 * 3600 * 1000;
 // SAM.gov allows 10 requests a day for accounts without a SAM.gov role, so contract watches check once a day.
 config.samEvery = Number(env.SAM_INTERVAL_MS) || 24 * 3600 * 1000;
 config.monitorOff = env.MONITOR === 'off';
+// Weekly refresh of the Florida lists and official staff (off for tests and local development)
+config.officialsOff = env.OFFICIALS_REFRESH === 'off' || env.NODE_ENV === 'test' || config.authMode === 'dev';

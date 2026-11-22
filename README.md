@@ -7,6 +7,8 @@ Open source under the Apache License 2.0. Project website and data source status
 
 **New to Headcount?** The [step-by-step guide](https://denc-dev.github.io/headcount/guide.html) walks through everything, from your first sign-in to your first count, with screenshots. It is also in the app, under Help, at `/guide`.
 
+**Current members and their staff, from the official sources.** The U.S. House, U.S. Senate, Florida House and Florida Senate come built in. Florida's lists are read from flsenate.gov and flhouse.gov, and each member comes with their staff: every U.S. House office's staff from the House's own directory (directory.house.gov: names, titles, direct phones) and Florida legislators' aides from their official pages. None of these publish staff email addresses, so Headcount writes them in each chamber's usual format (first.last@mail.house.gov, first.last@flhouse.gov, last.first@flsenate.gov) and marks them "usual format, confirm"; published addresses are never marked. A Headcount server refreshes these lists every week (`OFFICIALS_REFRESH=off` turns that off), and `npm run rosters` updates the copy built into the app.
+
 **Try it free in your browser**, no account and nothing to install: https://denc-dev.github.io/headcount/app/ (your work stays in that browser).
 
 **Run your own, with sign-in and team workspaces, without the command line:**

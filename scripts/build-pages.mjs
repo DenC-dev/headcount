@@ -45,7 +45,9 @@ for (const f of fs.readdirSync(path.join(ROOT, 'site', 'img'))) fs.copyFileSync(
 const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
 fs.mkdirSync(path.join(OUT, 'app'), { recursive: true });
 for (const f of ['app.js', 'cloud.js', 'intel.js', 'admin.js', 'select.js', 'select.css', 'styles.css', 'rosters.json', 'icon.svg', 'icon-192.png']) fs.copyFileSync(path.join(ROOT, 'public', f), path.join(OUT, 'app', f));
-fs.writeFileSync(path.join(OUT, 'app', 'app.js'), fs.readFileSync(path.join(OUT, 'app', 'app.js'), 'utf8').replace("fetch('/rosters.json')", "fetch('rosters.json')").replace("const GUIDE = '/guide';", "const GUIDE = '../guide.html';"));
+fs.mkdirSync(path.join(OUT, 'app', 'staff'), { recursive: true });
+for (const f of fs.readdirSync(path.join(ROOT, 'public', 'staff'))) fs.copyFileSync(path.join(ROOT, 'public', 'staff', f), path.join(OUT, 'app', 'staff', f));
+fs.writeFileSync(path.join(OUT, 'app', 'app.js'), fs.readFileSync(path.join(OUT, 'app', 'app.js'), 'utf8').replace("fetch('/rosters.json')", "fetch('rosters.json')").replace("fetch(`/staff/${key}.json`)", "fetch(`staff/${key}.json`)").replace("const GUIDE = '/guide';", "const GUIDE = '../guide.html';"));
 let appHtml = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8')
   .replace(/<link rel="manifest"[^>]*>\n?/, '').replace(/(href|src)="\/([\w.-]+\.(?:css|js|svg|png))"/g, '$1="$2"')
   .replace('<a class="brand" href="/">', '<a class="brand" href="../">')

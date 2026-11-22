@@ -372,6 +372,7 @@ try {
   await alice.page.selectOption('#os_state', 'FL'); await alice.page.selectOption('#os_chamber', 'upper'); await alice.page.click('[data-x=osRoster]');
   await alice.page.waitForFunction(() => document.querySelector('#s_preset') && document.querySelector('#s_preset').value === 'os-fl-upper');
   await alice.page.click('[data-act=preset]');
+  await alice.page.waitForTimeout(300);
   if (await alice.page.locator('[data-act=preset]').isVisible()) await alice.page.click('[data-act=preset]'); // asks again only when it would replace members
   await alice.page.waitForFunction(() => S.members.length === 2 && S.campaign.juris && S.campaign.juris.state === 'FL');
   await settle(alice.page);

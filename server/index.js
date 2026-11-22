@@ -19,6 +19,7 @@ import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
 import { makeAccounts } from './accounts.js';
 import { makeCalendar } from './calendar.js';
+import { refreshOfficials, staffFiles } from './officials.js';
 import { makeSettings } from './settings.js';
 import * as sources from './sources.js';
 
@@ -148,12 +149,21 @@ function siteVars() {
     planTable: `<table class="plans"><thead><tr><th></th><th>Free</th><th>Team</th><th>Firm</th></tr></thead><tbody>${rows.map((r) => `<tr><th scope="row">${escHtml(r[0])}</th>${r.slice(1).map((v) => `<td>${escHtml(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`,
   };
 }
+// The chamber lists and staff, refreshed weekly from the official sources into
+// the data folder; the newer of that copy and the one shipped with the app is served.
+const OFFICIALS = path.join(config.dataDir, 'officials');
+function officialFile(rel) {
+  if (rel !== '/rosters.json' && !/^\/staff\/(ushouse|ussenate|flhouse|flsenate)\.json$/.test(rel)) return null;
+  const fresh = path.join(OFFICIALS, rel), shipped = path.join(PUBLIC, rel);
+  try { return fs.statSync(fresh).mtimeMs > (fs.existsSync(shipped) ? fs.statSync(shipped).mtimeMs : 0) ? fresh : null; } catch (_) { return null; }
+}
 function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname).replace(/\/+$/, '') || '/';
   if (SITE_PAGES[rel]) {
     if (config.siteOff && rel === '/') { res.writeHead(302, { Location: '/app' }); return res.end(); }
     return sitePage(res, SITE_PAGES[rel], siteVars());
   }
+  const official = officialFile(rel); if (official) return sendFile(res, official, '.json');
   if (rel === '/app' || rel.startsWith('/join/') || rel.startsWith('/invite/')) return sendFile(res, path.join(PUBLIC, 'index.html'), '.html');
   if (/^\/act\/[A-Za-z0-9_-]{6,20}$/.test(rel)) return sendFile(res, path.join(PUBLIC, 'act.html'), '.html');
   const root = rel.startsWith('/site/') ? SITE : PUBLIC;
@@ -196,10 +206,26 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   mail = makeMailer(config, store);
   const notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
-  const jobs = { backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now) };
+  // Rebuilds the Florida lists and official staff from the official sources
+  async function refreshOfficialLists(sources) {
+    const current = officialFile('/rosters.json') || path.join(PUBLIC, 'rosters.json');
+    const base = JSON.parse(fs.readFileSync(current, 'utf8'));
+    const { presets, staff, report } = await refreshOfficials(base, { sources, log: (m) => console.error('Official lists:', m) });
+    const write = (rel, data) => { const f = path.join(OFFICIALS, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(data)); fs.renameSync(f + '.tmp', f); };
+    for (const [key, data] of Object.entries(staffFiles(staff))) write(`staff/${key}.json`, data);
+    write('rosters.json', { ...base, presets });
+    console.log('Official lists refreshed:', report.join('; '));
+    return report;
+  }
+  const jobs = { officials: refreshOfficialLists, backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now) };
   const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
   if (!config.monitorOff) timers.push(setInterval(() => jobs.monitor(Date.now()).catch((e) => console.error('Monitor job failed', e)), Math.min(config.monitorEvery, 15 * 60 * 1000)));
   if (backupDir) { timers.push(setInterval(dailyBackup, 24 * 3600e3)); setTimeout(dailyBackup, 60e3).unref(); }
+  if (!config.officialsOff) {
+    const due = () => { try { return Date.now() - fs.statSync(path.join(OFFICIALS, 'rosters.json')).mtimeMs > 6 * 864e5; } catch (_) { return true; } };
+    const run = () => (due() ? jobs.officials() : Promise.resolve()).catch((e) => console.error('Official lists refresh failed', e.message));
+    setTimeout(run, 5 * 60e3).unref(); timers.push(setInterval(run, 24 * 3600e3));
+  }
   timers.forEach((t) => t.unref());
   const UNSUB = { monitor: ['monitor', 'off', 'You will not get Monitor alerts by email anymore. New items still appear in the Monitor.'], digest: ['digest', 'off', 'You will not get digests from Headcount anymore.'], assigned: ['notifyAssigned', false, 'You will not get emails when someone assigns you a follow-up.'], added: ['notifyAdded', false, 'You will not get emails when someone adds you to a campaign.'] };
 

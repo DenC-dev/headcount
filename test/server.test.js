@@ -1019,3 +1019,67 @@ test('action center addresses: filled-in fields, unit numbers, district spelling
   assert.doesNotMatch(emailsTo('simon.corey@flsenate.gov', 'constituent').at(-1).text_body, /could not be matched/);
   } finally { mods.config.trustProxy = false; }
 });
+
+// ---------- official lists and staff ----------
+test('official lists: reading the official pages, keeping returning members, staff in the usual email format', async () => {
+  const o = await import('../server/officials.js');
+  // Florida Senate list, with a vacant seat left out
+  const senList = `<a class="senatorLink" href="/Senators/2026-2028/S1"><img width="50" alt="Senator Don Gaetz" src="a.jpg" class="t">Gaetz, Don</a>\n</th>\n<td class="middle">1</td>\n<td class="middle">Republican</td>
+    <a class="senatorLink" href="/Senators/2026-2028/S39"><img alt="Senator" src="n.jpg">Vacant</a></th><td class="middle">39</td><td class="middle"></td>`;
+  assert.deepEqual(o.parseSenateList(senList), [{ path: '/Senators/s1', display: 'Don Gaetz', sortName: 'Gaetz, Don', district: '1', party: 'R' }]);
+  const sen = o.parseSenator(`<p>Contact:</p><a>Email this Senator</a><a>gaetz.don.web@flsenate.gov</a><h4>District Office</h4><p>418 West Garden Street<br>Pensacola, FL 32502</p><p>(850) 595-1036</p><p>Senate VOIP: 40100</p>
+    <h4>Legislative Aides</h4><p>Xuripha Barrow, Frank Fuller, and Keri Pitzer</p><h4>Tallahassee Office</h4><p>405 Senate Building<br>Tallahassee, FL 32399-1100</p><p>(850) 487-5001</p>`);
+  assert.equal(sen.email, 'gaetz.don.web@flsenate.gov'); assert.equal(sen.district.phone, '850-595-1036'); assert.equal(sen.capitol.phone, '850-487-5001');
+  assert.equal(sen.district.address, '418 West Garden Street, Pensacola, FL 32502'); assert.deepEqual(sen.aides, ['Xuripha Barrow', 'Frank Fuller', 'Keri Pitzer']);
+  // Florida House list and a member page
+  const houseList = `<a href="/Sections/Representatives/details.aspx?MemberId=4920&LegislativeTermId=92" role="link"><div class="team-txt"><h5> Conerly, William "Bill" </h5><p>Republican &mdash; <span class="text-nowrap">District: 72</span></p></div></a>`;
+  assert.deepEqual(o.parseHouseList(houseList), [{ path: '/Sections/Representatives/details.aspx?MemberId=4920&LegislativeTermId=92', id: '4920', term: '92', sortName: 'Conerly, William "Bill"', party: 'R', district: '72' }]);
+  const rep = o.parseRepresentative(`<h3>Capitol Office</h3><p>402 South Monroe Street</p><p>Tallahassee, FL 32399-1300</p><p>(850) 717-5072</p><a>Map/Driving Directions</a><h3>District Office</h3><p>11523 Palmbrush Trail</p><p>(941) 327-0150</p>
+    <b>Legislative Aide:</b><p>Olivia Borden</p><b>District Aide:</b><p>Brittany Hoppe and Sam Lee</p>`);
+  assert.equal(rep.capitol.phone, '850-717-5072'); assert.equal(rep.district.phone, '941-327-0150');
+  assert.deepEqual(rep.staff, [{ n: 'Olivia Borden', t: 'Legislative Aide' }, { n: 'Brittany Hoppe', t: 'District Aide' }, { n: 'Sam Lee', t: 'District Aide' }]);
+  // Names as the official lists write them, and each chamber's usual email format
+  assert.equal(o.preferredName('Conerly, William "Bill"'), 'Bill Conerly'); assert.equal(o.preferredName('Mooney Jr., James Vernon "Jim"'), 'Jim Mooney Jr.'); assert.equal(o.preferredName('Bush III, Dr. James'), 'James Bush III');
+  assert.equal(o.EMAIL_FORMAT.ushouse('Smith, Ashley Jean'), 'ashley.smith@mail.house.gov'); assert.equal(o.EMAIL_FORMAT.ushouse("O'Neil, Kathryn"), 'kathryn.oneil@mail.house.gov');
+  assert.equal(o.EMAIL_FORMAT.flsenate('Xuripha Barrow'), 'barrow.xuripha@flsenate.gov'); assert.equal(o.EMAIL_FORMAT.flhouse('Sousa Lazaballet, Felipe'), 'felipe.sousalazaballet@flhouse.gov');
+  // The House staff directory: Washington offices only, phones tidied
+  const dir = o.parseHouseDirectory('<script>angular.module("employeeDirectory").value("employees", [{"name":"Smith, Ashley Jean","jobTitle":"Scheduler","telephone":"2022255765","worksFor":{"_id":"AK00","name":"Begich"}},{"name":"Doe, Jo","jobTitle":"Caseworker","telephone":"9075551212","worksFor":{"_id":"AK001","name":"Begich - Anchorage"}},{"name":"Lee, Pat [x]","jobTitle":"Chief Of Staff","telephone":"2022250102","worksFor":{"_id":"CA12","name":"Pelosi"}}]);</script>');
+  assert.deepEqual(dir['AK-AL'], [{ n: 'Ashley Jean Smith', t: 'Scheduler', ph: '202-225-5765', em: 'ashley.smith@mail.house.gov', f: 1 }]);
+  assert.equal(dir['CA-12'][0].t, 'Chief of Staff'); assert.equal(Object.keys(dir).length, 2, 'district offices are left out');
+  // A refresh keeps returning members' keys (and published emails), and puts schedulers first
+  const base = { presets: {
+    flsenate: { label: 'Florida Senate', seats: 40, stale: true, members: [{ k: 'old-1', n: 'Don Gaetz', p: 'R', d: '1', em: 'gaetz.don.web@flsenate.gov' }, { k: 'old-2', n: 'Gone Person', p: 'D', d: '2' }] },
+    flhouse: { label: 'Florida House', seats: 120, members: [{ k: 'h-72', n: 'Bill Conerly', p: 'R', d: '72', em: 'bill.conerly@flhouse.gov' }] },
+    ushouse: { label: 'U.S. House', seats: 435, members: [{ k: 'B001323', n: 'Nicholas J. Begich III', p: 'R', d: 'AK-AL' }] } } };
+  const r = await o.refreshOfficials(base, { sources: {
+    flsenate: async () => [{ n: 'Don Gaetz', p: 'R', d: '1', em: 'gaetz.don.web@flsenate.gov', staff: [{ n: 'Keri Pitzer', t: 'Legislative Aide', em: 'pitzer.keri@flsenate.gov', f: 1 }] }, { n: 'New Person', p: 'R', d: '2', em: 'person.new.web@flsenate.gov', emf: 1, staff: [] }],
+    flhouse: async () => [{ n: 'Bill Conerly', p: 'R', d: '72', em: 'bill.conerly@flhouse.gov', emf: 1, ph: '850-717-5072', staff: [] }],
+    houseStaff: async () => ({ 'AK-AL': [{ n: 'Chief Person', t: 'Chief of Staff', em: 'c@mail.house.gov', f: 1 }, { n: 'Ashley Jean Smith', t: 'Scheduler', em: 'ashley.smith@mail.house.gov', f: 1 }] }) } });
+  assert.deepEqual(r.presets.flsenate.members.map((m) => m.k), ['old-1', 'fls-2-person']);
+  assert.equal(r.presets.flsenate.stale, undefined, 'the refreshed list is current');
+  assert.equal(r.presets.flsenate.members[1].emf, 1, 'a written-in-the-format address stays marked');
+  assert.equal(r.presets.flhouse.members[0].emf, undefined, 'a returning member keeps the published address');
+  assert.deepEqual(r.staff.chambers.ushouse.B001323.map((s) => s.t), ['Scheduler', 'Chief of Staff'], 'schedulers come first');
+  const files = o.staffFiles(r.staff);
+  assert.deepEqual(files.flsenate.people['old-1'], [['Keri Pitzer', 'Legislative Aide', '', 'pitzer.keri@flsenate.gov']]);
+  // A failing source leaves that chamber as it was
+  const partial = await o.refreshOfficials(base, { sources: { flsenate: async () => { throw new Error('site down'); }, flhouse: async () => [], houseStaff: async () => ({}) } });
+  assert.equal(partial.presets.flsenate.members[0].k, 'old-1'); assert.match(partial.report[0], /site down/);
+});
+
+test('official lists: the server refreshes its own copy and serves the newer one', async () => {
+  const shipped = await (await fetch(base + '/rosters.json')).json();
+  assert.ok(shipped.presets.ushouse, 'the copy shipped with the app');
+  await new Promise((r) => setTimeout(r, 20));
+  const report = await server.jobs.officials({
+    flsenate: async () => [{ n: 'Fresh Senator', p: 'D', d: '9', em: 'senator.fresh.web@flsenate.gov', staff: [{ n: 'Aide One', t: 'Legislative Aide', em: 'one.aide@flsenate.gov', f: 1 }] }],
+    flhouse: async () => { throw new Error('not today'); },
+    houseStaff: async () => ({}) });
+  assert.match(report.join(' '), /Florida Senate: ok/); assert.match(report.join(' '), /Florida House: not today/);
+  const served = await (await fetch(base + '/rosters.json')).json();
+  assert.deepEqual(served.presets.flsenate.members.map((m) => m.n), ['Fresh Senator']);
+  assert.deepEqual(served.presets.flhouse.members.length, shipped.presets.flhouse.members.length, 'the failed chamber is unchanged');
+  const st = await (await fetch(base + '/staff/flsenate.json')).json();
+  assert.deepEqual(Object.values(st.people)[0][0], ['Aide One', 'Legislative Aide', '', 'one.aide@flsenate.gov']);
+  assert.equal((await fetch(base + '/staff/../headcount.db')).status, 404);
+});

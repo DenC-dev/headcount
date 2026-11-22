@@ -12,7 +12,8 @@
     "e2e": "node test/e2e.mjs",
     "screenshots": "node scripts/screenshots.mjs",
     "test:live": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning test/live.mjs",
-    "pages": "node scripts/build-pages.mjs"
+    "pages": "node scripts/build-pages.mjs",
+    "rosters": "node scripts/refresh-rosters.mjs"
   },
   "engines": {
     "node": ">=22.13"

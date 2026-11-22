@@ -164,6 +164,47 @@ function verbFor(st, m) {
 
 // ---------- preset rosters and contact details ----------
 let ROSTERS = null, DIR = {};
+// ---------- official staff ----------
+// Each built-in chamber has a staff file from the official directories:
+// names, titles and phones, with emails in the chamber's usual format.
+const STAFF = {};
+const STAFF_KEYS = ['ushouse', 'flhouse', 'flsenate']; // the U.S. Senate publishes no staff list
+async function staffFor(key) {
+  if (!STAFF_KEYS.includes(key)) return null;
+  if (STAFF[key] !== undefined) return STAFF[key];
+  try { const res = await fetch(`/staff/${key}.json`); STAFF[key] = res.ok ? await res.json() : null; } catch (_) { STAFF[key] = null; }
+  return STAFF[key];
+}
+const dirStaff = (key, ref) => ((STAFF[key] && STAFF[key].people[ref]) || []).map(([n, t, ph, em]) => ({ id: uid(), name: n, role: t, phone: ph, email: em, notes: '', fmt: true, src: 'directory' }));
+// Which built-in chamber a campaign counts, also for campaigns made before the key was saved.
+function presetKey(st = S) {
+  if (st.preset && st.preset.key) return st.preset.key;
+  const j = st.campaign && st.campaign.juris;
+  return j ? ({ 'us-lower': 'ushouse', 'us-upper': 'ussenate', 'FL-lower': 'flhouse', 'FL-upper': 'flsenate' })[`${j.level === 'us' ? 'us' : j.state}-${j.chamber}`] || '' : '';
+}
+function presetMember(key, p, m, extra = {}) {
+  const live = Boolean(p.juris && p.source === 'Open States' && /^os-/.test(key));
+  return { id: 'p' + m.k, ref: m.k, name: m.n, party: m.p, district: m.d, cmte: false, role: '', pos: 2, mov: 3, follows: '', interests: '', notes: '', history: [], staffers: dirStaff(key, m.k),
+    ...(live ? { c: { ph: m.ph || '', of: m.of || '', em: m.em || '', dph: m.dph || '', dof: m.dof || '', url: m.url || '' } } : {}), ...extra };
+}
+// Brings a campaign's members up to date with the current list: returning
+// members keep their positions, notes and history; new members start undecided.
+async function updateMembers() {
+  const key = presetKey(), p = ROSTERS && ROSTERS[key];
+  if (!p || p.stale) return toast('No newer list is available yet.');
+  await staffFor(key);
+  const byRef = new Map(S.members.filter((m) => m.ref).map((m) => [m.ref, m]));
+  const kept = [], added = [];
+  for (const x of p.members) {
+    const old = byRef.get(x.k);
+    if (old) { Object.assign(old, { name: x.n, party: x.p, district: x.d }); if (!old.staffers.some((s) => s.src === 'directory')) old.staffers.push(...dirStaff(key, x.k)); kept.push(old); }
+    else added.push(presetMember(key, p, x));
+  }
+  const gone = S.members.filter((m) => m.ref && !p.members.some((x) => x.k === m.ref)), custom = S.members.filter((m) => !m.ref && !m.draft);
+  S.members = [...kept, ...added, ...custom];
+  S.preset = { ...(S.preset || {}), key, label: p.label, asOf: p.asOf, stale: false, vacant: p.seats - p.members.length };
+  commit(`${p.label} updated: ${added.length} new member${added.length === 1 ? '' : 's'}, ${gone.length} gone${gone.length ? ` (${gone.slice(0, 4).map((m) => m.name).join(', ')}${gone.length > 4 ? ', …' : ''})` : ''}`);
+}
 async function loadRosters() {
   try {
     const res = await fetch('/rosters.json');
@@ -175,14 +216,30 @@ async function loadRosters() {
 }
 function contact(m) {
   const r = (m.ref && DIR[m.ref]) || m.c || {};
-  return { phone: m.phone || r.ph || '', email: m.email || r.em || '', office: r.of || '', dphone: r.dph || '', doffice: r.dof || '', url: r.url || '', form: r.cf || '' };
+  return { phone: m.phone || r.ph || '', email: m.email || r.em || '', office: r.of || '', dphone: r.dph || '', doffice: r.dof || '', url: r.url || '', form: r.cf || '',
+    phoneUsual: !m.phone && Boolean(r.phf), emailUsual: !m.email && Boolean(r.emf) };
+}
+// The chambers someone can count: the built-in ones, and every state once
+// legislator data is turned on.
+function chamberOptions() {
+  const cfg = CLOUD.config || {}, states = cfg.rosters && signedIn() ? cfg.states || {} : {};
+  const presets = ROSTERS ? Object.entries(ROSTERS).filter(([k]) => !/^os-/.test(k)).map(([k, p]) => `<option value="p:${esc(k)}">${esc(p.label)}</option>`).join('') : '';
+  const live = Object.entries(states).filter(([k]) => !(ROSTERS && ['FL'].includes(k))).flatMap(([k, v]) => (k === 'NE' ? [[`s:${k}:legislature`, `${v} Legislature`]] : [[`s:${k}:upper`, `${v} Senate`], [`s:${k}:lower`, `${v} House or Assembly`]])).map(([val, label]) => `<option value="${val}">${esc(label)}</option>`).join('');
+  return { presets, live };
+}
+// Fills a campaign with a chamber's current members and staff: "p:ushouse" or "s:TX:upper".
+async function fillChamber(choice, st = S) {
+  const [kind, a, b] = String(choice).split(':');
+  if (kind === 'p') { await staffFor(a); loadPreset(a, -1, '', st); return ROSTERS[a].label; }
+  const r = await CLOUD.api('GET', `/api/rosters/state?state=${encodeURIComponent(a)}&chamber=${encodeURIComponent(b)}`);
+  if (!ROSTERS) ROSTERS = {};
+  ROSTERS[r.key] = r; r.members.forEach((m) => { DIR[m.k] = m; });
+  loadPreset(r.key, -1, '', st); return `${r.label}: ${r.members.length} members`;
 }
 // An empty campaign asks which chamber to count, and loads it in one step.
 function chamberPicker() {
   if (!canEditNow()) return '<p class="note" style="margin:24px 0">No members yet.</p>';
-  const cfg = CLOUD.config || {}, states = cfg.rosters && signedIn() ? cfg.states || {} : {};
-  const presets = ROSTERS ? Object.entries(ROSTERS).filter(([k]) => !/^os-/.test(k)).map(([k, p]) => `<option value="p:${esc(k)}">${esc(p.label)}</option>`).join('') : '';
-  const live = Object.entries(states).flatMap(([k, v]) => (k === 'NE' ? [[`s:${k}:legislature`, `${v} Legislature`]] : [[`s:${k}:upper`, `${v} Senate`], [`s:${k}:lower`, `${v} House or Assembly`]])).map(([val, label]) => `<option value="${val}">${esc(label)}</option>`).join('');
+  const { presets, live } = chamberOptions();
   return `<div class="pickchamber"><b>Which chamber are you counting?</b>
     <p class="note">Choose it to load every current member, with their office and phone number.</p>
     <div class="btnrow"><select id="q_chamber" aria-label="Chamber"><option value="">Choose a chamber</option>${presets}${live}</select><button class="btn primary" data-act="quickChamber">Load the members</button></div>
@@ -191,25 +248,19 @@ function chamberPicker() {
 async function quickChamber(btn) {
   const v = $('#q_chamber').value, msg = $('#q_msg');
   if (!v) { msg.textContent = 'Choose a chamber first.'; return; }
-  const [kind, a, b] = v.split(':');
-  if (kind === 'p') { loadPreset(a, -1, ''); return commit(`${ROSTERS[a].label} loaded`); }
   btn.disabled = true; msg.textContent = 'Getting the current members';
-  try {
-    const r = await CLOUD.api('GET', `/api/rosters/state?state=${encodeURIComponent(a)}&chamber=${encodeURIComponent(b)}`);
-    if (!ROSTERS) ROSTERS = {};
-    ROSTERS[r.key] = r; r.members.forEach((m) => { DIR[m.k] = m; });
-    loadPreset(r.key, -1, ''); commit(`${r.label} loaded: ${r.members.length} members`);
-  } catch (e) { msg.textContent = e.message; btn.disabled = false; }
+  try { const label = await fillChamber(v); commit(`${label} loaded`); }
+  catch (e) { msg.textContent = e.message; btn.disabled = false; }
 }
-function loadPreset(key, cmteIdx, backed) {
+function loadPreset(key, cmteIdx, backed, st = S) {
+  const S = st; // the campaign to fill: the open one unless another is given
   const p = ROSTERS[key], cm = p.committees[cmteIdx], on = new Set(cm ? cm.m : []), titles = (cm && cm.t) || {};
   const start = (party) => (!backed ? 2 : party === backed ? 3 : party === 'I' ? 2 : 1);
-  const live = Boolean(p.juris && p.source === 'Open States' && /^os-/.test(key));
-  S.members = p.members.map((m) => ({ id: 'p' + m.k, ref: m.k, name: m.n, party: m.p, district: m.d, cmte: on.has(m.k), role: titles[m.k] || '', pos: start(m.p), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], ...(live ? { c: { ph: m.ph || '', of: m.of || '', em: m.em || '', dph: m.dph || '', dof: m.dof || '', url: m.url || '' } } : {}) }));
+  S.members = p.members.map((m) => presetMember(key, p, m, { cmte: on.has(m.k), role: titles[m.k] || '', pos: start(m.p) }));
   const juris = p.juris || { ushouse: { level: 'us', chamber: 'lower' }, ussenate: { level: 'us', chamber: 'upper' }, flhouse: { level: 'state', state: 'FL', chamber: 'lower' }, flsenate: { level: 'state', state: 'FL', chamber: 'upper' } }[key] || null;
   Object.assign(S.campaign, { chamber: p.chamber, committee: cm ? cm.name : '', rule: 'majority', juris });
   if (S.example) S.campaign.bill = 'Your bill';
-  S.preset = { label: p.label, asOf: p.asOf, stale: !!p.stale, vacant: p.seats - p.members.length };
+  S.preset = { key, label: p.label, asOf: p.asOf, stale: !!p.stale, vacant: p.seats - p.members.length };
   S.plan = []; S.trend = []; S.tasks = S.tasks.filter((t) => !t.mid); S.meetings = []; S.brief = blankBrief();
 }
 
@@ -938,9 +989,10 @@ const REPLY = { accepted: ['Accepted', 'ok'], declined: ['Declined', 'bad'], ten
 function addBusinessDays(n) { const d = new Date(); while (n > 0) { d.setDate(d.getDate() + 1); if (d.getDay() % 6) n--; } return iso(d); }
 function defaultSlots(mins) { return CLOUD.freeSlots([], { mins, count: 3 }); }
 function recipients(m) {
-  const out = m.staffers.filter((s) => isEmail(s.email || '')).map((s) => ({ email: s.email, label: `${s.name}${s.role ? `, ${s.role}` : ''}`, sid: s.id }));
-  const ce = contact(m).email; if (isEmail(ce)) out.push({ email: ce, label: `${m.name}'s office` });
-  return out;
+  // Published addresses first; those written in the usual format after, marked
+  const staff = m.staffers.filter((s) => isEmail(s.email || '')), lab = (s) => `${s.name}${s.role ? `, ${s.role}` : ''}${s.fmt ? ' (usual format)' : ''}`;
+  const c = contact(m), office = isEmail(c.email) ? [{ email: c.email, label: `${m.name}'s office${c.emailUsual ? ' (usual format)' : ''}`, fmt: c.emailUsual }] : [];
+  return [...staff.filter((s) => !s.fmt).map((s) => ({ email: s.email, label: lab(s), sid: s.id })), ...office.filter((o) => !o.fmt), ...office.filter((o) => o.fmt), ...staff.filter((s) => s.fmt).map((s) => ({ email: s.email, label: lab(s), sid: s.id, fmt: true }))];
 }
 function meetingTitle(m, st) { const h = honorific(), b = S.brief; return `${b.number || (S.campaign.bill || '').split(':')[0] || 'Meeting'}: ${st ? `${st.name}, office of ` : ''}${h ? h + ' ' : ''}${m.name}`.slice(0, 160); }
 function rqStaffer(m) { return m.staffers.find((s) => s.email && RQ && s.email.toLowerCase() === String(RQ.to).toLowerCase()); }
@@ -994,7 +1046,7 @@ function rqHtml(m) {
       <label class="wide">Subject<input id="rq_subject" value="${esc(RQ.subject)}"></label>
       <label class="wide">Message<textarea id="rq_body" class="out" style="min-height:260px">${esc(RQ.body)}</textarea></label>
       ${signNote}
-      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqSend" data-mp="${x}">Send from ${CLOUD.mailName(x)}</button>`).join('') : ''}<button type="button" class="btn${signed ? '' : ' primary'}" data-act="rqMailto">Open in my email app</button><button type="button" class="btn" data-act="rqCopy">Copy message</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
+      <div class="wide btnrow">${signed ? sendAs.map((x, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-act="rqSend" data-mp="${x}">Send from ${CLOUD.mailName(x)}</button>`).join('') : ''}${mailButtons('rqMailto', !signed)}<button type="button" class="btn" data-act="rqCopy">Copy message</button><button type="button" class="btn" data-act="rqClose">Close</button></div>`;
   } else {
     body = `<label>Date and time<input type="datetime-local" id="rq_start" value="${RQ.start ? toInput(new Date(RQ.start)) : ''}"></label>
       <label>Where<input id="rq_where" value="${esc(RQ.where)}" placeholder="Office, phone or video"></label>
@@ -1021,6 +1073,32 @@ function rqRead() {
   }
 }
 function rqTextOut() { const s = $('#rq_subject'), b = $('#rq_body'); if (s && !RQ.edited) s.value = RQ.subject; if (b && !RQ.edited) b.value = RQ.body; }
+// ---------- opening the person's own email ----------
+// A mailto link only works when the computer has an email program set up,
+// and some programs fail silently on long links. Gmail and Outlook on the web
+// always open, so they are offered too, and the last choice comes first.
+const MAILERS = { gmail: 'Gmail', outlook: 'Outlook', app: 'my email app' };
+const mailerPref = () => { const v = lsGet('headcount.mailer'); return MAILERS[v] ? v : ''; };
+function composeUrl(kind, { to = '', cc = '', bcc = '', subject = '', body = '' }) {
+  const q = (o) => Object.entries(o).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  if (kind === 'gmail') return `https://mail.google.com/mail/?view=cm&fs=1&${q({ to, cc, bcc, su: subject, body })}`;
+  if (kind === 'outlook') return `https://outlook.office.com/mail/deeplink/compose?${q({ to, cc, bcc, subject, body })}`;
+  const addr = String(to).split(',').map((x) => encodeURIComponent(x.trim()).replace(/%40/g, '@')).filter(Boolean).join(',');
+  return `mailto:${addr}?${q({ cc, bcc, subject, body: String(body).replace(/\r?\n/g, '\r\n') })}`;
+}
+function openMail(kind, msg) {
+  lsSet('headcount.mailer', kind);
+  if (kind !== 'app') { window.open(composeUrl(kind, msg), '_blank', 'noopener'); return 'web'; }
+  let url = composeUrl('app', msg), copied = false;
+  if (url.length > 1900) { copyText(msg.body); copied = true; url = composeUrl('app', { ...msg, body: '(Your message is copied: paste it here.)' }); }
+  const a = document.createElement('a'); a.href = url; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  return copied ? 'copied' : 'app';
+}
+function mailButtons(act, primary) {
+  const pref = mailerPref() || 'app', order = [pref, ...Object.keys(MAILERS).filter((k) => k !== pref)];
+  return order.map((k, i) => `<button type="button" class="btn${i === 0 && primary ? ' primary' : ''}" data-act="${act}" data-mailer="${k}">Open in ${MAILERS[k]}</button>`).join('');
+}
+const mailOpenedNote = (how) => ({ web: 'It opened in a new tab. ', copied: 'Your message was long, so it is copied: paste it into the email that opened. ', app: 'Your email app should open with the message. If nothing happened, choose Gmail or Outlook instead, or Copy message. ' }[how]);
 function rqCheckTo() { if (!isEmail(RQ.to)) { rqMsg('Enter a valid email address to send to.'); return false; } return true; }
 
 // Records a sent request: the agenda, the member's history and a follow-up.
@@ -1106,8 +1184,8 @@ function closeDrawer() {
 function contactBlock(m) {
   const c = contact(m), safe = (u) => /^https?:\/\//.test(u);
   const rows = [
-    c.phone && ['Phone', `<span class="tel">${esc(c.phone)}</span> ${copyBtn(c.phone)}`],
-    c.email && ['Email', `${esc(c.email)} ${copyBtn(c.email)}`],
+    c.phone && ['Phone', `<span class="tel">${esc(c.phone)}</span> ${copyBtn(c.phone)}${c.phoneUsual ? ' <span class="note">usual number for this office</span>' : ''}`],
+    c.email && ['Email', `${esc(c.email)} ${copyBtn(c.email)}${c.emailUsual ? ' <span class="note">usual format, confirm</span>' : ''}`],
     c.office && ['Capitol office', esc(c.office)],
     (c.dphone || c.doffice) && ['District office', `${esc(c.doffice)}${c.dphone ? ` <span class="tel">${esc(c.dphone)}</span> ${copyBtn(c.dphone)}` : ''}`],
     (safe(c.url) || safe(c.form)) && ['Online', [safe(c.url) && `<a href="${esc(c.url)}" target="_blank" rel="noopener">Official page</a>`, safe(c.form) && `<a href="${esc(c.form)}" target="_blank" rel="noopener">Contact form</a>`].filter(Boolean).join(' · ')],
@@ -1116,7 +1194,7 @@ function contactBlock(m) {
   return rows.length ? `<span class="label">Contact</span><dl class="kv">${rows.map((r) => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>` : '';
 }
 function staffLines(s) {
-  return `${s.phone ? `<div><span class="tel">${esc(s.phone)}</span> ${copyBtn(s.phone)}</div>` : ''}${s.email ? `<div>${esc(s.email)} ${copyBtn(s.email)}${isEmail(s.email) ? ` <a href="mailto:${esc(s.email)}">Open in mail</a>` : ''}</div>` : ''}`;
+  return `${s.phone ? `<div><span class="tel">${esc(s.phone)}</span> ${copyBtn(s.phone)}</div>` : ''}${s.email ? `<div>${esc(s.email)} ${copyBtn(s.email)}${s.fmt ? ' <span class="note">usual format, confirm</span>' : ''}</div>` : ''}`;
 }
 function staffForm(s) {
   return `<form id="stForm" class="form" data-sid="${esc(s.id || '')}">
@@ -1133,8 +1211,12 @@ function staffSection(m) {
   const item = (s) => (staffEdit === s.id ? `<li>${staffForm(s)}</li>` : `<li><div class="row"><span><b>${esc(s.name)}</b>${s.role ? ` · ${esc(s.role)}` : ''}</span>
       <span class="btnrow">${isEmail(s.email || '') ? `<button class="btn sm" data-act="rq" data-sid="${esc(s.id)}">Request a meeting</button>` : ''}<button class="btn sm" data-act="logStaff" data-sid="${esc(s.id)}">Log contact</button><button class="btn sm" data-act="editStaff" data-sid="${esc(s.id)}">Edit</button><button class="btn sm warn" data-act="rmStaff" data-sid="${esc(s.id)}">Remove</button></span></div>
       ${staffLines(s)}${s.notes ? `<div class="note">${esc(s.notes)}</div>` : ''}</li>`);
+  const key = presetKey(), has = m.staffers.some((s) => s.src === 'directory');
+  if (key && m.ref && !has && STAFF[key] === undefined) staffFor(key).then(() => { if (openId === m.id && tab === 'staff') memberDrawer(m.id); });
+  const avail = key && m.ref && !has && STAFF[key] ? (STAFF[key].people[m.ref] || []).length : 0;
   return `<span class="label">Staff</span>
-  <ul class="hist">${m.staffers.length ? m.staffers.map(item).join('') : '<li class="note">No staff added yet. Add the scheduler, the chief of staff or the aide who handles your issue.</li>'}</ul>
+  ${avail && canEditNow() ? `<div class="callout"><b>${avail} staff listed for this office</b> in the ${esc(STAFF[key].source)}. <button class="btn sm primary" data-act="addDirStaff">Add them</button><div class="note">Emails follow the chamber's usual format: confirm before relying on them.</div></div>` : ''}
+  <ul class="hist">${m.staffers.length ? m.staffers.map(item).join('') : `<li class="note">${key === 'ussenate' ? 'The Senate does not publish staff lists. ' : ''}No staff added yet. Add the scheduler, the chief of staff or the aide who handles your issue.</li>`}</ul>
   ${staffEdit === 'new' ? staffForm({}) : m.staffers.length < 12 ? '<div><button class="btn sm" data-act="addStaff">Add staff member</button></div>' : ''}`;
 }
 function staffDirList() {
@@ -1242,11 +1324,9 @@ function gettingStarted() {
     [Boolean(cfg.bills && cfg.bills.federal && cfg.bills.states), 'Turn on bill and legislator data', 'Two free keys let Headcount look up bills and load any state legislature.', '<button class="btn sm" data-x="serverSettings" data-open="sources">Add the free keys</button>', 'admin-data'],
   ] : [];
   const steps = [...admin,
-    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Start a campaign, load the chamber and mark where each member stands.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
-    [st.clients > 0, 'Add the clients you represent', 'Every campaign, report and watch can be filed under a client.', '<button class="btn sm" data-page="workspace">Add a client</button>'],
+    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Name the bill and pick the chamber: every member and their staff are loaded for you.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
     [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Counts, meetings and briefs update for everyone within seconds.', '<button class="btn sm" data-page="workspace">Invite</button>', 'invite'],
     [st.watches > 0, 'Watch for new bills and rules', 'The Monitor checks Congress, the states, new federal rules and contract notices for you.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>', 'monitor'],
-    [st.contacts > 0, 'Bring in your contacts', 'Agency staff, coalition partners and client contacts, with a shared history.', '<button class="btn sm" data-page="contacts">Add contacts</button>', 'contacts'],
   ];
   const done = steps.filter((x) => x[0]).length;
   if (done === steps.length) return '';
@@ -1482,7 +1562,7 @@ async function sendOrgInvite(form) {
     const r = await CLOUD.api('POST', `/api/workspaces/${ORG.id}/invites`, { role, email: email || undefined, send: Boolean(sendIt && server) });
     WS.lastInvite = `${location.origin}/invite/${r.code}`; WS.invites = null;
     if (sendIt && server) toast(r.emailed ? `Invitation emailed to ${email}` : 'Invitation link created. Copy it and send it to your colleague.');
-    else if (sendIt && !CLOUD.canConnect()) { location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`Join ${ORG.name} on Headcount`)}&body=${encodeURIComponent(`${CLOUD.user.name} invited you to join ${ORG.name} on Headcount:\n\n${WS.lastInvite}`)}`; toast('Invitation link created and opened in your email app'); }
+    else if (sendIt && !CLOUD.canConnect()) { const how = openMail(mailerPref() || 'app', { to: email, subject: `Join ${ORG.name} on Headcount`, body: `${CLOUD.user.name} invited you to join ${ORG.name} on Headcount:\n\n${WS.lastInvite}` }); toast(how === 'web' ? 'Invitation link created and opened in a new tab' : 'Invitation link created. If your email app did not open, copy the link below.'); }
     else if (sendIt) {
       if (access) await access;
       await CLOUD.mail.send({ to: [email], subject: `Join ${ORG.name} on Headcount`, body: `Hi,\n\n${CLOUD.user.name} invited you to join ${ORG.name} on Headcount as ${role === 'guest' ? 'a guest' : role === 'admin' ? 'an admin' : 'a member'}. Headcount is where we track vote counts, meetings and bill briefs.\n\nJoin here (the link works for 14 days and only for ${email}):\n${WS.lastInvite}\n\n${CLOUD.user.name}` });
@@ -1562,7 +1642,10 @@ function render() {
   b.hidden = !banner; b.innerHTML = banner;
   const w = $('#warn'), ro = campaignPage && S.cloud && ROLE === 'viewer'; w.hidden = !(ro || (campaignPage && S.preset && S.preset.stale));
   if (ro) w.textContent = 'You have view-only access to this campaign. Ask its owner to make you an editor to change it.';
-  else if (!w.hidden) w.textContent = `This ${S.preset.label} roster predates the November 3, 2026 election. Florida legislators take office on election day, so check each member against the official site before relying on it.`;
+  else if (!w.hidden) {
+    const fresh = ROSTERS && ROSTERS[presetKey()] && !ROSTERS[presetKey()].stale;
+    w.innerHTML = `This ${esc(S.preset.label)} list is from before the November 3, 2026 election, when new Florida legislators took office. ${fresh && canEditNow() ? 'Positions and notes for returning members are kept. <button class="btn sm primary" data-act="updateMembers">Update to the current members</button>' : 'Check each member against the official site before relying on it.'}`;
+  }
   PAGES.forEach((k) => { $('#' + k + 'Page').hidden = page !== k; });
   if (page === 'brief') renderBrief();
   else if (page === 'monitor') { if (typeof renderMonitor === 'function') renderMonitor(); }
@@ -1690,6 +1773,7 @@ function setupDrawer() {
   ${S.preset ? `<p class="note">Current roster: ${esc(S.preset.label)}, retrieved ${esc(S.preset.asOf)}${S.preset.vacant > 0 ? `, ${S.preset.vacant} seat${S.preset.vacant > 1 ? 's' : ''} not listed` : ''}.</p>` : ''}
   ${ROSTERS ? `<select id="s_preset" aria-label="Preset roster"><option value="">Load a preset chamber</option>${Object.entries(ROSTERS).map(([k, p]) => `<option value="${k}">${esc(p.label)} (${p.members.length})</option>`).join('')}</select><div id="s_presetBox" style="display:flex;flex-direction:column;gap:10px"></div>` : '<p class="note">Preset rosters could not be loaded.</p>'}
   ${typeof rosterLoaderHtml === 'function' ? rosterLoaderHtml() : ''}
+  ${['ushouse', 'flhouse', 'flsenate'].includes(presetKey()) && S.members.length && !S.example ? '<div class="btnrow"><button class="btn" data-act="addDirStaffAll">Add official staff to every member</button><span class="note">Names, titles and phones from the official directory</span></div>' : ''}
   <div class="btnrow"><span class="note">Set</span><select id="b_party" aria-label="Party"><option value="D">every Democrat</option><option value="R">every Republican</option><option value="I">every independent</option></select><span class="note">to</span><select id="b_pos" aria-label="Position">${[4, 3, 2, 1, 0].map((p) => `<option value="${p}">${POS[p]}</option>`).join('')}</select><button class="btn" data-act="bulk">Apply</button></div>
   <details><summary class="note">Paste your own roster</summary>
   <p class="note">One member per line: name, party (D/R/I), district, committee (y/n), position, phone, email. Only the name is required. This replaces every current member and their history.</p>
@@ -1706,10 +1790,11 @@ function newCampDrawer() {
   <form id="nForm" class="form">
     <label class="wide">Bill or vote<input id="n_bill" name="bill" required placeholder="HB 1021: Property insurance reform"></label>
     <label>Your goal<select id="n_side" name="side"><option value="pass">Pass it</option><option value="defeat">Defeat it</option></select></label>
-    <label>Start from<select id="n_from" name="from">${S.members.length && !S.example ? '<option value="copy">The same roster and staff as this campaign</option>' : ''}<option value="blank">An empty roster</option></select></label>
+    <label class="wide">Which chamber?<select id="n_from" name="from" required><option value="">Choose a chamber</option>${(() => { const { presets, live } = chamberOptions(); return presets + live; })()}${S.members.length && !S.example ? `<option value="copy">Same members as ${esc(S.campaign.bill || 'this campaign')}</option>` : ''}<option value="blank">I'll add the members myself</option></select></label>
     ${cloud ? `<label>Client<select id="n_client" name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('')}</select></label>
     <label>Who can see it<select id="n_vis" name="vis"><option value="org">Everyone in ${esc(ORG.name)}</option><option value="team">Only people I add</option></select></label>` : ''}
-    <p class="wide note">${cloud ? `It is saved to ${esc(ORG.name)}.` : signedIn() ? 'It is saved in this browser only until you set up a workspace.' : 'It is saved in this browser only. Sign in to save campaigns to your firm\'s workspace and share them.'} Copying keeps every member, their contact details, staff, interests and notes, and resets positions, committee seats and history.</p>
+    <p class="wide note">Every current member is loaded with their office, phone and staff. ${cloud ? `It is saved to ${esc(ORG.name)}.` : signedIn() ? 'It is saved in this browser only until you set up a workspace.' : 'It is saved in this browser only. Sign in to save campaigns to your firm\'s workspace and share them.'}</p>
+    <p class="wide note" id="nMsg" role="status"></p>
     <div class="wide"><button class="btn primary">Create campaign</button></div>
   </form>`);
 }
@@ -1941,6 +2026,9 @@ document.addEventListener('click', async (e) => {
       return;
     }
     case 'setup': return setupDrawer();
+    case 'addDirStaff': { const m = S.members.find((x) => x.id === openId), key = presetKey(); if (!m) return; await staffFor(key); const add = dirStaff(key, m.ref); m.staffers.push(...add); commit(`${add.length} staff added`); return memberDrawer(m.id); }
+    case 'addDirStaffAll': { const key = presetKey(); await staffFor(key); let n = 0; S.members.forEach((m) => { if (m.ref && !m.staffers.some((s) => s.src === 'directory')) { const add = dirStaff(key, m.ref); n += add.length; m.staffers.push(...add); } }); closeDrawer(); return commit(n ? `${n} staff added from the official directory` : 'No more staff to add'); }
+    case 'updateMembers': return updateMembers();
     case 'quickChamber': return quickChamber(t);
     case 'reports': return reportsDrawer();
     case 'staffDir': return staffDirDrawer();
@@ -1990,9 +2078,9 @@ document.addEventListener('click', async (e) => {
     case 'rqFind': rqRead(); if (await ready()) await findTimes(m); return;
     case 'rqMailto': {
       rqRead(); if (!rqCheckTo()) return;
-      const link = document.createElement('a'); link.href = `mailto:${encodeURIComponent(RQ.to)}?subject=${encodeURIComponent(RQ.subject)}&body=${encodeURIComponent(RQ.body)}`; link.click();
+      const how = openMail(t.dataset.mailer || 'app', { to: RQ.to, subject: RQ.subject, body: RQ.body });
       RQ.sentVia = 'email app';
-      rqMsg(''); $('#rqMsg').innerHTML = 'Your email app should open with the message. Once you have sent it: <button type="button" class="btn sm primary" data-act="rqLogged">Log the request</button>';
+      rqMsg(''); $('#rqMsg').innerHTML = `${mailOpenedNote(how)}Once you have sent it: <button type="button" class="btn sm primary" data-act="rqLogged">Log the request</button>`;
       return;
     }
     case 'rqLogged': rqRead(); return recordRequest(m, 'email app');
@@ -2056,6 +2144,7 @@ document.addEventListener('click', async (e) => {
     case 'preset': {
       const key = $('#s_preset').value, ci = $('#s_cmte') ? +$('#s_cmte').value : -1, backed = $('#s_backed').value;
       if (S.members.length && !S.example && !sure(`Replace the current roster with ${ROSTERS[key].label}`)) return;
+      await staffFor(key);
       loadPreset(key, ci, backed); closeDrawer(); return commit(`${ROSTERS[key].label} loaded`);
     }
     case 'bulk': {
@@ -2163,13 +2252,19 @@ document.addEventListener('submit', async (e) => {
     const st = blankState(cut('bill', 140)); st.campaign.side = fd.get('side');
     if (fd.get('clientId')) { st.campaign.clientId = fd.get('clientId'); st.campaign.client = (CLIENTS.find((k) => k.id === st.campaign.clientId) || {}).name || ''; }
     if (fd.get('vis')) st.visibility = fd.get('vis');
-    if (fd.get('from') === 'copy') {
+    const from = String(fd.get('from') || '');
+    if (!from) { $('#nMsg').textContent = 'Choose the chamber, or "I\'ll add the members myself".'; return; }
+    if (/^[ps]:/.test(from)) {
+      const btn = e.target.querySelector('button.primary'); btn.disabled = true; $('#nMsg').textContent = 'Loading the members';
+      try { await fillChamber(from, st); } catch (err) { btn.disabled = false; $('#nMsg').textContent = err.message; return; }
+    }
+    if (from === 'copy') {
       Object.assign(st.campaign, { chamber: S.campaign.chamber, rule: S.campaign.rule, me: S.campaign.me }, st.campaign.clientId ? {} : { client: S.campaign.client, clientId: S.campaign.clientId || '' });
       if (S.preset) st.preset = plain(S.preset);
       st.members = plain(S.members).filter((x) => !x.draft).map((x) => Object.assign(x, { pos: 2, cmte: false, role: '', history: [] }));
     }
-    closeDrawer(); page = 'count'; await addCampaign(st); toast('Campaign created. Now choose the chamber.');
-    if (!st.members.length) { const q = $('#q_chamber'); if (q) q.focus(); }
+    closeDrawer(); page = 'count'; await addCampaign(st);
+    toast(st.members.length ? `Campaign created with ${st.members.length} members` : 'Campaign created. Add members with Edit campaign.');
     return;
   }
   if (id === 'sForm') {

@@ -372,10 +372,10 @@ const fill = (tpl, c) => tpl.replace(/\{(first_name|name|organization|title)\}/g
 function bulkMailDrawer() {
   const list = CRM.contacts.filter((c) => CRM.sel.has(c.id)), withEmail = list.filter((c) => c.email);
   if (!CLOUD.canConnect()) {
-    const addrs = withEmail.map((c) => c.email), mailto = `mailto:?bcc=${encodeURIComponent(addrs.join(','))}`;
+    const addrs = withEmail.map((c) => c.email), bcc = addrs.join(','), mailto = composeUrl('app', { bcc });
     return showDrawer(`<div class="row"><h2>Email ${plural2(withEmail.length, 'person')}</h2><button class="btn sm" data-act="close">Close</button></div>
     <p class="note">Write to them from your own email app, with everyone in BCC so nobody sees the others' addresses. Then log it here so the team sees the outreach on each contact.</p>
-    <div class="btnrow">${mailto.length < 1900 ? `<a class="btn primary" href="${esc(mailto)}">Open my email app</a>` : ''}<button class="btn" data-copy="${esc(addrs.join(', '))}">Copy the ${addrs.length} addresses</button></div>
+    <div class="btnrow"><a class="btn primary" href="${esc(composeUrl('gmail', { bcc }))}" target="_blank" rel="noopener">Open in Gmail</a><a class="btn" href="${esc(composeUrl('outlook', { bcc }))}" target="_blank" rel="noopener">Open in Outlook</a>${mailto.length < 1900 ? `<a class="btn" href="${esc(mailto)}">Open in my email app</a>` : ''}<button class="btn" data-copy="${esc(addrs.join(', '))}">Copy the ${addrs.length} addresses</button></div>
     <h3 style="margin-top:14px">Log it</h3>${logForm(withEmail.map((c) => c.id)).replace('<option>Meeting</option><option>Call</option><option>Email</option>', '<option>Email</option><option>Meeting</option><option>Call</option>')}`);
   }
   const prov = CLOUD.provider ? CLOUD.provider() : '';
