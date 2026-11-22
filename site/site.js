@@ -109,10 +109,10 @@ document.documentElement.classList.add('js');
     const body = Object.fromEntries(new FormData(form).entries());
     button.disabled = true; status.textContent = 'Sending';
     try {
-      const res = await fetch('/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await fetch(form.dataset.action || '/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'That did not go through. Try again in a minute.');
-      form.reset(); status.textContent = 'Thank you. We have your request and will reply by email.';
+      form.reset(); status.textContent = 'Thanks. Your message was sent, and we\'ll reply by email.';
     } catch (err) { status.textContent = err.message; }
     button.disabled = false;
   });

@@ -47,6 +47,7 @@ export const config = {
   priceLabelTeam: env.PRICE_LABEL_TEAM || '',
   priceLabelFirm: env.PRICE_LABEL_FIRM || '',
   salesEmail: env.SALES_EMAIL || '',
+  leadsEmail: env.LEADS_EMAIL || '', // where contact form messages go; never shown on the website
   trialDays: Number(env.TRIAL_DAYS) || 14,
   trialSeats: Number(env.TRIAL_SEATS) || 10,
 };

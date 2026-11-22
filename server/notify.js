@@ -200,11 +200,19 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
     return sent;
   }
 
+  // Messages from the website's contact form go to the inbox set for them,
+  // else the sales address, else whoever runs this Headcount.
+  function contactInbox() {
+    if (cfg.leadsEmail) return cfg.leadsEmail;
+    if (cfg.salesEmail) return cfg.salesEmail;
+    const op = store.setting('operator') ? store.q.user.get(store.setting('operator')) : null;
+    return (op && op.email) || cfg.supportEmail || '';
+  }
   function contact(lead) {
-    if (!cfg.salesEmail) return false;
-    return mail.queue({ to: cfg.salesEmail, kind: 'lead', replyTo: lead.email, subject: `Demo request: ${lead.firm || lead.name}`,
-      text: `Name: ${lead.name}\nEmail: ${lead.email}\nOrganization: ${lead.firm}\nTeam size: ${lead.size}\n\n${lead.message}` });
+    const to = contactInbox(); if (!to) return false;
+    return mail.queue({ to, kind: 'lead', replyTo: lead.email, subject: `Question from the Headcount website: ${lead.name}${lead.firm ? `, ${lead.firm}` : ''}`,
+      text: `${lead.message || '(No message)'}\n\nName: ${lead.name}\nEmail: ${lead.email}\nOrganization: ${lead.firm || ''}\nTeam size: ${lead.size || ''}\n\nReply to this email to answer them.` });
   }
 
-  return { handle, orgInvite, trialNotices, digests, digestFor, contact, monitorAlert };
+  return { handle, orgInvite, trialNotices, digests, digestFor, contact, contactInbox, monitorAlert };
 }

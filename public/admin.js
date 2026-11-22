@@ -91,8 +91,9 @@ function drawSettings(open) {
   ${o('address', !f.publicUrl.current)}<summary>Web address ${chip(f.publicUrl.current, 'Set', 'Not set')}</summary>
     <form class="form" data-sv="address">${field('publicUrl', 'The address people type to open Headcount', { wide: true, fallback: f.publicUrl.current || location.origin, ph: 'https://headcount.yourfirm.com' })}
     <p class="note wide">It goes in the links inside emails: invitations, password resets, digests and action pages.</p><div class="wide"><button class="btn primary">Save</button></div></form></details>
-  ${o('email', !st.email)}<summary>Email ${chip(st.email, 'Working', 'Not set up')}</summary>
+  ${o('email', !st.email || st.emailProblem)}<summary>Email ${st.emailProblem ? '<span class="status bad">Not sending</span>' : chip(st.email, 'Working', 'Not set up')}</summary>
     <form class="form" data-sv="email">
+      ${st.emailProblem ? `<div class="callout wide warnbox"><b>Emails aren't going out.</b> ${esc(st.emailProblem.explain)} Emails that couldn't be sent, such as sign-up confirmations, go out as soon as you save a password that works.</div>` : ''}
       <p class="note wide">Headcount sends invitations, password resets, alerts and daily digests from an email account you choose.</p>
       <label class="wide">Which email do you use?<select id="sv_preset">${Object.entries(EMAIL_PRESETS).map(([k, x]) => `<option value="${k}" ${k === preset ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>
       <p class="note wide" id="sv_help">${helpHtml(p)}</p>
@@ -122,8 +123,11 @@ function drawSettings(open) {
   ${paymentsSection(f, st, o)}
   ${o('contact', false)}<summary>Your contact emails</summary>
     <form class="form" data-sv="contact">
-      ${field('salesEmail', 'Where requests for a demo go', { ph: 'sales@yourfirm.com' })}${field('supportEmail', 'Where customers write for help', { ph: 'help@yourfirm.com' })}
-      <p class="note wide">The help address appears in the app and in emails.</p><div class="wide"><button class="btn primary">Save</button></div></form></details>
+      ${field('leadsEmail', 'Where questions from the website go', { ph: 'you@yourfirm.com', wide: true })}
+      <p class="note wide">Messages sent with the Questions form on the website. This address is never shown on the site. If it's empty, they go to the sales address, or to you.</p>
+      ${field('salesEmail', 'Sales address shown on the website', { ph: 'sales@yourfirm.com' })}${field('supportEmail', 'Help address shown in the app and emails', { ph: 'help@yourfirm.com' })}
+      <div class="wide"><button class="btn primary">Save</button></div></form></details>
+  ${o('leads', false)}<summary>Messages from the website</summary><div id="svLeads"><p class="note">Opening this lists the questions people sent from the website.</p></div></details>
   ${o('customers', false)}<summary>Customers</summary><div id="svCustomers"><p class="note">Opening this lists every workspace using your Headcount.</p></div></details>
   ${o('backups', false)}<summary>Backups</summary>
     <p class="note">Headcount saves a copy of everything once a day and keeps a week of copies${latest ? `; the latest is from ${esc(fmtDate(Date.parse(latest[1] + 'T12:00:00')))}` : ''}. You can also download a copy to keep somewhere safe.</p>
@@ -154,6 +158,7 @@ async function saveSection(form) {
   try {
     const r = await CLOUD.api('PUT', '/api/settings', patch);
     await refreshSettings(r);
+    if (form.dataset.sv === 'email') MAIL_PROBLEM = null; // the server tries again with the new settings
     toast('Saved'); drawSettings(form.dataset.sv); render();
   } catch (e) { btn.disabled = false; fail(e); }
 }
@@ -169,7 +174,7 @@ document.addEventListener('click', async (e) => {
   }
   if (x === 'svTestEmail') {
     const msg = $('#svMailMsg'); msg.textContent = 'Sending…';
-    try { const r = await CLOUD.api('POST', '/api/settings/test-email', {}); msg.innerHTML = `<span class="good">Sent to ${esc(r.sent)}.</span> Check that inbox (and its spam folder).`; }
+    try { const r = await CLOUD.api('POST', '/api/settings/test-email', {}); msg.innerHTML = `<span class="good">Sent to ${esc(r.sent)}.</span> Check that inbox (and its spam folder).`; if (MAIL_PROBLEM) { MAIL_PROBLEM = null; render(); } }
     catch (err) { msg.innerHTML = `<span class="bad">${esc(err.message)}</span> Save your settings first if you changed them.`; }
     return;
   }
@@ -183,6 +188,17 @@ document.addEventListener('click', async (e) => {
   if (x === 'svBackup') { try { await CLOUD.download('/api/settings/backup', `headcount-backup-${today()}.db`); toast('Backup downloaded'); } catch (err) { fail(err); } }
 });
 document.addEventListener('toggle', async (e) => {
+  const lb = e.target.querySelector && e.target.querySelector('#svLeads');
+  if (lb && e.target.open && !lb.dataset.loaded) {
+    lb.dataset.loaded = '1'; lb.innerHTML = '<p class="note">Loading</p>';
+    try {
+      const r = await CLOUD.api('GET', '/api/settings/leads');
+      lb.innerHTML = `<p class="note">${r.to ? `New messages are emailed to <b>${esc(r.to)}</b>${(SET.data.status || {}).emailProblem ? ', once email is working again' : ''}.` : 'Set an address above to get these by email.'} You can always read them here.</p>
+        ${r.leads.length ? `<ul class="hist">${r.leads.map((l) => `<li><div class="row"><span><b>${esc(l.name)}</b>${l.firm ? ` · ${esc(l.firm)}` : ''}${l.size ? ` · ${esc(l.size)}` : ''}</span><span class="note">${esc(fmtDate(l.at))}</span></div>
+          <div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>${l.message ? `<div class="note" style="white-space:pre-wrap">${esc(l.message)}</div>` : ''}</li>`).join('')}</ul>` : '<p class="note">No messages yet.</p>'}`;
+    } catch (err) { lb.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+    return;
+  }
   const box = e.target.querySelector && e.target.querySelector('#svCustomers');
   if (!box || !e.target.open || box.dataset.loaded) return;
   box.dataset.loaded = '1'; box.innerHTML = '<p class="note">Loading</p>';

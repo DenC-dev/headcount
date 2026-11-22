@@ -20,7 +20,7 @@ const F = {
   stripePriceTeam: { env: ['STRIPE_PRICE_TEAM'], max: 120 }, stripePriceFirm: { env: ['STRIPE_PRICE_FIRM'], max: 120 },
   priceLabelTeam: { env: ['PRICE_LABEL_TEAM'], max: 80 }, priceLabelFirm: { env: ['PRICE_LABEL_FIRM'], max: 80 },
   stripeWebhookId: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripePortalConfig: { env: ['STRIPE_SECRET_KEY'], max: 120 }, stripeAccount: { env: ['STRIPE_SECRET_KEY'], max: 200 }, stripeTax: { env: ['STRIPE_SECRET_KEY', 'STRIPE_TAX_MODE'], values: ['managed', 'stripe_tax', 'none'] },
-  salesEmail: { env: ['SALES_EMAIL'], max: 160 }, supportEmail: { env: ['SUPPORT_EMAIL'], max: 160 },
+  salesEmail: { env: ['SALES_EMAIL'], max: 160 }, supportEmail: { env: ['SUPPORT_EMAIL'], max: 160 }, leadsEmail: { env: ['LEADS_EMAIL'], max: 160 },
 };
 const fromEnv = (k) => F[k].env && F[k].env.some((e) => ENV0[e]);
 
@@ -50,7 +50,7 @@ export function makeSettings(cfg, store, { keyFile = null, onChange = () => {} }
   let setAnthropic = false;
   function apply() {
     const val = (k) => (fromEnv(k) ? null : read(k));
-    for (const k of ['congressKey', 'openStatesKey', 'samKey', 'ldaKey', 'stripeKey', 'stripeWebhookSecret', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'salesEmail', 'supportEmail', 'stripePortalConfig', 'stripeAccount', 'stripeTax']) {
+    for (const k of ['congressKey', 'openStatesKey', 'samKey', 'ldaKey', 'stripeKey', 'stripeWebhookSecret', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'salesEmail', 'supportEmail', 'leadsEmail', 'stripePortalConfig', 'stripeAccount', 'stripeTax']) {
       const v = val(k); if (v !== null) cfg[k] = v;
     }
     const url = val('publicUrl'); if (url !== null && url) cfg.publicUrl = url.replace(/\/+$/, '');
@@ -58,7 +58,8 @@ export function makeSettings(cfg, store, { keyFile = null, onChange = () => {} }
       const host = read('smtpHost');
       if (host) {
         const port = Number(read('smtpPort')) || 587, secure = read('smtpSecure') ? read('smtpSecure') === 'tls' : port === 465, user = read('smtpUser');
-        cfg.smtp = { host, port, secure, auth: user ? { user, pass: read('smtpPass') } : undefined };
+        const raw = read('smtpPass'), pass = /(^|\.)(gmail|googlemail|google)\.com$/i.test(host) ? raw.replace(/\s+/g, '') : raw; // app passwords are shown as four groups of four
+        cfg.smtp = { host, port, secure, auth: user ? { user, pass } : undefined };
         if (!ENV0.EMAIL_MODE) cfg.emailMode = 'smtp';
       } else { cfg.smtp = null; if (!ENV0.EMAIL_MODE && cfg.authMode !== 'dev') cfg.emailMode = cfg.smtpUrl ? 'smtp' : 'off'; }
     }

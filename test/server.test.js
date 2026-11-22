@@ -454,6 +454,58 @@ test('the mail worker sends queued email with unsubscribe headers and retries fa
   assert.match(sent[0].headers['List-Unsubscribe'], /^<https:\/\/app\.test\/api\/unsubscribe\?t=/);
 });
 
+test('when Gmail refuses the password, the person running Headcount is told how to fix it, and waiting email goes out after the fix', async () => {
+  const { makeMailer, explainMailError } = await import('../server/mail.js');
+  const { makeSettings } = await import('../server/settings.js');
+  const s2 = mods.db.openDb(':memory:', { billing: false });
+  let refuse = true; const sent = [];
+  const cfg = { smtpTransport: { sendMail: async (msg) => { if (refuse) { const e = new Error('Invalid login: 535-5.7.8 Username and Password not accepted.'); e.code = 'EAUTH'; throw e; } sent.push(msg); } },
+    smtp: { host: 'smtp.gmail.com' }, emailFrom: 'Headcount <n@headcount.test>', publicUrl: 'https://app.test', emailMode: 'smtp' };
+  const mailer = makeMailer(cfg, s2);
+  mailer.queue({ to: 'new@x.org', subject: 'Confirm your email for Headcount', text: 'Click', kind: 'verify' });
+  mailer.queue({ to: 'other@x.org', subject: 'Confirm your email for Headcount', text: 'Click', kind: 'verify' });
+  assert.equal(await mailer.work(), 0);
+  const pr = mailer.problem();
+  assert.ok(pr, 'a failed login is reported'); assert.match(pr.explain, /app password/); assert.match(pr.explain, /myaccount\.google\.com\/apppasswords/);
+  assert.equal(s2.db.prepare('SELECT SUM(attempts) n FROM email_queue').get().n, 1, 'stops after the first refusal instead of failing every message');
+  assert.ok(makeMailer(cfg, s2).problem(), 'remembered across a restart');
+  refuse = false; mailer.reconfigure(); await new Promise((r) => setTimeout(r, 120));
+  assert.equal(sent.length, 2, 'both confirmations go out once the password works'); assert.equal(mailer.problem(), null);
+  assert.match(explainMailError('connect ETIMEDOUT 1.2.3.4:465', 'smtp.gmail.com'), /could not reach/);
+  // Google shows app passwords in four groups; Gmail wants them without the spaces
+  const s3 = mods.db.openDb(':memory:', { billing: false }), c3 = {};
+  makeSettings(c3, s3).save({ smtpHost: 'smtp.gmail.com', smtpPort: '465', smtpUser: 'me@gmail.com', smtpPass: 'abcd efgh ijkl mnop' });
+  assert.equal(c3.smtp.auth.pass, 'abcdefghijklmnop');
+});
+
+test('a workspace staff list (a LegiStorm export) fills in staff with real emails, matched to the right office', async () => {
+  const rows = [
+    ['Ashley Smith', 'Chief of Staff', 'ashley.smith@mail.house.gov', '202-225-5765', 'Rep. Nicholas Begich (R-Alaska)', 'AK', 'At-Large', 'House'],
+    ['Pat Lee', 'Scheduler', 'pat.lee@mail.house.gov', '', 'Rep. Nicholas Begich (R-Alaska)', 'AK', 'At-Large', 'House'],
+    ['Sam Ruiz', 'Scheduler', 'sam.ruiz@mail.house.gov', '', 'Rep. Adam Smith (D-Wash.)', 'WA', '9', 'House'],
+    ['Lee Park', 'Scheduler', 'lee.park@mail.house.gov', '', 'Rep. Jason Smith (R-Mo.)', 'MO', '8', 'House'],
+    ['Kim Doe', 'Legislative Aide', 'kim.doe@flsenate.gov', '', 'Sen. Ben Albritton', 'FL', '27', 'Senate'],
+    ['', 'No name', 'x@y.org', '', 'Somebody', '', '', ''],
+  ];
+  ok(await api('alice', 'PATCH', `/api/workspaces/${W}/members/dev:bob`, { role: 'member' }));
+  assert.equal((await api('bob', 'PUT', `/api/workspaces/${W}/staff-list`, { rows })).status, 403, 'only admins upload');
+  const up = ok(await api('alice', 'PUT', `/api/workspaces/${W}/staff-list`, { source: 'LegiStorm', rows }));
+  assert.equal(up.list.count, 5); assert.equal(up.skipped, 1);
+  assert.equal(ok(await api('bob', 'GET', `/api/workspaces/${W}/staff-list`)).list.count, 5, 'members see it');
+  assert.ok([403, 404].includes((await api('gina', 'GET', `/api/workspaces/${W}/staff-list`)).status), 'guests do not');
+  const r = ok(await api('bob', 'POST', `/api/workspaces/${W}/staff-list/match`, { level: 'us', chamber: 'lower', members: [
+    { id: 'a', name: 'Nicholas J. Begich III', district: 'AK-AL' }, { id: 'b', name: 'Adam Smith', district: 'WA-9' }, { id: 'c', name: 'Jason Smith', district: 'MO-8' }, { id: 'd', name: 'Nobody Here', district: 'TX-1' }] }));
+  assert.deepEqual(r.staff.a.map((x) => x[0]), ['Pat Lee', 'Ashley Smith'], 'scheduler first');
+  assert.equal(r.staff.a[1][3], 'ashley.smith@mail.house.gov');
+  assert.deepEqual(r.staff.b.map((x) => x[0]), ['Sam Ruiz'], 'two Smiths kept apart by state');
+  assert.deepEqual(r.staff.c.map((x) => x[0]), ['Lee Park']);
+  assert.equal(r.staff.d, undefined);
+  const fl = ok(await api('alice', 'POST', `/api/workspaces/${W}/staff-list/match`, { level: 'state', state: 'FL', chamber: 'upper', members: [{ id: 'e', name: 'Ben Albritton', district: '27' }] }));
+  assert.equal(fl.staff.e[0][3], 'kim.doe@flsenate.gov');
+  assert.equal(ok(await api('alice', 'DELETE', `/api/workspaces/${W}/staff-list`)).list, null);
+  ok(await api('alice', 'PATCH', `/api/workspaces/${W}/members/dev:bob`, { role: 'admin' }));
+});
+
 test('the demo request form stores the lead and emails sales', async () => {
   const post = (b) => fetch(base + '/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
   assert.equal((await post({ name: 'Pat', email: 'nope' })).status, 400);

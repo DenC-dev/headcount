@@ -17,6 +17,7 @@ import { lookupBill, STATES } from './bills.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
+import { makeStaffLists } from './stafflist.js';
 import { makeAccounts } from './accounts.js';
 import { makeCalendar } from './calendar.js';
 import { refreshOfficials, staffFiles } from './officials.js';
@@ -206,7 +207,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   let billingInst = null;
   const getBilling = () => (config.billing ? (billingInst ||= makeBilling(config, store)) : null);
   const scoreItems = score !== undefined ? score : (input) => import('./ai.js').then((m) => m.scoreItems(input));
-  const monitor = makeMonitor(config, store, { score: scoreItems, aiOn: () => (score !== undefined ? Boolean(score) : config.aiEnabled) }), crm = makeCrm(config, store);
+  const monitor = makeMonitor(config, store, { score: scoreItems, aiOn: () => (score !== undefined ? Boolean(score) : config.aiEnabled) }), crm = makeCrm(config, store), staffLists = makeStaffLists(store);
   mail = makeMailer(config, store);
   const notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
@@ -285,14 +286,14 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   // [method, path pattern, handler(match, ctx)]; ctx has user, url, req, body().
   const W = '([A-Za-z0-9_-]{4,40})', C = '([A-Za-z0-9_.:-]{1,64})', U = '([A-Za-z0-9_.:-]{1,140})', K = '([A-Za-z0-9_-]{8,64})';
   const routes = [
-    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), local: accounts.isLocal(x.user.id), recoveryLeft: accounts.recoveryLeft(x.user.id) }; }],
+    ['GET', '/api/me', (m, x) => { store.ssoJoin(x.user); const { session, ...user } = x.user; return { user, workspaces: store.listOrgs(x.user.id), domainMatches: store.domainMatches(x.user), prefs: store.getPrefs(x.user.id), operator: isOperator(x.user), emailProblem: isOperator(x.user) ? mail.problem() : null, local: accounts.isLocal(x.user.id), recoveryLeft: accounts.recoveryLeft(x.user.id) }; }],
     ['PATCH', '/api/me/prefs', async (m, x) => store.setPrefs(x.user.id, await x.body())],
     ['GET', '/api/me/calendar', (m, x) => ({ url: calendar.link(x.user.id) })],
     ['POST', '/api/me/calendar', (m, x) => { limit('calnew:' + x.user.id, 5); return { url: calendar.renew(x.user.id) }; }],
     ['PATCH', `/api/workspaces/${W}/sso`, async (m, x) => store.setSso(m[1], x.user.id, await x.body())],
     ['PATCH', `/api/workspaces/${W}/security`, async (m, x) => store.setSecurity(m[1], x.user.id, await x.body())],
     // Server settings, for the operator
-    ['GET', '/api/settings', (m, x) => { needOperator(x.user); return { ...settings.view(), status: { email: mail.enabled, ai: aiOn(), billing: Boolean(config.billing), auth: config.authMode, webhook: config.publicUrl ? `${config.publicUrl}/api/stripe/webhook` : '', backups: backupDir ? fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort().slice(-1)[0] || null : null : null } }; }],
+    ['GET', '/api/settings', (m, x) => { needOperator(x.user); return { ...settings.view(), status: { email: mail.enabled, emailProblem: mail.problem(), ai: aiOn(), billing: Boolean(config.billing), auth: config.authMode, webhook: config.publicUrl ? `${config.publicUrl}/api/stripe/webhook` : '', backups: backupDir ? fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort().slice(-1)[0] || null : null : null } }; }],
     ['GET', '/api/settings/customers', (m, x) => { needOperator(x.user); return store.customers(); }],
     ['PUT', '/api/settings', async (m, x) => { needOperator(x.user); const r = settings.save(await x.body()); return r; }],
     // Payments: one Stripe key, and Headcount sets up the rest in Stripe.
@@ -314,12 +315,13 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
       settings.save(Object.fromEntries(['stripeKey', 'stripeWebhookSecret', 'stripeWebhookId', 'stripePortalConfig', 'stripePriceTeam', 'stripePriceFirm', 'priceLabelTeam', 'priceLabelFirm', 'stripeAccount', 'stripeTax'].map((k) => [k, ''])));
       return settings.view();
     }],
+    ['GET', '/api/settings/leads', (m, x) => { needOperator(x.user); return { leads: store.q.leads.all(200), to: notifier.contactInbox() }; }],
     ['POST', '/api/settings/test-email', async (m, x) => {
       needOperator(x.user); limit('testmail:' + x.user.id, 4);
       const to = String((await x.body()).to || x.user.email || '').trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new HttpError(400, 'Enter an address to send the test to.');
       try { await mail.sendNow({ to, subject: 'Headcount can send email', text: `This test from your Headcount server arrived, so invitations, password resets, digests and alerts will reach people.\n\n${appUrl()}` }); }
-      catch (e) { throw new HttpError(502, `The email service refused: ${String(e.message || e).slice(0, 200)}`); }
+      catch (e) { throw new HttpError(502, String(e.message || e).slice(0, 400)); }
       return { sent: to };
     }],
     ['POST', '/api/settings/test-source', async (m, x) => {
@@ -369,6 +371,10 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['GET', `/api/workspaces/${W}/items`, (m, x) => monitor.items(m[1], x.user.id, Object.fromEntries(x.url.searchParams))],
     ['PATCH', `/api/workspaces/${W}/items/(\\d{1,12})`, async (m, x) => monitor.setItem(m[1], x.user.id, m[2], await x.body())],
     // Stakeholders
+    ['GET', `/api/workspaces/${W}/staff-list`, (m, x) => staffLists.info(m[1], x.user.id)],
+    ['PUT', `/api/workspaces/${W}/staff-list`, async (m, x) => { limit('stafflist:' + x.user.id, 6); return staffLists.save(m[1], x.user, await x.body(16_000_000)); }],
+    ['DELETE', `/api/workspaces/${W}/staff-list`, (m, x) => staffLists.remove(m[1], x.user.id)],
+    ['POST', `/api/workspaces/${W}/staff-list/match`, async (m, x) => staffLists.match(m[1], x.user.id, await x.body(400_000))],
     ['GET', `/api/workspaces/${W}/contacts`, (m, x) => crm.list(m[1], x.user.id)],
     ['POST', `/api/workspaces/${W}/contacts`, async (m, x) => crm.create(m[1], x.user.id, await x.body())],
     ['POST', `/api/workspaces/${W}/contacts/import`, async (m, x) => { limit('import:' + x.user.id, 5); return crm.importRows(m[1], x.user.id, (await x.body(5_000_000)).rows); }],
@@ -470,6 +476,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
       store.setPrefs(t.uid, { [u[0]]: u[1] });
       return m === 'GET' ? unsubscribePage(res, true, u[2]) : send(res, 200, { ok: true });
     }
+    // The contact form, also used from the project website on another address.
+    if (p === '/api/contact') { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); res.setHeader('Access-Control-Allow-Methods', 'POST'); }
+    if (p === '/api/contact' && m === 'OPTIONS') { res.writeHead(204, { 'Access-Control-Max-Age': '86400' }); return res.end(); }
     if (p === '/api/contact' && m === 'POST') {
       limit('contact:' + clientIp(req), 5);
       const b = await readJson(req, 20_000), cut = (v, n) => String(v || '').replace(/[\r\n]+/g, ' ').trim().slice(0, n);

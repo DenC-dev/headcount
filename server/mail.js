@@ -11,6 +11,26 @@ export function makeMailer(cfg, store) {
   let transport = null;
   const build = () => { transport = cfg.smtpTransport || (cfg.smtpUrl ? nodemailer.createTransport(cfg.smtpUrl) : cfg.smtp ? nodemailer.createTransport({ ...cfg.smtp, connectionTimeout: 15000, greetingTimeout: 15000 }) : null); };
   build();
+
+  // Whether the last attempt to send worked, kept across restarts, so the
+  // person who runs Headcount sees "Not sending" instead of a false "Working".
+  const readHealth = () => { try { return JSON.parse(store.setting('mail.health') || 'null') || { ok: null }; } catch (_) { return { ok: null }; } };
+  let health = readHealth();
+  const note = (ok, err) => {
+    const next = ok ? { ok: true, at: Date.now() } : { ok: false, at: Date.now(), error: String((err && err.message) || err || '').slice(0, 300) };
+    if (health.ok === next.ok && health.error === next.error && Date.now() - (health.at || 0) < 600e3) return;
+    health = next; store.putSetting('mail.health', JSON.stringify(health));
+  };
+  function problem() {
+    if (!isEnabled() || cfg.emailMode === 'outbox' || health.ok !== false) return null;
+    return { at: health.at, error: health.error, explain: explainMailError(health.error, (cfg.smtp && cfg.smtp.host) || cfg.smtpUrl || '') };
+  }
+  // After the settings change, try what is waiting (from the last 3 days) right away.
+  function reconfigure() {
+    build(); health = { ok: null }; store.putSetting('mail.health', '');
+    try { store.q.retryEmails.run(Date.now() - 3 * 864e5); } catch (_) { /* older database */ }
+    setTimeout(() => { work().catch(() => {}); }, 50).unref?.();
+  }
   const isEnabled = () => cfg.emailMode !== 'off' && (Boolean(transport) || cfg.emailMode === 'outbox');
 
   // Signed links for one-click unsubscribe; they never expire but only work for one person and one kind of email.
@@ -42,11 +62,12 @@ export function makeMailer(cfg, store) {
             from: cfg.emailFrom, to: m.to_addr, subject: m.subject, text: m.text_body, html: m.html_body || undefined, replyTo: m.reply_to || undefined,
             headers: m.unsubscribe ? { 'List-Unsubscribe': `<${m.unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } : undefined,
           });
-          store.q.sentEmail.run(Date.now(), m.id); sent++;
+          store.q.sentEmail.run(Date.now(), m.id); sent++; note(true);
         } catch (e) {
           const wait = Math.min(6 * 3600e3, 60e3 * 2 ** m.attempts);
           store.q.failedEmail.run(Date.now() + wait, String(e && e.message || e).slice(0, 300), m.id);
-          console.error('Email to', m.to_addr, 'failed:', e && e.message);
+          console.error('Email to', m.to_addr, 'failed:', e && e.message); note(false, e);
+          if (/auth|login|credential|535|534|530/i.test(String(e && (e.code || '') + ' ' + (e.message || '')))) break; // the rest would fail the same way
         }
       }
     } finally { running = false; }
@@ -56,9 +77,23 @@ export function makeMailer(cfg, store) {
   // Sends one message right away, for "send a test email" in server settings.
   async function sendNow({ to, subject, text }) {
     if (!transport) throw new Error('Email is not set up yet.');
-    await transport.sendMail({ from: cfg.emailFrom, to, subject, text });
+    try { await transport.sendMail({ from: cfg.emailFrom, to, subject, text }); note(true); }
+    catch (e) { note(false, e); const x = new Error(explainMailError(e.message || String(e), (cfg.smtp && cfg.smtp.host) || cfg.smtpUrl || '')); x.raw = e.message; throw x; }
   }
-  return { get enabled() { return isEnabled(); }, reconfigure: build, sendNow, queue, work, unsubToken, readToken, outbox: (n = 50) => store.q.outbox.all(n) };
+  return { get enabled() { return isEnabled(); }, reconfigure, sendNow, queue, work, problem, unsubToken, readToken, outbox: (n = 50) => store.q.outbox.all(n) };
+}
+
+// What a failed send means, in words the person fixing it can act on.
+export function explainMailError(msg, host = '') {
+  const m = String(msg || ''), gmail = /gmail|google/i.test(host), ms = /office365|outlook|microsoft|live\.com|hotmail/i.test(host);
+  if (/535|534|5\.7\.8|5\.7\.9|invalid login|username and password not accepted|authentication (unsuccessful|failed)|EAUTH|badcredentials/i.test(m)) {
+    if (gmail) return 'Gmail did not accept the password. Gmail needs an app password, not your normal Gmail password: turn on 2-Step Verification in your Google account, open myaccount.google.com/apppasswords, make one called Headcount, and paste the 16 letters into the password box here. Also check the address is the full Gmail address.';
+    if (ms) return 'Microsoft did not accept the email address and password. Check them, and ask whoever manages your Microsoft 365 to allow "Authenticated SMTP" for that mailbox.';
+    return 'The email service did not accept the username and password. Check them with your email provider.';
+  }
+  if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND|ESOCKET|ECONNECTION|greeting never received/i.test(m)) return 'Headcount could not reach the outgoing mail server. Check the server name and port under More options.';
+  if (/sender|from address|not owned|5\.7\.1|553|550/i.test(m)) return 'The email service would not send from that From address. Use the same address you signed in with, or one your provider lets you send from.';
+  return `The email service refused: ${m.slice(0, 200)}`;
 }
 
 // A plain, readable HTML version of a text email. Every value is escaped.

@@ -176,6 +176,118 @@ async function staffFor(key) {
   return STAFF[key];
 }
 const dirStaff = (key, ref) => ((STAFF[key] && STAFF[key].people[ref]) || []).map(([n, t, ph, em]) => ({ id: uid(), name: n, role: t, phone: ph, email: em, notes: '', fmt: true, src: 'directory' }));
+// Official staff show up on their own: every member of a built-in chamber gets
+// the staff from the official list, including campaigns made before the list
+// existed, and names added when the list is refreshed. Staff someone removed
+// stay removed.
+const nameKey = (n) => String(n || '').toLowerCase().replace(/[^a-z]/g, '');
+function refByName(key, m) {
+  const p = ROSTERS && ROSTERS[key]; if (!p || !m.name) return '';
+  const last = nameKey(lastName(m.name)), d = String(m.district || '').replace(/^0+/, '');
+  const hit = p.members.filter((x) => nameKey(lastName(x.n)) === last && (!d || String(x.d).replace(/^0+/, '') === d));
+  return hit.length === 1 ? hit[0].k : '';
+}
+function autoStaff() {
+  if (S.example) return;
+  const key = presetKey(), dir = STAFF_KEYS.includes(key) ? STAFF[key] : null;
+  if (STAFF_KEYS.includes(key) && dir === undefined) staffFor(key).then((x) => { if (x) render(); });
+  else if (dir && S.members.some((m) => m.dirAt !== dir.asOf)) {
+    for (const m of S.members) {
+      if (m.dirAt === dir.asOf) continue;
+      m.dirAt = dir.asOf;
+      const ref = m.ref || refByName(key, m); if (!ref) continue;
+      m.ref = ref;
+      const have = new Set(m.staffers.map((x) => nameKey(x.name))), gone = new Set(m.dirGone || []);
+      m.staffers.push(...dirStaff(key, ref).filter((x) => !have.has(nameKey(x.name)) && !gone.has(nameKey(x.name))));
+    }
+    if (canEditNow()) save(); // viewers see the staff without saving anything
+  }
+  const L = orgStaffList();
+  if (L && S.members.some((m) => m.lsAt !== L.at)) matchOrgStaff(L);
+}
+// ----- the workspace's own staff list, such as a LegiStorm export -----
+// An admin uploads it on the Workspace page; the server matches it to each
+// campaign's members and its real email addresses replace the usual-format ones.
+let ORG_STAFF = { oid: null, list: undefined, busy: false, failedAt: 0 };
+function orgStaffList() {
+  if (!S.cloud) return null;
+  loadOrgStaff();
+  return ORG_STAFF.list || null;
+}
+function loadOrgStaff() {
+  if (!ORG || ORG.role === 'guest' || !signedIn()) return;
+  if (ORG_STAFF.oid !== ORG.id) {
+    const oid = ORG.id; ORG_STAFF = { oid, list: undefined, busy: false, failedAt: 0 };
+    CLOUD.api('GET', wsPath('/staff-list')).then((r) => { if (ORG_STAFF.oid === oid) { ORG_STAFF.list = r.list; render(); if (page === 'workspace') renderWorkspace(true); } }).catch(() => { if (ORG_STAFF.oid === oid) ORG_STAFF.list = null; });
+  }
+}
+function campaignChamber(st = S) {
+  const j = st.campaign && st.campaign.juris;
+  if (j && j.chamber) return { level: j.level === 'us' ? 'us' : 'state', state: j.state || '', chamber: j.chamber };
+  return ({ ushouse: { level: 'us', chamber: 'lower' }, ussenate: { level: 'us', chamber: 'upper' }, flhouse: { level: 'state', state: 'FL', chamber: 'lower' }, flsenate: { level: 'state', state: 'FL', chamber: 'upper' } })[presetKey(st)] || { level: '', state: '', chamber: '' };
+}
+async function matchOrgStaff(list) {
+  if (ORG_STAFF.busy || Date.now() - ORG_STAFF.failedAt < 60e3) return;
+  ORG_STAFF.busy = true;
+  const camp = S.id, todo = S.members.filter((m) => m.lsAt !== list.at && m.name);
+  try {
+    const r = await CLOUD.api('POST', wsPath('/staff-list/match'), { ...campaignChamber(), members: todo.map((m) => ({ id: m.id, name: m.name, district: m.district })) });
+    if (S.id !== camp) return;
+    for (const m of todo) {
+      m.lsAt = list.at;
+      const gone = new Set(m.dirGone || []);
+      for (const [name, role, phone, email] of (r.staff || {})[m.id] || []) {
+        const cur = m.staffers.find((x) => nameKey(x.name) === nameKey(name));
+        if (cur) { if (email) { cur.email = email; cur.fmt = false; } if (phone && (!cur.phone || cur.src === 'directory')) cur.phone = phone; if (role) cur.role = role; cur.src = 'legistorm'; }
+        else if (!gone.has(nameKey(name))) m.staffers.push({ id: uid(), name, role, phone, email, notes: '', src: 'legistorm' });
+      }
+    }
+    if (canEditNow()) save();
+    render();
+  } catch (_) { ORG_STAFF.failedAt = Date.now(); } finally { ORG_STAFF.busy = false; }
+}
+const STAFF_COLS = {
+  name: ['name', 'full name', 'staff name', 'staffer', 'contact name', 'person'], first: ['first name', 'first', 'given name'], last: ['last name', 'last', 'surname', 'family name'],
+  title: ['title', 'job title', 'position', 'staff title', 'role'], email: ['email', 'email address', 'e mail', 'work email', 'official email'],
+  phone: ['phone', 'phone number', 'office phone', 'work phone', 'telephone', 'direct phone'],
+  office: ['office', 'member', 'office name', 'member name', 'legislator', 'boss', 'employer', 'organization', 'committee', 'member office', 'works for', 'official'],
+  state: ['state', 'member state', 'office state'], district: ['district', 'member district'], chamber: ['chamber', 'body', 'house senate', 'legislature'],
+};
+function staffRowsFromCsv(text) {
+  const rows = parseCsv(text); if (rows.length < 2) return { rows: [], missing: ['a header row'] };
+  const w = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(), head = rows[0].map(w);
+  const find = (names) => { for (const n of names) { const i = head.indexOf(w(n)); if (i >= 0) return i; } for (const n of names) { const i = head.findIndex((h) => h.includes(w(n))); if (i >= 0) return i; } return -1; };
+  const ix = Object.fromEntries(Object.entries(STAFF_COLS).map(([k, n]) => [k, find(n)]));
+  const missing = [ix.name < 0 && (ix.first < 0 || ix.last < 0) ? 'staff name' : '', ix.office < 0 ? 'the office they work for' : ''].filter(Boolean);
+  if (missing.length) return { rows: [], missing };
+  const v = (r, i) => (i >= 0 ? String(r[i] || '').trim() : '');
+  return { rows: rows.slice(1).map((r) => [v(r, ix.name) || [v(r, ix.first), v(r, ix.last)].filter(Boolean).join(' '), v(r, ix.title), v(r, ix.email), v(r, ix.phone), v(r, ix.office), v(r, ix.state), v(r, ix.district), v(r, ix.chamber)]), missing: [] };
+}
+async function uploadStaffList(file) {
+  const msg = $('#slMsg'); if (!file) return;
+  if (/\.xlsx?$/i.test(file.name)) { msg.textContent = 'That is an Excel file. In Excel, choose File, then Save As, then CSV, and upload the CSV file.'; return; }
+  msg.textContent = 'Reading the file…';
+  const { rows, missing } = staffRowsFromCsv(await file.text());
+  if (missing.length) { msg.textContent = `Headcount could not find a column for ${missing.join(' or ')}. The first row of the file should name the columns.`; return; }
+  msg.textContent = `Uploading ${rows.length.toLocaleString()} staff…`;
+  try {
+    const r = await CLOUD.api('PUT', wsPath('/staff-list'), { source: 'LegiStorm', rows });
+    ORG_STAFF.list = r.list; toast(`${r.list.count.toLocaleString()} staff saved. Campaigns fill them in as they open.`);
+    renderWorkspace(true); render();
+  } catch (e) { msg.textContent = e.message; }
+}
+function staffListPanel() {
+  if (!ORG || ORG.role === 'guest') return '';
+  loadOrgStaff();
+  const L = ORG_STAFF.list, admin = isAdmin();
+  return `<div class="panel"><span class="label">Staff list</span>
+    <p class="note">The official lists give staff names and titles but not their email addresses. If your firm subscribes to LegiStorm, upload its staff export here: every campaign in ${esc(ORG.name)} then shows those staff with their real email addresses.</p>
+    ${L ? `<p><b>${esc(L.count.toLocaleString())} staff</b> from ${esc(L.source)}, uploaded ${esc(fmtDate(L.at))}${L.by ? ` by ${esc(L.by)}` : ''}.</p>` : L === null ? '<p class="note">No staff list uploaded yet.</p>' : ''}
+    ${admin ? `<div class="btnrow"><label class="btn${L ? '' : ' primary'}" for="sl_file">${L ? 'Upload a newer file' : 'Upload a LegiStorm export'}</label><input type="file" id="sl_file" accept=".csv,text/csv,text/plain" hidden>${L ? '<button class="btn" data-act="slRemove">Remove it</button>' : ''}</div>
+    <p class="note">In LegiStorm, download the staff contact list as a CSV file. It needs each person's name and the office they work for; titles, emails and phones are used when they are there. Upload only what your LegiStorm agreement lets your firm use this way.</p>
+    <p class="note" id="slMsg" role="status"></p>` : ''}
+  </div>`;
+}
 // Which built-in chamber a campaign counts, also for campaigns made before the key was saved.
 function presetKey(st = S) {
   if (st.preset && st.preset.key) return st.preset.key;
@@ -555,7 +667,7 @@ function goExample() { S = exampleState(); BOOK.list = BOOK.list.filter((c) => c
 async function onAuthChange(user) {
   if (user && !ME) return onSignedIn();
   if (!user && ME) {
-    ME = null; OPERATOR = false; TWOFA = { on: false, left: null }; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
+    ME = null; OPERATOR = false; MAIL_PROBLEM = null; TWOFA = { on: false, left: null }; ACCOUNT.list = []; ACCOUNT.loaded = false; PEOPLE = {}; ORGS = []; ORG = null; CLIENTS = []; DOMAIN_MATCHES = []; PREFS = null;
     WS.members = WS.invites = WS.audit = WS.report = WS.lastInvite = null;
     if (S.cloud) { stopPoll(); SYNC = newSync(null); if (!loadLocal()) goExample(); }
     if (page === 'portfolio' || page === 'workspace') page = 'count';
@@ -563,7 +675,7 @@ async function onAuthChange(user) {
   }
 }
 async function onSignedIn() {
-  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; OPERATOR = Boolean(r.operator); TWOFA = { on: Boolean(r.user.twoFactor), left: r.recoveryLeft }; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
+  try { const r = await CLOUD.api('GET', '/api/me'); ME = r.user.id; OPERATOR = Boolean(r.operator); MAIL_PROBLEM = r.emailProblem || null; TWOFA = { on: Boolean(r.user.twoFactor), left: r.recoveryLeft }; ORGS = r.workspaces; DOMAIN_MATCHES = r.domainMatches || []; PREFS = r.prefs; }
   catch (e) { fail(e); return render(); }
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })();
   if (tz && PREFS && PREFS.tz !== tz) CLOUD.api('PATCH', '/api/me/prefs', { tz }).then((x) => { PREFS = x; }).catch(() => {});
@@ -1194,7 +1306,7 @@ function contactBlock(m) {
   return rows.length ? `<span class="label">Contact</span><dl class="kv">${rows.map((r) => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>` : '';
 }
 function staffLines(s) {
-  return `${s.phone ? `<div><span class="tel">${esc(s.phone)}</span> ${copyBtn(s.phone)}</div>` : ''}${s.email ? `<div>${esc(s.email)} ${copyBtn(s.email)}${s.fmt ? ' <span class="note">usual format, confirm</span>' : ''}</div>` : ''}`;
+  return `${s.phone ? `<div><span class="tel">${esc(s.phone)}</span> ${copyBtn(s.phone)}</div>` : ''}${s.email ? `<div>${esc(s.email)} ${copyBtn(s.email)}${s.fmt ? ' <span class="note">usual format, confirm</span>' : s.src === 'legistorm' ? ' <span class="note">from LegiStorm</span>' : ''}</div>` : ''}`;
 }
 function staffForm(s) {
   return `<form id="stForm" class="form" data-sid="${esc(s.id || '')}">
@@ -1217,7 +1329,7 @@ function staffSection(m) {
   return `<span class="label">Staff</span>
   ${avail && canEditNow() ? `<div class="callout"><b>${avail} staff listed for this office</b> in the ${esc(STAFF[key].source)}. <button class="btn sm primary" data-act="addDirStaff">Add them</button><div class="note">Emails follow the chamber's usual format: confirm before relying on them.</div></div>` : ''}
   <ul class="hist">${m.staffers.length ? m.staffers.map(item).join('') : `<li class="note">${key === 'ussenate' ? 'The Senate does not publish staff lists. ' : ''}No staff added yet. Add the scheduler, the chief of staff or the aide who handles your issue.</li>`}</ul>
-  ${staffEdit === 'new' ? staffForm({}) : m.staffers.length < 12 ? '<div><button class="btn sm" data-act="addStaff">Add staff member</button></div>' : ''}`;
+  ${staffEdit === 'new' ? staffForm({}) : m.staffers.length < 60 ? '<div><button class="btn sm" data-act="addStaff">Add staff member</button></div>' : ''}`;
 }
 function staffDirList() {
   const q = ($('#sd_q') ? $('#sd_q').value : '').trim().toLowerCase(), out = [];
@@ -1259,7 +1371,7 @@ function parseRoster(text) {
     cmte: /^(y|yes|1|true)$/i.test(r[3] || ''), pos: posOf(r[4] || ''), mov: 3, follows: '', interests: '', notes: '', history: [], staffers: [], phone: (r[5] || '').slice(0, 40), email: (r[6] || '').slice(0, 120) }));
 }
 // ---------- workspaces ----------
-let OPERATOR = false, ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null, TFA_NEEDED = null;
+let MAIL_PROBLEM = null, OPERATOR = false, ORGS = [], ORG = null, CLIENTS = [], DOMAIN_MATCHES = [], PREFS = null, SSO_NEEDED = null, SSO_STEP = null, TFA_NEEDED = null;
 const WS = { members: null, invites: null, audit: null, auditMore: true, report: null, lastInvite: null, loading: false, filter: { client: '', q: '', archived: false } };
 const LASTORG = 'headcount.lastOrg';
 const cfg2 = () => CLOUD.config || {};
@@ -1320,7 +1432,7 @@ function gettingStarted() {
   const st = ORG.setup, cfg = CLOUD.config || {}, how = (id) => ` <a class="note" href="${GUIDE}#${id}" target="_blank" rel="noopener">How?</a>`;
   // For whoever runs Headcount: the two things everyone else depends on
   const admin = OPERATOR ? [
-    [Boolean(cfg.email), 'Connect email', 'So people can reset passwords and get invitations, alerts and digests.', '<button class="btn sm" data-x="serverSettings" data-open="email">Connect email</button>', 'admin-email'],
+    [Boolean(cfg.email) && !MAIL_PROBLEM, 'Connect email', 'So people can reset passwords and get invitations, alerts and digests.', '<button class="btn sm" data-x="serverSettings" data-open="email">Connect email</button>', 'admin-email'],
     [Boolean(cfg.bills && cfg.bills.federal && cfg.bills.states), 'Turn on bill and legislator data', 'Two free keys let Headcount look up bills and load any state legislature.', '<button class="btn sm" data-x="serverSettings" data-open="sources">Add the free keys</button>', 'admin-data'],
   ] : [];
   const steps = [...admin,
@@ -1383,7 +1495,7 @@ function renderPortfolio() {
 
 // ---------- workspace settings ----------
 const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: 'Member', guest: 'Guest' };
-const ACTIONS = { 'workspace.created': 'created the workspace', 'workspace.renamed': 'renamed the workspace', 'workspace.exported': 'exported all data', 'workspace.owner_changed': 'passed ownership to', 'member.joined': 'joined', 'member.left': 'left the workspace', 'member.removed': 'removed', 'member.role_changed': 'changed the role of', 'invite.created': 'created an invitation for', 'invite.revoked': 'revoked an invitation', 'client.added': 'added client', 'client.updated': 'updated client', 'client.deleted': 'deleted client', 'campaign.created': 'created campaign', 'campaign.deleted': 'deleted campaign', 'campaign.archived': 'archived campaign', 'campaign.restored': 'restored campaign', 'campaign.visibility': 'changed who can see', 'billing.checkout_started': 'started checkout', 'billing.subscription': 'subscription is now', 'billing.canceled': 'subscription canceled', 'billing.seats_changed': 'changed the number of seats', 'billing.payment_failed': 'a payment failed', 'domain.added': 'added the email domain', 'domain.verified': 'verified the email domain', 'domain.join_on': 'let colleagues join from', 'domain.join_off': 'stopped joining from', 'domain.removed': 'removed the email domain', 'report.activity': 'ran the activity report for' };
+const ACTIONS = { 'staff_list.upload': 'uploaded a staff list from', 'staff_list.remove': 'removed the staff list', 'workspace.created': 'created the workspace', 'workspace.renamed': 'renamed the workspace', 'workspace.exported': 'exported all data', 'workspace.owner_changed': 'passed ownership to', 'member.joined': 'joined', 'member.left': 'left the workspace', 'member.removed': 'removed', 'member.role_changed': 'changed the role of', 'invite.created': 'created an invitation for', 'invite.revoked': 'revoked an invitation', 'client.added': 'added client', 'client.updated': 'updated client', 'client.deleted': 'deleted client', 'campaign.created': 'created campaign', 'campaign.deleted': 'deleted campaign', 'campaign.archived': 'archived campaign', 'campaign.restored': 'restored campaign', 'campaign.visibility': 'changed who can see', 'billing.checkout_started': 'started checkout', 'billing.subscription': 'subscription is now', 'billing.canceled': 'subscription canceled', 'billing.seats_changed': 'changed the number of seats', 'billing.payment_failed': 'a payment failed', 'domain.added': 'added the email domain', 'domain.verified': 'verified the email domain', 'domain.join_on': 'let colleagues join from', 'domain.join_off': 'stopped joining from', 'domain.removed': 'removed the email domain', 'report.activity': 'ran the activity report for' };
 function quarters() {
   const out = [], d = new Date();
   let y = d.getFullYear(), q = Math.floor(d.getMonth() / 3) + 1;
@@ -1544,7 +1656,7 @@ function drawWorkspace(fromLoad) {
   const el = $('#workspacePage');
   if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to set up a workspace for your team. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'Workspaces are part of the full version of Headcount, with accounts. This free version keeps everything in your browser.'}</div>`; return; }
   if (!ORG) { el.innerHTML = onboardingHtml(); return; }
-  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${clientsPanel()}${domainPanel()}${securityPanel()}${ssoPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
+  el.innerHTML = `<div class="wsgrid">${planPanel()}${peoplePanel()}${staffListPanel()}${clientsPanel()}${domainPanel()}${securityPanel()}${ssoPanel()}${reportPanel()}${auditPanel()}${dataPanel()}</div>`;
   if (!fromLoad) loadWs();
 }
 async function runReport(form) {
@@ -1602,6 +1714,7 @@ function renderAcct() {
   else el.innerHTML = '';
 }
 function render() {
+  autoStaff();
   const c = S.campaign, cfg = CLOUD.config || {}, campaignPage = page === 'count' || page === 'brief', team = signedIn() && ORG && ORG.role !== 'guest';
   if ((page === 'monitor' || page === 'contacts') && !team && signedIn() && ORG) page = 'portfolio';
   renderSwitcher();
@@ -1633,6 +1746,7 @@ function render() {
   else if (signedIn() && SSO_NEEDED) banner = `<span><b>${esc(SSO_NEEDED)}</b> requires single sign-on. Sign in through your firm's own login page to see its campaigns.</span><button class="btn sm primary" data-act="ssoSwitch">Sign in with single sign-on</button>`;
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
+  else if (signedIn() && OPERATOR && MAIL_PROBLEM) banner = `<span><b>Emails aren't going out.</b> ${esc(MAIL_PROBLEM.explain)}</span><button class="btn sm primary" data-x="serverSettings" data-open="email">Fix email</button>`;
   else if (signedIn() && OPERATOR && !(page === 'portfolio' && ORG && ORG.setup && !lsGet('headcount.gs.' + ORG.id)) && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add free keys so Headcount can look up bills and legislators.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
   else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
   else if (ORG && isAdmin() && page === 'portfolio' && (ORG.plan.key === 'trial' || ORG.plan.key === 'free' || ORG.plan.status === 'past_due') && cfg.billing) {
@@ -1773,7 +1887,6 @@ function setupDrawer() {
   ${S.preset ? `<p class="note">Current roster: ${esc(S.preset.label)}, retrieved ${esc(S.preset.asOf)}${S.preset.vacant > 0 ? `, ${S.preset.vacant} seat${S.preset.vacant > 1 ? 's' : ''} not listed` : ''}.</p>` : ''}
   ${ROSTERS ? `<select id="s_preset" aria-label="Preset roster"><option value="">Load a preset chamber</option>${Object.entries(ROSTERS).map(([k, p]) => `<option value="${k}">${esc(p.label)} (${p.members.length})</option>`).join('')}</select><div id="s_presetBox" style="display:flex;flex-direction:column;gap:10px"></div>` : '<p class="note">Preset rosters could not be loaded.</p>'}
   ${typeof rosterLoaderHtml === 'function' ? rosterLoaderHtml() : ''}
-  ${['ushouse', 'flhouse', 'flsenate'].includes(presetKey()) && S.members.length && !S.example ? '<div class="btnrow"><button class="btn" data-act="addDirStaffAll">Add official staff to every member</button><span class="note">Names, titles and phones from the official directory</span></div>' : ''}
   <div class="btnrow"><span class="note">Set</span><select id="b_party" aria-label="Party"><option value="D">every Democrat</option><option value="R">every Republican</option><option value="I">every independent</option></select><span class="note">to</span><select id="b_pos" aria-label="Position">${[4, 3, 2, 1, 0].map((p) => `<option value="${p}">${POS[p]}</option>`).join('')}</select><button class="btn" data-act="bulk">Apply</button></div>
   <details><summary class="note">Paste your own roster</summary>
   <p class="note">One member per line: name, party (D/R/I), district, committee (y/n), position, phone, email. Only the name is required. This replaces every current member and their history.</p>
@@ -2132,7 +2245,8 @@ document.addEventListener('click', async (e) => {
     case 'editStaff': staffEdit = t.dataset.sid; memberDrawer(openId); { const f = $('#st_name'); if (f) f.focus(); } return;
     case 'cancelStaff': staffEdit = null; return memberDrawer(openId);
     case 'logStaff': tab = 'act'; schedOpen = false; outKind = null; memberDrawer(openId); if ($('#c_who')) { $('#c_who').value = t.dataset.sid; $('#logHead').scrollIntoView({ block: 'start' }); $('#c_note').focus(); } return;
-    case 'rmStaff': if (m && sure('Confirm remove')) { m.staffers = m.staffers.filter((s) => s.id !== t.dataset.sid); save(); toast('Staff member removed'); memberDrawer(openId); renderRows(); } return;
+    case 'slRemove': if (sure('Click again to remove')) { try { await CLOUD.api('DELETE', wsPath('/staff-list')); ORG_STAFF.list = null; renderWorkspace(true); toast('Staff list removed'); } catch (e) { fail(e); } } return;
+    case 'rmStaff': if (m && sure('Confirm remove')) { const gone = m.staffers.find((s) => s.id === t.dataset.sid); if (gone && gone.src === 'directory') m.dirGone = [...(m.dirGone || []), nameKey(gone.name)].slice(-40); m.staffers = m.staffers.filter((s) => s.id !== t.dataset.sid); save(); toast('Staff member removed'); memberDrawer(openId); renderRows(); } return;
     case 'saveRep': return download(`headcount-${repKind}-${today()}.${REPORTS[repKind][1]}`, reportText(), repKind === 'client' ? 'text/plain' : 'text/csv');
     case 'briefEdit': briefEdit = true; briefPanel = ''; return renderBrief();
     case 'briefCancel': briefEdit = false; return renderBrief();
@@ -2315,3 +2429,5 @@ document.addEventListener('submit', async (e) => {
     else if (billing === 'back' && ORG) { page = 'workspace'; await loadOrg(ORG.id, { quiet: true }); render(); }
   }
 })();
+
+document.addEventListener('change', (e) => { if (e.target && e.target.id === 'sl_file') { uploadStaffList(e.target.files[0]); e.target.value = ''; } });
