@@ -589,7 +589,7 @@ test('single sign-on: Firm plan, verified domain, required for members but not o
 test('the website and the app have their own addresses', async () => {
   const home = await fetch(base + '/'); assert.equal(home.status, 200);
   const h = await home.text();
-  assert.match(h, /Count the votes on your bill/); assert.match(h, /Start a 14-day trial/); assert.doesNotMatch(h, /aren&#39;t on sale|aren.t on sale/); assert.match(h, /<svg/); assert.doesNotMatch(h, /\{\{\w+\}\}/);
+  assert.match(h, /Every bill comes down to a count/); assert.match(h, /Start a 14-day trial/); assert.doesNotMatch(h, /aren&#39;t on sale|aren.t on sale/); assert.match(h, /<svg/); assert.doesNotMatch(h, /\{\{\w+\}\}/);
   const pricing = await (await fetch(base + '/pricing')).text();
   assert.match(pricing, /<td>3<\/td>/); assert.match(pricing, /Sign in through your firm&#39;s own login page|Sign in through your firm's own login page/); assert.doesNotMatch(pricing, /SAML|OIDC/); assert.doesNotMatch(pricing, /\{\{\w+\}\}/);
   const guide = await (await fetch(base + '/guide')).text();
