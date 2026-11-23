@@ -364,19 +364,20 @@ try {
   log('ok  custom dropdowns: combobox and listbox roles, mouse, Home and Enter, and the page sees the change');
 
   // A campaign from a bill, with the Florida Senate loaded live, and an action page
+  // HB 77 is a Florida House bill: the Florida House loads without asking which chamber
   await alice.page.locator('.item:has-text("HB 77") [data-x=itemCampaign]').click();
-  await alice.page.waitForFunction(() => S.cloud && /^HB 77/.test(S.campaign.bill) && page === 'count');
+  await alice.page.waitForFunction(() => S.cloud && /^HB 77/.test(S.campaign.bill) && page === 'count' && S.members.length > 100 && S.campaign.juris && S.campaign.juris.state === 'FL' && S.campaign.juris.chamber === 'lower', null, { timeout: 20000 });
   await settle(alice.page);
+  // Setup offers only Florida's two chambers, for when the bill crosses over
   await alice.page.click('.tools [data-act=setup]');
-  await alice.page.click('#drawer summary:has-text("Load any state legislature")');
-  await alice.page.selectOption('#os_state', 'FL'); await alice.page.selectOption('#os_chamber', 'upper'); await alice.page.click('[data-x=osRoster]');
-  await alice.page.waitForFunction(() => document.querySelector('#s_preset') && document.querySelector('#s_preset').value === 'os-fl-upper');
-  await alice.page.click('[data-act=preset]');
-  await alice.page.waitForTimeout(300);
-  if (await alice.page.locator('[data-act=preset]').isVisible()) await alice.page.click('[data-act=preset]'); // asks again only when it would replace members
-  await alice.page.waitForFunction(() => S.members.length === 2 && S.campaign.juris && S.campaign.juris.state === 'FL');
+  assert.deepEqual(await alice.page.$$eval('#drawer [data-act=pickChamber]', (bs) => bs.map((b) => b.dataset.label)), ['Florida House', 'Florida Senate']);
+  assert.equal(await alice.page.locator('#drawer #os_state, #drawer #s_preset').count(), 0, 'no other legislatures on offer');
+  await alice.page.click('#drawer summary:has-text("Roster")');
+  const senate = alice.page.locator('#drawer [data-act=pickChamber][data-label="Florida Senate"]');
+  await senate.click(); await senate.click(); // the second click confirms replacing the House members
+  await alice.page.waitForFunction(() => S.members.length > 30 && S.members.length < 45 && S.campaign.juris.chamber === 'upper');
   await settle(alice.page);
-  assert.equal(await alice.page.evaluate(() => contact(S.members[0]).email), 'simon.corey@flsenate.gov');
+  assert.equal(await alice.page.evaluate(() => contact(S.members.find((m) => m.name === 'Corey Simon')).email), 'simon.corey.web@flsenate.gov');
   await alice.page.click('#moreMenu summary'); await alice.page.click('[data-x=actionCenter]');
   await alice.page.waitForSelector('#acForm');
   assert.equal(await alice.page.inputValue('#ac_juris'), 'FL:upper');
@@ -398,13 +399,13 @@ try {
   await supporter.page.click('#sendBtn');
   await supporter.page.waitForSelector('#done:not([hidden])');
   assert.match(await supporter.page.locator('#done').innerText(), /on its way to Corey Simon/);
-  const letter = (await outbox()).find((x) => x.kind === 'constituent' && x.to_addr === 'simon.corey@flsenate.gov');
+  const letter = (await outbox()).find((x) => x.kind === 'constituent' && x.to_addr === 'simon.corey.web@flsenate.gov');
   assert.ok(letter); assert.equal(letter.reply_to, 'pat@example.net');
   await alice.page.keyboard.press('Escape'); await alice.page.click('#moreMenu summary'); await alice.page.click('[data-x=actionCenter]');
   await alice.page.waitForFunction(() => /1 supporter took action/.test(document.querySelector('#drawer').textContent));
   await alice.page.keyboard.press('Escape'); await alice.page.click('[data-page=count]');
   await alice.page.waitForFunction(() => /1 constituent letter/.test(document.querySelector('#rows').textContent));
-  log('ok  campaign started from a Monitor bill; Florida Senate loaded live; a supporter found their senator and the letter went out');
+  log('ok  campaign started from a Monitor bill: the Florida House loaded without asking, then the Senate; a supporter found their senator and the letter went out');
 
   // Keyboard on a whip row: open, type to jump, Enter; Escape closes the list but not the drawer around it
   const rowBtn = alice.page.locator('#rows .cs-trigger').first();

@@ -360,9 +360,70 @@ async function fillChamber(choice, st = S) {
   ROSTERS[r.key] = r; r.members.forEach((m) => { DIR[m.k] = m; });
   loadPreset(r.key, -1, '', st); return `${r.label}: ${r.members.length} members`;
 }
+// The legislature a campaign's bill belongs to: 'US', a state code, or '' when
+// nothing says (a vote typed in by hand).
+function billLegislature(st = S) {
+  const c = st.campaign || {}, j = c.juris;
+  if (j && j.level === 'us') return 'US';
+  if (j && j.level === 'state' && j.state) return j.state;
+  if (c.leg) return c.leg;
+  const text = `${(st.brief && st.brief.jurisdiction) || ''} ${c.chamber || ''}`;
+  if (/\bU\.?S\.?\b|\bcongress\b/i.test(text)) return 'US';
+  const states = Object.assign({ FL: 'Florida' }, (CLOUD.config && CLOUD.config.states) || {});
+  const hit = Object.entries(states).sort((x, y) => y[1].length - x[1].length).find(([, name]) => new RegExp(`\\b${name}\\b`, 'i').test(text));
+  return hit ? hit[0] : '';
+}
+const legName = (leg) => (leg === 'US' ? 'Congress' : Object.assign({ FL: 'Florida' }, (CLOUD.config && CLOUD.config.states) || {})[leg] || leg);
+// The chambers of one legislature that can be loaded here, House side first.
+function legChoices(leg) {
+  const P = ROSTERS || {};
+  const preset = (pairs) => pairs.filter(([k]) => P[k]).map(([k, chamber]) => ({ value: `p:${k}`, chamber, label: P[k].label }));
+  if (leg === 'US') return preset([['ushouse', 'lower'], ['ussenate', 'upper']]);
+  if (leg === 'FL' && P.flhouse && P.flsenate) return preset([['flhouse', 'lower'], ['flsenate', 'upper']]);
+  const cfg = CLOUD.config || {};
+  if (!leg || !(cfg.rosters && signedIn()) || !(cfg.states || {})[leg]) return [];
+  return chambersOf(leg, cfg.states[leg]).map((c) => ({ value: `s:${leg}:${c.chamber}`, chamber: c.chamber, label: c.label })).sort((x, y) => (x.chamber === 'lower' ? -1 : y.chamber === 'lower' ? 1 : 0));
+}
+// The chamber a bill number belongs to: HB, H.R., AB and A bills start in the
+// House or Assembly, SB and S. bills in the Senate. A one-chamber legislature
+// has only one answer.
+function billChamber(number, leg) {
+  const list = legChoices(leg); if (list.length === 1) return list[0].chamber;
+  const n = String(number || '').trim().toUpperCase();
+  return /^(H|A)/.test(n) ? 'lower' : /^S/.test(n) ? 'upper' : '';
+}
+// Shortens a long official title on a word, not in the middle of one.
+function clipWords(t, n) {
+  t = String(t || '').replace(/\s+/g, ' ').trim(); if (t.length <= n) return t;
+  const cut = t.slice(0, n - 1), sp = cut.lastIndexOf(' ');
+  return `${(sp > n * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,;:(]+$/, '')}…`;
+}
+// A campaign for a known bill loads the chamber the bill is in, without asking.
+let AUTO_CHAMBER = '';
+function autoChamber() {
+  if (AUTO_CHAMBER === S.id || S.members.length || S.example || SYNC.loading || !canEditNow()) return;
+  const leg = billLegislature(), list = legChoices(leg), c = list.find((x) => x.chamber === billChamber(billNumberOf(), leg));
+  if (!c) return;
+  AUTO_CHAMBER = S.id; const st = S;
+  setTimeout(async () => {
+    if (S !== st || S.members.length) return;
+    const msg = $('#q_msg'); if (msg) msg.textContent = `Loading the ${c.label}`;
+    try { const label = await fillChamber(c.value, st); if (S === st) { commit(`${label} loaded`); if (recordReady()) fillFromRecord({ auto: true }); } }
+    catch (e) { const m = $('#q_msg'); if (m) m.textContent = e.message; }
+  }, 200);
+}
 // An empty campaign asks which chamber to count, and loads it in one step.
 function chamberPicker() {
   if (!canEditNow()) return '<p class="note" style="margin:24px 0">No members yet.</p>';
+  const leg = billLegislature(), mine = legChoices(leg);
+  if (mine.length) {
+    const want = billChamber(billNumberOf(), leg);
+    autoChamber();
+    return `<div class="pickchamber"><b>${mine.length === 1 ? `Count the ${esc(mine[0].label)}` : `Which ${esc(legName(leg))} chamber?`}</b>
+      <p class="note">${want ? `${esc(billNumberOf())} is ${want === 'upper' ? 'a Senate' : `a ${esc((mine.find((x) => x.chamber === 'lower') || { label: 'House' }).label.replace(/^(U\.S\.|[A-Z][a-z]+( [A-Z][a-z]+)?) /, ''))}`} bill, so its members load now.` : 'Choose one to load every current member, with their office and phone number.'}</p>
+      <div class="btnrow">${mine.map((c) => `<button class="btn${c.chamber === want ? ' primary' : ''}" data-act="pickChamber" data-v="${esc(c.value)}" data-label="${esc(c.label)}">${esc(c.label)}</button>`).join('')}</div>
+      <p class="note" id="q_msg" role="status">Not this one? <button class="linkbtn" data-act="setup">Paste your own list</button>.</p></div>`;
+  }
   const { presets, live } = chamberOptions();
   return `<div class="pickchamber"><b>Which chamber are you counting?</b>
     <p class="note">Choose it to load every current member, with their office and phone number.</p>
@@ -1099,7 +1160,7 @@ function applyRecord(r, ch) {
   return out;
 }
 async function fillFromRecord({ auto = false } = {}) {
-  if (!recordReady()) { if (!auto) toast(signedIn() ? 'Add the bill number to the campaign name (for example HB 123 or H.R. 1234) and pick the chamber first.' : 'Sign in to fill the count from the public record.'); return null; }
+  if (!recordReady()) { if (!auto) toast(signedIn() ? 'Add the bill number to the campaign name (for example HB 123 or H.R. 1234) and load the chamber first.' : 'Sign in to fill the count from the public record.'); return null; }
   if (!canEditNow()) return null;
   const ch = campaignChamber(), camp = S.id;
   const q = new URLSearchParams({ jurisdiction: ch.level === 'us' ? 'US' : ch.state, number: billNumberOf() });
@@ -1590,7 +1651,7 @@ function gettingStarted() {
     [Boolean(cfg.bills && cfg.bills.federal && cfg.bills.states), 'Turn on bill and legislator data', 'Two free keys let Headcount look up bills and load any state legislature.', '<button class="btn sm" data-x="serverSettings" data-open="sources">Add the free keys</button>', 'admin-data'],
   ] : [];
   const steps = [...admin,
-    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Name the bill and pick the chamber: every member and their staff are loaded for you.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
+    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Name the bill and pick the legislature: the chamber comes from the bill number, and every member and their staff are loaded for you.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
     [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Counts, meetings and briefs update for everyone within seconds.', '<button class="btn sm" data-page="workspace">Invite</button>', 'invite'],
     [st.watches > 0, 'Watch for new bills and rules', 'The Monitor checks Congress, the states, new federal rules and contract notices for you.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>', 'monitor'],
   ];
@@ -2041,8 +2102,13 @@ function setupDrawer() {
   </form></details>
   ${ro ? '' : `<details class="sect"${S.example || !S.members.length ? ' open' : ''}><summary>Roster</summary>
   ${S.preset ? `<p class="note">Current roster: ${esc(S.preset.label)}, retrieved ${esc(S.preset.asOf)}${S.preset.vacant > 0 ? `, ${S.preset.vacant} seat${S.preset.vacant > 1 ? 's' : ''} not listed` : ''}.</p>` : ''}
-  ${ROSTERS ? `<select id="s_preset" aria-label="Preset roster"><option value="">Load a preset chamber</option>${Object.entries(ROSTERS).map(([k, p]) => `<option value="${k}">${esc(p.label)} (${p.members.length})</option>`).join('')}</select><div id="s_presetBox" style="display:flex;flex-direction:column;gap:10px"></div>` : '<p class="note">Preset rosters could not be loaded.</p>'}
-  ${typeof rosterLoaderHtml === 'function' ? rosterLoaderHtml() : ''}
+  ${(() => {
+    const leg = billLegislature(), mine = legChoices(leg), cur = campaignChamber().chamber;
+    if (mine.length) return `<p class="note">${esc(billNumberOf() || 'This bill')} is a ${esc(legName(leg))} bill. ${mine.length > 1 ? 'Switch chambers when it crosses over:' : ''}</p>
+      <div class="btnrow">${mine.map((c) => `<button class="btn${c.chamber === cur && S.members.length ? ' primary' : ''}" data-act="pickChamber" data-v="${esc(c.value)}" data-label="${esc(c.label)}" ${c.chamber === cur && S.members.length ? 'aria-pressed="true"' : ''}>${esc(c.label)}</button>`).join('')}</div><p class="note" id="s_chMsg" role="status"></p>`;
+    return `${ROSTERS ? `<select id="s_preset" aria-label="Preset roster"><option value="">Load a preset chamber</option>${Object.entries(ROSTERS).map(([k, p]) => `<option value="${k}">${esc(p.label)} (${p.members.length})</option>`).join('')}</select><div id="s_presetBox" style="display:flex;flex-direction:column;gap:10px"></div>` : '<p class="note">Preset rosters could not be loaded.</p>'}
+  ${typeof rosterLoaderHtml === 'function' ? rosterLoaderHtml() : ''}`;
+  })()}
   <div class="btnrow"><span class="note">Set</span><select id="b_party" aria-label="Party"><option value="D">every Democrat</option><option value="R">every Republican</option><option value="I">every independent</option></select><span class="note">to</span><select id="b_pos" aria-label="Position">${[4, 3, 2, 1, 0].map((p) => `<option value="${p}">${POS[p]}</option>`).join('')}</select><button class="btn" data-act="bulk">Apply</button></div>
   <details><summary class="note">Paste your own roster</summary>
   <p class="note">One member per line: name, party (D/R/I), district, committee (y/n), position, phone, email. Only the name is required. This replaces every current member and their history.</p>
@@ -2059,13 +2125,45 @@ function newCampDrawer() {
   <form id="nForm" class="form">
     <label class="wide">Bill or vote<input id="n_bill" name="bill" required placeholder="HB 1021: Property insurance reform"></label>
     <label>Your goal<select id="n_side" name="side"><option value="pass">Pass it</option><option value="defeat">Defeat it</option></select></label>
-    <label class="wide">Which chamber?<select id="n_from" name="from" required><option value="">Choose a chamber</option>${(() => { const { presets, live } = chamberOptions(); return presets + live; })()}${S.members.length && !S.example ? `<option value="copy">Same members as ${esc(S.campaign.bill || 'this campaign')}</option>` : ''}<option value="blank">I'll add the members myself</option></select></label>
+    <label>Legislature<select id="n_leg" name="leg"><option value="">Choose</option>${legOptions().map(([k, v]) => `<option value="${k}" ${k === lastLeg() ? 'selected' : ''}>${esc(v)}</option>`).join('')}${S.members.length && !S.example ? `<option value="copy">Same members as ${esc(clipWords(S.campaign.bill || 'this campaign', 60))}</option>` : ''}<option value="blank">Something else: I'll add the members</option></select></label>
+    <label id="n_chWrap">Chamber<select id="n_from" name="from"></select><span class="note" id="n_hint" style="text-transform:none;font-stretch:100%"></span></label>
     ${cloud ? `<label>Client<select id="n_client" name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('')}</select></label>
     <label>Who can see it<select id="n_vis" name="vis"><option value="org">Everyone in ${esc(ORG.name)}</option><option value="team">Only people I add</option></select></label>` : ''}
     <p class="wide note">Every current member is loaded with their office, phone and staff. ${cloud ? `It is saved to ${esc(ORG.name)}.` : signedIn() ? 'It is saved in this browser only until you set up a workspace.' : 'It is saved in this browser only. Sign in to save campaigns to your firm\'s workspace and share them.'}</p>
     <p class="wide note" id="nMsg" role="status"></p>
     <div class="wide"><button class="btn primary">Create campaign</button></div>
   </form>`);
+  nChamberSync();
+}
+// The legislatures a campaign can be for: Congress and the states whose members load here.
+function legOptions() {
+  const cfg = CLOUD.config || {}, states = Object.assign({}, cfg.rosters && signedIn() ? cfg.states || {} : {});
+  if (legChoices('FL').length) states.FL = 'Florida';
+  return [...(legChoices('US').length ? [['US', 'U.S. Congress']] : []), ...Object.entries(states).filter(([k]) => legChoices(k).length).sort((x, y) => x[1].localeCompare(y[1]))];
+}
+const lastLeg = () => { try { return localStorage.getItem('headcount.leg') || ''; } catch (_) { return ''; } };
+// A bill the Monitor found says which legislature it is from.
+function monitorLeg(bill) {
+  const key = (n) => String(n || '').toUpperCase().replace(/[\s.]/g, ''), want = key(billNumberOf({ campaign: { bill } }));
+  if (!want || typeof MON === 'undefined' || !MON.items) return '';
+  const found = [...new Set(MON.items.filter((i) => key(i.number) === want).map((i) => i.juris))];
+  return found.length === 1 ? found[0] : '';
+}
+// Shows only the chosen legislature's chambers and picks the one the bill
+// number points to (HB: the House, SB: the Senate). Nothing to ask for a
+// one-chamber legislature, or when the members are copied or typed in.
+function nChamberSync(legChanged) {
+  const legSel = $('#n_leg'), from = $('#n_from'), wrap = $('#n_chWrap'), hint = $('#n_hint'); if (!legSel || !from) return;
+  const bill = $('#n_bill').value;
+  if (!legChanged) { const hit = monitorLeg(bill); if (hit && [...legSel.options].some((o) => o.value === hit)) legSel.value = hit; }
+  const leg = legSel.value;
+  if (!leg || leg === 'copy' || leg === 'blank') { from.innerHTML = `<option value="${leg}"></option>`; from.value = leg; wrap.hidden = true; return; }
+  const list = legChoices(leg), want = billChamber(billNumberOf({ campaign: { bill } }), leg);
+  const keep = from.dataset.user === '1' && list.some((c) => c.value === from.value) ? from.value : '';
+  const pick = keep || (list.find((c) => c.chamber === want) || {}).value || '';
+  from.innerHTML = (pick ? '' : '<option value="">Choose the chamber</option>') + list.map((c) => `<option value="${esc(c.value)}">${esc(c.label)}</option>`).join('');
+  from.value = pick; wrap.hidden = list.length < 2;
+  hint.textContent = pick && !keep && want ? `From the bill number. ${list.length > 1 ? 'Change it if you are counting the other chamber.' : ''}` : '';
 }
 let LOC = { mode: 'signin', reset: null, ticket: null, codes: null }, TWOFA = { on: false, left: null };
 function localSignInDrawer(mode) {
@@ -2436,6 +2534,14 @@ document.addEventListener('click', async (e) => {
     case 'briefPanelOff': briefPanel = ''; return renderBrief();
     case 'briefCopy': return copyText(briefPlain(S.brief));
     case 'briefPrint': return window.print();
+    case 'pickChamber': {
+      const v = t.dataset.v, label = t.dataset.label || t.textContent.trim(); if (!v) return;
+      if (S.members.length && !S.example && !sure(`Replace the current roster with the ${label}`)) return;
+      t.disabled = true; const msg = $('#q_msg') || $('#s_chMsg'); if (msg) msg.textContent = `Loading the ${label}`;
+      try { const label = await fillChamber(v); closeDrawer(); commit(`${label} loaded`); if (recordReady()) fillFromRecord({ auto: true }); }
+      catch (e) { t.disabled = false; if (msg) msg.textContent = e.message; else fail(e); }
+      return;
+    }
     case 'preset': {
       const key = $('#s_preset').value, ci = $('#s_cmte') ? +$('#s_cmte').value : -1, backed = $('#s_backed').value;
       if (S.members.length && !S.example && !sure(`Replace the current roster with ${ROSTERS[key].label}`)) return;
@@ -2508,6 +2614,12 @@ document.addEventListener('input', (e) => {
   else if (id === 'pf_q') { WS.filter.q = e.target.value; renderPortfolio(); const el = $('#pf_q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   else if (id === 'sd_q') staffDirList();
   else if ((id === 'rq_body' || id === 'rq_subject') && RQ) { RQ.edited = true; rqRead(); }
+  else if (id === 'n_bill') nChamberSync();
+});
+document.addEventListener('change', (e) => {
+  const id = e.target.id;
+  if (id === 'n_leg') { const f = $('#n_from'); if (f) delete f.dataset.user; nChamberSync(true); }
+  else if (id === 'n_from') e.target.dataset.user = '1';
 });
 document.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -2544,11 +2656,13 @@ document.addEventListener('submit', async (e) => {
     e.target.reset(); save(); render(); return toast('Follow-up added');
   }
   if (id === 'nForm') {
-    const st = blankState(cut('bill', 140)); st.campaign.side = fd.get('side');
+    const st = blankState(clipWords(fd.get('bill'), 140)); st.campaign.side = fd.get('side');
     if (fd.get('clientId')) { st.campaign.clientId = fd.get('clientId'); st.campaign.client = (CLIENTS.find((k) => k.id === st.campaign.clientId) || {}).name || ''; }
     if (fd.get('vis')) st.visibility = fd.get('vis');
-    const from = String(fd.get('from') || '');
-    if (!from) { $('#nMsg').textContent = 'Choose the chamber, or "I\'ll add the members myself".'; return; }
+    const leg = String(fd.get('leg') || ''), from = String(fd.get('from') || '');
+    if (!leg) { $('#nMsg').textContent = 'Choose the legislature, or "Something else" to add the members yourself.'; return; }
+    if (!from) { $('#nMsg').textContent = 'Choose the chamber you are counting.'; return; }
+    if (!['copy', 'blank'].includes(leg)) { st.campaign.leg = leg; try { localStorage.setItem('headcount.leg', leg); } catch (_) { /* fine */ } }
     if (/^[ps]:/.test(from)) {
       const btn = e.target.querySelector('button.primary'); btn.disabled = true; $('#nMsg').textContent = 'Loading the members';
       try { await fillChamber(from, st); } catch (err) { btn.disabled = false; $('#nMsg').textContent = err.message; return; }

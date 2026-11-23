@@ -15,7 +15,7 @@ const fixtures = {
   '/v3/bill/119/hr/1234': { bill: { title: 'Rural Broadband Access Act', introducedDate: '2025-03-04', sponsors: [{ fullName: 'Rep. Smith, Ann [D-IA-2]', party: 'D', state: 'IA', district: 2 }], cosponsors: { count: 12 }, latestAction: { actionDate: '2025-06-01', text: 'Referred to the Subcommittee on Communications.' }, policyArea: { name: 'Science, Technology, Communications' } } },
   '/v3/bill/119/hr/1234/summaries': { summaries: [{ actionDate: '2025-03-04', actionDesc: 'Introduced in House', updateDate: '2025-04-01', text: '<p>This bill expands <b>grants</b> for rural broadband &amp; requires reports.</p>' }] },
   '/v3/bill/119/hr/1234/committees': { committees: [{ name: 'Energy and Commerce Committee' }] },
-  '/bills': { results: [{ identifier: 'HB 123', title: 'Property Insurance', session: '2026', first_action_date: '2026-01-13', latest_action_date: '2026-03-01', latest_action_description: 'Passed House', openstates_url: 'https://openstates.org/fl/bills/2026/HB123/', abstracts: [{ abstract: 'Revises property insurance requirements.' }], sponsorships: [{ name: 'Jane Doe', primary: true, person: { party: 'Republican', current_role: { district: '12' } } }, { name: 'Co Sponsor', primary: false }], actions: [{ date: '2026-02-01', related_entities: [{ entity_type: 'organization', name: 'Insurance & Banking Subcommittee' }] }], subject: ['Insurance'] }] },
+  '/bills': { results: [{ identifier: 'HB 123', title: 'Property Insurance', session: '2026', first_action_date: '2026-01-13', latest_action_date: '2026-03-01', latest_action_description: 'Passed House', openstates_url: 'https://openstates.org/fl/bills/2026/HB123/', abstracts: [{ abstract: 'Revises property insurance requirements.' }], sponsorships: [{ name: 'Jane Doe', primary: true, person: { party: 'Republican', current_role: { district: '12' } } }, { name: 'Co Sponsor', primary: false }], from_organization: { classification: 'lower' }, actions: [{ date: '2026-02-01', organization: { classification: 'lower' }, related_entities: [{ entity_type: 'organization', name: 'Insurance & Banking Subcommittee' }] }, { date: '2026-03-02', description: 'Received in Senate', organization: { classification: 'upper' } }], subject: ['Insurance'] }] },
 };
 const subscription = (orgId, qty, status = 'active') => ({ id: 'sub_1', object: 'subscription', customer: 'cus_1', status, metadata: { org_id: orgId }, current_period_end: 1900000000, items: { data: [{ id: 'si_1', quantity: qty, price: { id: 'price_team' } }] } });
 const mock = http.createServer((req, res) => {
@@ -686,6 +686,11 @@ test('rosters for any state chamber load from Open States with offices', async (
   assert.equal(r.members[1].p, 'D');
   assert.equal((await api('mona', 'GET', '/api/rosters/state?state=ZZ&chamber=upper')).status, 400);
   assert.equal((await api('mona', 'GET', '/api/rosters/state?state=CA&chamber=legislature')).status, 400, 'California has two chambers');
+});
+
+test('the bill record says where it started and which chamber has it now', async () => {
+  const r = ok(await api('mona', 'GET', '/api/bills/record?jurisdiction=FL&number=HB%20123'));
+  assert.equal(r.origin, 'lower'); assert.equal(r.now, 'upper', 'it crossed over to the Senate');
 });
 
 test('each chamber goes by its own name: House, Assembly, House of Delegates', async () => {

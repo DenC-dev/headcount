@@ -204,6 +204,9 @@ export async function lobbyingOn(cfg, { number, title }) {
 
 // ---------- legislators ----------
 const partyLetter = (p) => (/^dem/i.test(p) ? 'D' : /^rep/i.test(p) ? 'R' : 'I');
+// A chamber's members change rarely, and Open States' free keys allow few
+// requests a minute, so each roster is kept for six hours.
+const ROSTER_CACHE = new Map();
 export async function stateRoster(cfg, state, chamber) {
   if (!cfg.openStatesKey) throw new HttpError(501, 'Loading a state legislature needs a free Open States key, which an admin adds under Admin settings.');
   const st = String(state || '').toUpperCase();
@@ -211,7 +214,13 @@ export async function stateRoster(cfg, state, chamber) {
   if (!['upper', 'lower', 'legislature'].includes(chamber)) throw new HttpError(400, 'Choose a chamber.');
   const named = chamberOf(st, chamber);
   if (!named) throw new HttpError(400, `${STATES[st]} has no such chamber.`);
-  chamber = named.chamber; // Nebraska and D.C. have one chamber
+  const key = `${cfg.openStatesBase}|${st}|${named.chamber}`, hit = ROSTER_CACHE.get(key);
+  if (hit && Date.now() - hit.at < 6 * 3600e3) return hit.value;
+  const value = await fetchStateRoster(cfg, st, named.chamber);
+  ROSTER_CACHE.set(key, { at: Date.now(), value }); if (ROSTER_CACHE.size > 120) ROSTER_CACHE.delete(ROSTER_CACHE.keys().next().value);
+  return value;
+}
+async function fetchStateRoster(cfg, st, chamber) {
   const members = [];
   for (let page = 1; page <= 12; page++) {
     const p = new URLSearchParams({ jurisdiction: ocd(st), org_classification: chamber, per_page: '50', page: String(page) });

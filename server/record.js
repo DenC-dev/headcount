@@ -96,8 +96,13 @@ async function federal(cfg, number, congress) {
     if (!v.votes.length) continue;
     votes.push({ ...v, url: rv.url, stance: stance(v.motion) });
   }
+  // Where it started, from the bill type, and where it is now: the chamber of
+  // the latest action taken in the House or the Senate.
+  const origin = /^h/.test(p.type) ? 'lower' : 'upper';
+  const lastChamber = actions.slice().sort((x, y) => String(y.actionDate).localeCompare(String(x.actionDate)))
+    .map((a) => String((a.sourceSystem && a.sourceSystem.name) || '')).map((n) => (/house/i.test(n) ? 'lower' : /senate/i.test(n) ? 'upper' : '')).find(Boolean) || '';
   return {
-    bill: p.label, source: 'Congress.gov',
+    bill: p.label, source: 'Congress.gov', origin, now: lastChamber || origin,
     sponsors: (main.bill.sponsors || []).map(person),
     cosponsors: cos.filter((s) => !s.sponsorshipWithdrawnDate).map(person),
     committees, votes,
@@ -127,38 +132,52 @@ async function state(cfg, code, number, session) {
     committee: (v.counts || []).reduce((n, c) => n + (c.value || 0), 0) < 15 && /favorabl|do pass|report/i.test(v.motion_text || ''),
     votes: (v.votes || []).map((x) => ({ ...person(x.voter, x.voter_name), v: choice(x.option) })),
   })).sort((x, y) => String(y.date).localeCompare(String(x.date)));
-  // Committees named in the actions ("Referred to A; B; C", "Now in B"), with their members.
   const acts = (b.actions || []).slice().sort((x, y) => String(x.date || '').localeCompare(String(y.date || '')));
+  // Committees named in the actions ("Referred to A; B; C", "Now in B"), each
+  // with the chamber it was referred in: a bill can go to a Finance committee
+  // in the House and another Finance committee in the Senate.
+  const CHAMBER = ['upper', 'lower', 'legislature'];
   const referred = [], reported = new Set(); let now = '';
+  const refer = (name, where) => {
+    name = String(name || '').trim(); if (!name || /calendar|special order/i.test(name)) return;
+    const chamber = /\b(house|assembly|delegates)\b/i.test(name) ? 'lower' : /\bsenate\b/i.test(name) ? 'upper' : where;
+    if (!referred.some((x) => norm(x.name) === norm(name) && x.chamber === chamber)) referred.push({ name, chamber });
+  };
   for (const a of acts) {
-    const d = a.description || '';
-    const r = /referred to\s+(.+)$/i.exec(d); if (r) r[1].split(/;\s*/).forEach((n) => { if (n && !referred.includes(n.trim())) referred.push(n.trim()); });
+    const d = a.description || '', where = CHAMBER.find((c) => c === (a.organization && a.organization.classification)) || '';
+    const r = /referred to\s+(.+)$/i.exec(d); if (r) r[1].split(/;\s*/).forEach((n) => refer(n, where));
     const n = /now in\s+(.+)$/i.exec(d); if (n) now = n[1].trim();
-    const f = /(?:CS by|favorable by|reported (?:out )?(?:favorably )?(?:by|from))\s+([^;]+?)(?:;|$)/i.exec(d); if (f) reported.add(norm(f[1]));
-    for (const e of a.related_entities || []) if (e.entity_type === 'organization' && /committee/i.test(e.name) && !referred.includes(e.name)) referred.push(e.name);
+    const f = /(?:CS by|favorable by|reported (?:out )?(?:favorably )?(?:by|from))\s+([^;]+?)(?:;|$)/i.exec(d); if (f) reported.add(`${where}|${norm(f[1])}`);
+    for (const e of a.related_entities || []) if (e.entity_type === 'organization' && /committee/i.test(e.name)) refer(e.name, where);
   }
-  const committees = [];
-  if (referred.length) {
-    const list = await cached(`os-committees-${code}`, 12 * 3600e3, async () => {
-      const out = [];
-      for (let pg = 1; pg <= 6; pg++) {
-        const r = await get(`${cfg.openStatesBase}/committees?${new URLSearchParams({ jurisdiction: jurisdictionOf(code), per_page: '20', page: String(pg), include: 'memberships' })}`, h).catch(() => null);
-        out.push(...((r && r.results) || []));
-        if (!r || !r.pagination || pg >= r.pagination.max_page) break;
-      }
-      return out;
-    });
-    for (const name of referred.slice(0, 6)) {
-      const want = norm(name), chamberHint = /\b(house|assembly|delegates)\b/i.test(name) ? 'lower' : /\bsenate\b/i.test(name) ? 'upper' : (b.from_organization && b.from_organization.classification) || '';
-      const hit = list.find((c) => norm(c.name) === want && (!chamberHint || c.chamber === chamberHint)) || list.find((c) => norm(c.name) === want);
-      if (/calendar|special order/i.test(name)) continue;
-      const cm = hit ? (hit.memberships || []).map((m) => m.person && m.person.current_role && m.person.current_role.org_classification).find(Boolean) : '';
-      committees.push({ name, chamber: cm || chamberHint, reported: reported.has(want), now: Boolean(now) && norm(now) === want,
-        members: hit ? (hit.memberships || []).map((m) => ({ ...person(m.person, m.person_name), role: /chair/i.test(m.role || '') ? (m.role.replace(/\b\w/g, (x) => x.toUpperCase())) : '' })) : [] });
+  // Each chamber's committees with their members, kept for 12 hours. A failed
+  // lookup is not kept, so the next one tries again.
+  const listFor = (chamber) => cached(`os-committees-${code}-${chamber || 'all'}`, 12 * 3600e3, async () => {
+    const out = [];
+    for (let pg = 1; pg <= 6; pg++) {
+      const q = new URLSearchParams({ jurisdiction: jurisdictionOf(code), per_page: '20', page: String(pg), include: 'memberships' }); if (chamber) q.set('chamber', chamber);
+      const r = await get(`${cfg.openStatesBase}/committees?${q}`, h).catch(() => null);
+      if (!r && pg === 1) throw new Error('committees unavailable');
+      out.push(...((r && r.results) || []).map((c) => ({ ...c, chamber: c.chamber || chamber })));
+      if (!r || !r.pagination || pg >= r.pagination.max_page) break;
     }
+    return out;
+  }).catch(() => []);
+  const committees = [];
+  for (const x of referred.slice(-6)) {
+    const want = norm(x.name), list = await listFor(x.chamber);
+    const hit = list.find((c) => norm(c.name) === want);
+    const cm = hit ? (hit.memberships || []).map((m) => m.person && m.person.current_role && m.person.current_role.org_classification).find(Boolean) : '';
+    committees.push({ name: x.name, chamber: x.chamber || cm || '', reported: reported.has(`${x.chamber}|${want}`) || reported.has(`|${want}`), now: Boolean(now) && norm(now) === want,
+      members: hit ? (hit.memberships || []).map((m) => ({ ...person(m.person, m.person_name), role: /chair/i.test(m.role || '') ? (m.role.replace(/\b\w/g, (y) => y.toUpperCase())) : '' })) : [] });
   }
+  // Where it started and where it is now: the chamber of the latest action in
+  // the legislature (not the governor's).
+  const chambers = ['upper', 'lower', 'legislature'];
+  const origin = chambers.find((c) => c === (b.from_organization && b.from_organization.classification)) || '';
+  const lastChamber = acts.slice().reverse().map((a) => (a.organization && a.organization.classification) || '').find((c) => chambers.includes(c)) || '';
   return {
-    bill: b.identifier || ident, source: 'Open States',
+    bill: b.identifier || ident, source: 'Open States', origin, now: lastChamber || origin,
     sponsors: sp.filter((s) => s.primary !== false).map((s) => person(s.person, s.name)),
     cosponsors: sp.filter((s) => s.primary === false).map((s) => person(s.person, s.name)),
     committees, votes: votes.filter((v) => v.votes.length).slice(0, 12),
@@ -167,5 +186,6 @@ async function state(cfg, code, number, session) {
 
 export async function billRecord(cfg, { jurisdiction, number, session }) {
   const j = String(jurisdiction || '').toUpperCase();
-  return j === 'US' ? federal(cfg, number, session) : state(cfg, j, number, session);
+  // Kept ten minutes: starting a campaign and filling its count read the same record.
+  return cached(`record|${j}|${String(number || '').toUpperCase().replace(/[\s.]/g, '')}|${session || ''}`, 10 * 60e3, () => (j === 'US' ? federal(cfg, number, session) : state(cfg, j, number, session)));
 }
