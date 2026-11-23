@@ -221,7 +221,7 @@ class Store {
       sentEmail: p('UPDATE email_queue SET sent_at = ?, error = NULL WHERE id = ?'),
       retryEmails: p('UPDATE email_queue SET next_at = 0, attempts = MIN(attempts, 6) WHERE sent_at IS NULL AND created_at > ?'),
       failedEmail: p('UPDATE email_queue SET attempts = attempts + 1, next_at = ?, error = ? WHERE id = ?'),
-      outbox: p('SELECT id, to_addr, subject, text_body, kind, created_at, sent_at, unsubscribe, reply_to FROM email_queue ORDER BY id DESC LIMIT ?'),
+      outbox: p('SELECT id, to_addr, subject, text_body, html_body, kind, created_at, sent_at, unsubscribe, reply_to FROM email_queue ORDER BY id DESC LIMIT ?'),
       addLead: p('INSERT INTO leads (at, name, email, firm, size, message) VALUES (?, ?, ?, ?, ?, ?)'),
       leads: p('SELECT * FROM leads ORDER BY id DESC LIMIT ?'),
       admins: p("SELECT u.id, u.email, u.name FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = ? AND m.role IN ('owner','admin') AND u.email != ''"),

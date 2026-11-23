@@ -419,6 +419,10 @@ test('a daily digest arrives at the chosen hour in the person\'s time zone, once
   assert.equal(server.jobs.digests(new Date('2026-11-17T20:00:00Z')), 0, 'once a day');
   const d = (await outbox()).find((x) => x.kind === 'digest');
   assert.equal(d.to_addr, 'alice@example.org'); assert.match(d.subject, /^Headcount for Tue, Nov 17: 1 position change/);
+  // The HTML version: a card per campaign with the odds, the votes still needed and a link straight to it
+  assert.match(d.html_body, /Daily digest/); assert.match(d.html_body, /SB 214: Broadband/); assert.match(d.html_body, />60%</); assert.match(d.html_body, /\+10 pts since yesterday/);
+  assert.match(d.html_body, /odds of passage/); assert.match(d.html_body, /#open=/); assert.match(d.html_body, /Overdue/); assert.match(d.html_body, /prefers-color-scheme:dark/);
+  assert.doesNotMatch(d.html_body, /<script/i);
   for (const line of ['SB 214: Broadband (Prairie Co-ops · Capitol Strategies)', 'Odds of passage: 60% (up 10 points)', 'Moved: Vega: Undecided to Lean yes', '1 contact logged by the team', 'Committee vote Fri, Nov 20', 'Overdue follow-up: Call the district office']) assert.ok(d.text_body.includes(line), line);
 });
 

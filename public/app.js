@@ -852,6 +852,14 @@ async function onSignedIn() {
   if (oid) await loadOrg(oid, { quiet: true });
   if (!ORG) { page = SSO_NEEDED || TFA_NEEDED ? 'count' : 'workspace'; return render(); }
   if (jump && ORG.role !== 'guest') { page = jump; return render(); }
+  // Links in emails open one campaign: #open=<id>, or #open=<id>/brief
+  const deep = /^#open=([A-Za-z0-9_.:%-]{1,90})(?:\/(brief|count))?$/.exec(location.hash);
+  if (deep) {
+    history.replaceState(null, '', location.pathname);
+    const id = decodeURIComponent(deep[1]);
+    if (ACCOUNT.list.some((e) => e.id === id)) { await cloudOpen(id); if (deep[2] === 'brief') { page = 'brief'; render(); } return; }
+    toast('That campaign is not in this workspace, or you no longer have access to it.');
+  }
   if (!S.cloud) {
     const last = lsGet(LAST);
     if (last && ACCOUNT.list.some((e) => e.id === last)) return cloudOpen(last);

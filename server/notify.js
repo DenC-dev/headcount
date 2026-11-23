@@ -17,6 +17,17 @@ export function localParts(now, tz) {
   return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour), weekday: p.weekday };
 }
 
+const KIND_WORD = { bill: 'Bill', reg: 'Rule', contract: 'Contract' };
+// One Monitor item in an email: what it is, where, why it matters.
+function monitorItem(i) {
+  const where = i.kind === 'bill' ? (i.juris === 'US' ? 'Congress' : i.juris) : i.agency;
+  const moved = i.state === 'tracked' && i.changedAt;
+  return { chip: moved ? { text: 'Moved', tone: 'warn' } : typeof i.score === 'number' ? { text: `${KIND_WORD[i.kind] || 'Item'} · ${i.score} match`, tone: i.score >= 80 ? 'good' : 'info' } : { text: KIND_WORD[i.kind] || 'Item', tone: 'info' },
+    title: [i.number, i.title].filter(Boolean).join(': '), url: i.url || '',
+    meta: [where, moved ? `now "${i.status}"` : i.status, i.deadline ? `${i.kind === 'reg' ? 'comments due' : 'responses due'} ${i.deadline}` : ''].filter(Boolean).join(' · '),
+    note: !moved && i.reason ? i.reason : '' };
+}
+
 export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
   const app = `${cfg.publicUrl}/app`;
   const user = (id) => store.q.user.get(id);
@@ -44,7 +55,18 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
     mail.queue({ to: to.email, userId: to.id, kind: 'assigned', unsubscribeKind: 'assigned', dedupe: `assigned:${cid}:${task.id}:${to.id}`,
       subject: `${who} assigned you a follow-up: ${String(task.text).slice(0, 70)}`, replyTo: from && from.email,
       text: `${lines.join('\n\n')}\n\nOpen Headcount: ${app}${textFooter(to.id, 'assigned')}`,
-      html: htmlEmail({ heading: 'A follow-up for you', blocks: [{ p: `${who} assigned you a follow-up on ${c.name}:` }, { list: [task.text + (task.due ? ` (due ${fmtDay(task.due)})` : '')] }], action: { url: app, label: 'Open Headcount' }, footer: footer(to.id, 'assigned', 'a teammate assigned you a follow-up') }) });
+      html: htmlEmail({ eyebrow: 'Follow-up', heading: 'A follow-up for you', preheader: `${who}: ${task.text}`,
+        blocks: [{ p: `${who} assigned you a follow-up on ${c.name}.` }, { quote: task.text, by: task.due ? `Due ${fmtDay(task.due)}` : 'No due date' }],
+        action: { url: `${app}#open=${encodeURIComponent(cid)}`, label: 'Open the campaign' }, footer: footer(to.id, 'assigned', 'a teammate assigned you a follow-up') }) });
+  }
+
+  // The campaign at a glance: its odds and where its bill stands.
+  function campaignCard(c) {
+    const s = c.summary ? JSON.parse(c.summary) : null; if (!s) return [];
+    const stage = tracker ? tracker.stageFor(s) : null;
+    return [{ card: { title: c.name, sub: [store.clientName(c.client_id), s.bill].filter(Boolean).join(' · '),
+      odds: typeof s.odds === 'number' ? { pct: Math.round(s.odds * 100), label: s.side === 'defeat' ? 'odds of defeating it' : 'odds of passage' } : null,
+      rows: [stage && stage.now ? { label: 'The bill', text: stage.now } : null, s.cmteDate ? { label: 'Committee', text: fmtDay(s.cmteDate), tone: 'info' } : null, s.floorDate ? { label: 'Floor vote', text: fmtDay(s.floorDate), tone: 'info' } : null].filter(Boolean) } }];
   }
 
   function added({ cid, by, target, role }) {
@@ -54,7 +76,9 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
     mail.queue({ to: to.email, userId: to.id, kind: 'added', unsubscribeKind: 'added', dedupe: `added:${cid}:${to.id}`,
       subject: `${who} added you to ${c.name}`, replyTo: from && from.email,
       text: `${who} added you to ${c.name} on Headcount, so you can ${what} the vote count, meetings and bill brief.\n\nOpen Headcount: ${app}${textFooter(to.id, 'added')}`,
-      html: htmlEmail({ heading: `You were added to ${c.name}`, blocks: [{ p: `${who} added you to ${c.name} on Headcount, so you can ${what} the vote count, meetings and bill brief.` }], action: { url: app, label: 'Open the campaign' }, footer: footer(to.id, 'added', 'a teammate added you to a campaign') }) });
+      html: htmlEmail({ eyebrow: 'Campaign', heading: `You're on ${c.name}`, preheader: `${who} added you to ${c.name}.`,
+        blocks: [{ lead: `${who} added you to ${c.name}, so you can ${what} the vote count, the meetings and the bill brief.` }, ...campaignCard(c)],
+        action: { url: `${app}#open=${encodeURIComponent(cid)}`, label: 'Open the campaign' }, footer: footer(to.id, 'added', 'a teammate added you to a campaign') }) });
   }
 
   function paymentFailed(org) {
@@ -62,7 +86,7 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
       mail.queue({ to: a.email, userId: a.id, kind: 'billing', dedupe: `payfail:${org.id}:${new Date().toISOString().slice(0, 10)}:${a.id}`,
         subject: `Payment failed for ${org.name} on Headcount`,
         text: `The latest payment for ${org.name} did not go through. Update the card in Workspace, then Plan, to keep your plan.\n\n${app}`,
-        html: htmlEmail({ heading: 'A payment did not go through', blocks: [{ p: `The latest payment for ${org.name} did not go through. Update the card to keep your plan.` }], action: { url: app, label: 'Update payment' }, footer: footer(null, null, `you manage ${org.name}`) }) });
+        html: htmlEmail({ eyebrow: 'Billing', heading: 'A payment did not go through', blocks: [{ lead: `The latest payment for ${org.name} did not go through.` }, { p: 'Update the card in Workspace, then Plan, to keep your plan.' }, { callout: 'Nothing is deleted. If the card is not updated, the workspace moves to the Free plan.', tone: 'warn' }], action: { url: app, label: 'Update payment' }, footer: footer(null, null, `you manage ${org.name}`) }) });
     }
   }
 
@@ -81,7 +105,7 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
     for (const addr of to) {
       mail.queue({ to: addr, kind: 'billing', dedupe: `risk:${kind}:${charge || org && org.id || 'x'}:${addr}`,
         subject: `${what[0]} (${who})`, text: `${what[1]}\n\nOpen it in Stripe: ${link}`,
-        html: htmlEmail({ heading: what[0], blocks: [{ p: what[1] }], action: { url: link, label: 'Open in Stripe' }, footer: footer(null, null, 'you run this Headcount') }) });
+        html: htmlEmail({ eyebrow: 'Payments', heading: what[0], blocks: [{ callout: what[1], tone: kind === 'refunded' ? 'info' : 'bad' }], action: { url: link, label: 'Open in Stripe' }, footer: footer(null, null, 'you run this Headcount') }) });
     }
   }
 
@@ -93,13 +117,13 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
       if (m.role === 'guest' || !m.email || store.getPrefs(m.id).monitor !== 'instant' || store.blocked(org, m.id, m.role)) continue;
       const fresh = items.filter((i) => i.state !== 'tracked'), moved = items.filter((i) => i.state === 'tracked');
       const lines = (list) => list.map((i) => `${describeItem(i)}${i.reason && i.state !== 'tracked' ? `. ${i.reason}` : ''}`);
-      const blocks = [];
-      if (fresh.length) blocks.push({ title: `New and relevant (${fresh.length})` }, { list: lines(fresh) });
-      if (moved.length) blocks.push({ title: `Tracked items that moved (${moved.length})` }, { list: lines(moved) });
+      const blocks = [], textBlocks = [];
+      if (fresh.length) { blocks.push({ title: `New and relevant (${fresh.length})` }, { items: fresh.map(monitorItem) }); textBlocks.push({ title: `New and relevant (${fresh.length})` }, { list: lines(fresh) }); }
+      if (moved.length) { blocks.push({ title: `Tracked items that moved (${moved.length})` }, { items: moved.map(monitorItem) }); textBlocks.push({ title: `Tracked items that moved (${moved.length})` }, { list: lines(moved) }); }
       const subject = fresh.length ? `${org.name} Monitor: ${fresh.length === 1 ? describeItem(fresh[0]).slice(0, 90) : `${fresh.length} new items worth a look`}` : `${org.name} Monitor: ${moved.length === 1 ? describeItem(moved[0]).slice(0, 90) : `${moved.length} tracked items moved`}`;
       mail.queue({ to: m.email, userId: m.id, kind: 'monitor', unsubscribeKind: 'monitor', dedupe: `monitor:${org.id}:${m.id}:${items.map((i) => `${i.id}.${i.changedAt || 0}`).join(',').slice(0, 150)}`,
-        subject, text: `${blocks.map((b) => (b.title ? `\n${b.title}` : b.list.map((l) => `- ${l}`).join('\n'))).join('\n').trim()}\n\nOpen the Monitor: ${app}#monitor${textFooter(m.id, 'monitor')}`,
-        html: htmlEmail({ heading: `New in the ${org.name} Monitor`, blocks, action: { url: `${app}#monitor`, label: 'Open the Monitor' }, footer: footer(m.id, 'monitor', 'you asked for instant Monitor alerts') }) });
+        subject, text: `${textBlocks.map((b) => (b.title ? `\n${b.title}` : b.list.map((l) => `- ${l}`).join('\n'))).join('\n').trim()}\n\nOpen the Monitor: ${app}#monitor${textFooter(m.id, 'monitor')}`,
+        html: htmlEmail({ eyebrow: 'Monitor alert', heading: `New in the ${org.name} Monitor`, preheader: subject, blocks: [{ stats: [[String(fresh.length), 'new and relevant', fresh.length ? 'good' : ''], [String(moved.length), 'tracked items moved', moved.length ? 'warn' : '']] }, ...blocks], action: { url: `${app}#monitor`, label: 'Open the Monitor' }, footer: footer(m.id, 'monitor', 'you asked for instant Monitor alerts') }) });
       n++;
     }
     return n;
@@ -110,7 +134,11 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
     return mail.queue({ to: email, kind: 'invite', replyTo: inviter && inviter.email, dedupe: `invite:${link}`,
       subject: `${who} invited you to ${org.name} on Headcount`,
       text: `${who} invited you to join ${org.name} on Headcount as ${as}. Headcount is where the team keeps its vote counts, meetings and bill briefs.\n\nAccept the invitation (it works for 14 days, only for ${email}):\n${link}`,
-      html: htmlEmail({ heading: `Join ${org.name} on Headcount`, blocks: [{ p: `${who} invited you to join ${org.name} as ${as}. Headcount is where the team keeps its vote counts, meetings and bill briefs.` }, { p: `The invitation works for 14 days, only for ${email}.` }], action: { url: link, label: 'Accept the invitation' }, footer: `You get this email because ${esc(who)} invited ${esc(email)}.` }) });
+      html: htmlEmail({ eyebrow: 'Invitation', heading: `Join ${org.name} on Headcount`, preheader: `${who} invited you to join ${org.name}.`,
+        blocks: [{ lead: `${who} invited you to join ${org.name} as ${as}.` }, { p: 'Headcount is where the team keeps its work on each bill:' },
+          { list: ['The whip count: where every member stands, and the odds it passes', 'Meeting requests to the right staffer, and every contact logged', 'Each bill followed as it moves, with hearings and votes in plain words'] },
+          { kv: [['Workspace', org.name], ['Your role', as.replace(/^an? /, '').replace(/^\w/, (x) => x.toUpperCase())], ['Invited by', who]] }],
+        action: { url: link, label: 'Accept the invitation' }, after: [{ link }, { small: `The invitation works for 14 days, only for ${email}.` }], footer: `You get this email because ${esc(who)} invited ${esc(email)}.` }) });
   }
 
   function trialNotices(nowMs = Date.now()) {
@@ -120,7 +148,7 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
         mail.queue({ to: a.email, userId: a.id, kind: 'trial', dedupe: `trial:${o.id}:${a.id}`,
           subject: `${o.name}: your Headcount trial ends in 3 days`,
           text: `The Team trial for ${o.name} ends in 3 days. Choose a plan in Workspace to keep the Team features. Nothing is deleted if you do not: the workspace moves to the Free plan.\n\n${app}`,
-          html: htmlEmail({ heading: 'Your trial ends in 3 days', blocks: [{ p: `The Team trial for ${o.name} ends in 3 days. Choose a plan to keep the Team features.` }, { p: 'Nothing is deleted if you do not: the workspace moves to the Free plan.' }], action: { url: app, label: 'See plans' }, footer: footer(null, null, `you manage ${o.name}`) }) });
+          html: htmlEmail({ eyebrow: 'Trial', heading: 'Your trial ends in 3 days', blocks: [{ lead: `The Team trial for ${o.name} ends in 3 days.` }, { p: 'Choose a plan to keep supporter pages, client guests, unlimited campaigns and the quarterly activity report.' }, { callout: 'Nothing is deleted if you do not: the workspace moves to the Free plan.', tone: 'info' }], action: { url: app, label: 'See plans' }, footer: footer(null, null, `you manage ${o.name}`) }) });
         n++;
       }
       store.q.trialNoticed.run(o.id);
@@ -130,7 +158,8 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
 
   // ---------- digests ----------
   function digestFor(u, since, today, period) {
-    const sections = []; const totals = { moves: 0, overdue: 0, contacts: 0, votes: 0 };
+    const sections = [], cards = []; const totals = { moves: 0, overdue: 0, contacts: 0, votes: 0, bills: 0 };
+    const sinceMs = Date.parse(`${since}T00:00:00Z`);
     for (const o of store.q.userOrgs.all(u.id)) {
       if (store.blocked(o, u.id, o.my_role)) continue;
       for (const c of store.q.orgCampaigns.all(o.id)) {
@@ -150,39 +179,66 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
         const votes = [['Committee vote', s.cmteDate], ['Floor vote', s.floorDate]].filter(([, d]) => d && d >= today && d <= addDays(today, 7));
         const meetings = (s.meetings || []).filter((m) => { const d = String(m.start).slice(0, 10); return d >= today && d <= addDays(today, 7); });
         const then = (s.trend || []).filter((t) => t.d <= since).slice(-1)[0];
-        const moved = tracker ? tracker.newsFor(s, Date.parse(`${since}T00:00:00Z`)) : [];
+        const moved = tracker ? tracker.newsFor(s, sinceMs) : [];
+        const stage = tracker ? tracker.stageFor(s) : null;
         const delta = typeof s.odds === 'number' && then ? Math.round((s.odds - then.p) * 100) : 0;
         if (!moves.length && !contacts && !overdue.length && !soon.length && !votes.length && !meetings.length && !delta && !moved.length) continue;
+        const when = (m) => new Date(m.start).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: u.tz || 'UTC' });
         const lines = [];
         if (typeof s.odds === 'number') lines.push(`Odds ${s.side === 'defeat' ? 'of defeating it' : 'of passage'}: ${Math.round(s.odds * 100)}%${delta ? ` (${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} point${Math.abs(delta) === 1 ? '' : 's'})` : ''}`);
         moved.forEach((x) => lines.push(`The bill: ${x.plain}${x.date ? ` (${fmtDay(x.date)})` : ''}`));
         if (moves.length) lines.push(`Moved: ${moves.slice(0, 6).join('; ')}${moves.length > 6 ? `; and ${moves.length - 6} more` : ''}`);
         if (contacts) lines.push(`${plural(contacts, 'contact')} logged by the team`);
         votes.forEach(([k, d]) => lines.push(`${k} ${fmtDay(d)}`));
-        meetings.forEach((m) => lines.push(`Meeting: ${m.title}, ${new Date(m.start).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: u.tz || 'UTC' })}`));
+        meetings.forEach((m) => lines.push(`Meeting: ${m.title}, ${when(m)}`));
         overdue.forEach((t) => lines.push(`Overdue follow-up: ${t.text} (was due ${fmtDay(t.due)})`));
         soon.forEach((t) => lines.push(`Follow-up due ${fmtDay(t.due)}: ${t.text}`));
-        totals.bills = (totals.bills || 0) + moved.length; totals.moves += moves.length; totals.overdue += overdue.length; totals.contacts += contacts; totals.votes += votes.length;
-        sections.push({ title: c.name, sub: [store.clientName(c.client_id), o.name].filter(Boolean).join(' · '), lines });
+        totals.bills += moved.length; totals.moves += moves.length; totals.overdue += overdue.length; totals.contacts += contacts; totals.votes += votes.length;
+        const sub = [store.clientName(c.client_id), o.name].filter(Boolean).join(' · ');
+        sections.push({ title: c.name, sub, lines });
+        // The same, laid out as a card for the HTML email
+        // counts run Yes, Lean yes, Undecided, Lean no, No
+        const cnt = s.counts || [0, 0, 0, 0, 0], haveFor = s.side === 'defeat' ? cnt[3] + cnt[4] : cnt[0] + cnt[1], have = s.side === 'defeat' ? cnt[0] + cnt[1] : cnt[3] + cnt[4];
+        const need = s.side === 'defeat' ? (s.n || 0) - (s.needF || 0) + 1 : s.needF;
+        cards.push({ card: {
+          title: c.name, sub, url: `${app}#open=${encodeURIComponent(c.id)}`,
+          chip: overdue.length ? { text: `${overdue.length} overdue`, tone: 'bad' } : moved.length ? { text: 'Bill moved', tone: 'warn' } : null,
+          odds: typeof s.odds === 'number' ? { pct: Math.round(s.odds * 100), text: s.odds >= 0.995 ? '>99%' : s.odds < 0.005 ? '<1%' : `${Math.round(s.odds * 100)}%`, label: s.side === 'defeat' ? 'odds of defeating it' : 'odds of passage', delta, period: period === 'daily' ? 'day' : 'week' } : null,
+          bar: need ? { have: haveFor, need, text: `${haveFor >= need ? `${haveFor} votes: ${haveFor - need} more than the ${need} ${s.side === 'defeat' ? 'needed to block it' : 'needed to pass'}` : `${haveFor} of the ${need} votes ${s.side === 'defeat' ? 'needed to block it' : 'needed to pass'}`}${have ? ` · ${have} against` : ''}` } : null,
+          rows: [
+            stage && stage.now ? { label: 'The bill', text: stage.now } : null,
+            ...moved.map((x) => ({ label: x.date ? fmtDay(x.date) : 'Moved', text: x.plain, tone: 'warn' })),
+            moves.length ? { label: 'Positions', text: `${moves.slice(0, 4).join('; ')}${moves.length > 4 ? `; and ${moves.length - 4} more` : ''}` } : null,
+            contacts ? { label: 'Contacts', text: `${plural(contacts, 'contact')} logged by the team` } : null,
+            ...votes.map(([k, d]) => ({ label: 'Coming up', text: `${k}, ${fmtDay(d)}`, tone: 'info' })),
+            ...meetings.map((m) => ({ label: 'Meeting', text: `${m.title}, ${when(m)}`, tone: 'info' })),
+            ...overdue.map((t) => ({ label: 'Overdue', text: `${t.text} (was due ${fmtDay(t.due)})`, tone: 'bad' })),
+            ...soon.map((t) => ({ label: 'Due soon', text: `${t.text} (${fmtDay(t.due)})` })),
+          ].filter(Boolean),
+          action: { url: `${app}#open=${encodeURIComponent(c.id)}`, label: 'Open the count' },
+        } });
       }
     }
+    const monitorBlocks = [];
     if (monitor && u.monitor !== 'off') {
-      const sinceMs = Date.parse(`${since}T00:00:00Z`);
       for (const o of store.q.userOrgs.all(u.id)) {
         if (o.my_role === 'guest' || store.blocked(o, u.id, o.my_role)) continue;
         const found = monitor.forDigest(o.id, sinceMs);
         if (!found.length) continue;
         totals.monitor = (totals.monitor || 0) + found.length;
         sections.push({ title: `Monitor: ${o.name}`, sub: 'New bills, rules and contract notices that match your watches', lines: found.map((i) => `${describeItem(i)}${i.state !== 'tracked' && i.reason ? `. ${i.reason}` : ''}`) });
+        monitorBlocks.push({ title: `Monitor: ${o.name}`, sub: 'New bills, rules and contract notices that match your watches' }, { items: found.map(monitorItem) });
       }
     }
     if (!sections.length) return null;
-    const bits = [totals.bills && plural(totals.bills, 'bill update'), totals.moves && plural(totals.moves, 'position change'), totals.monitor && plural(totals.monitor, 'new Monitor item'), totals.votes && plural(totals.votes, 'vote') + ' coming up', totals.overdue && plural(totals.overdue, 'overdue follow-up'), totals.contacts && plural(totals.contacts, 'contact')].filter(Boolean);
+    const bits = [totals.bills && plural(totals.bills, 'bill update'), totals.moves && plural(totals.moves, 'position change'), totals.monitor && plural(totals.monitor, 'new Monitor item'), totals.votes && plural(totals.votes, 'vote') + ' coming up', totals.overdue && plural(totals.overdue, 'overdue follow-up'), totals.contacts && plural(totals.contacts, 'contact') + ' logged'].filter(Boolean);
     const heading = period === 'daily' ? `Headcount for ${fmtDay(today)}` : `Your week in Headcount`;
+    const stats = [[String(cards.length), plural(cards.length, 'campaign').replace(/^\d+ /, '') + ' to look at'], [String(totals.bills + totals.moves), 'bill and position moves', totals.bills + totals.moves ? 'warn' : ''], [String(totals.votes + totals.overdue), totals.overdue ? 'votes and overdue items' : 'votes coming up', totals.overdue ? 'bad' : '']];
     return {
       subject: `${heading}: ${bits.slice(0, 2).join(', ') || plural(sections.length, 'campaign') + ' to look at'}`,
       text: `${heading}\n\n${sections.map((x) => `${x.title}${x.sub ? ` (${x.sub})` : ''}\n${x.lines.map((l) => `- ${l}`).join('\n')}`).join('\n\n')}\n\nOpen Headcount: ${app}${textFooter(u.id, 'digest')}`,
-      html: htmlEmail({ heading, blocks: sections.flatMap((x) => [{ title: x.title, sub: x.sub }, { list: x.lines }]), action: { url: app, label: 'Open Headcount' }, footer: footer(u.id, 'digest', `you get a ${period} digest`) }),
+      html: htmlEmail({ eyebrow: period === 'daily' ? 'Daily digest' : 'Weekly digest', heading, preheader: bits.join(', ') || 'Your campaigns at a glance',
+        blocks: [...(cards.length ? [{ stats }] : []), ...cards, ...monitorBlocks], action: { url: app, label: 'Open Headcount' }, footer: footer(u.id, 'digest', `you get a ${period} digest`) }),
     };
   }
 
