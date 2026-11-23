@@ -1,5 +1,5 @@
 /* Project website additions to the shared website styles (site.css). */
-.chip { display: inline-block; font: 600 13px/1 var(--body); padding: 5px 10px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
+:is(.chip.st-ok, .chip.st-fail, .chip.st-skip) { display: inline-block; font: 500 13px/1 var(--body); font-stretch: 78%; text-transform: uppercase; padding: 5px 9px; border: 0; border-radius: 0; text-decoration: none; white-space: nowrap; }
 .chip.st-ok { background: color-mix(in srgb, var(--yes) 16%, transparent); color: var(--yes); }
 .chip.st-fail { background: color-mix(in srgb, var(--no) 16%, transparent); color: var(--no); }
 .chip.st-skip { background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
@@ -10,14 +10,14 @@
 .statuspage h1 { margin-top: 14px; font-size: clamp(42px, 6vw, 72px); }
 .statuspage h2 { font-size: clamp(28px, 3.4vw, 36px); margin-top: 26px; }
 .statuspage .intro { color: var(--muted); max-width: 44em; font-size: 18px; }
-.summary { display: flex; align-items: center; gap: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; font-size: 17px; box-shadow: var(--shadow); }
+.summary { display: flex; align-items: center; gap: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 0; padding: 18px 20px; font-size: 17px; }
 .summary .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
 .summary.st-ok .dot { background: var(--yes); box-shadow: 0 0 0 5px color-mix(in srgb, var(--yes) 18%, transparent); }
 .summary.st-fail .dot { background: var(--no); box-shadow: 0 0 0 5px color-mix(in srgb, var(--no) 18%, transparent); }
 .summary.st-fail { border-color: var(--no); }
 .checks td.note { color: var(--muted); font-size: 14px; }
 .checks th { font-weight: 500; }
-.history { display: grid; gap: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.history { display: grid; gap: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 0; padding: 18px 20px; }
 .hrow { display: grid; grid-template-columns: minmax(0, 270px) minmax(0, 1fr); gap: 14px; align-items: center; }
 .hname { font-size: 14px; }
 .hcells { display: flex; flex-wrap: wrap; gap: 3px; }

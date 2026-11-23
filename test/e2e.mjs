@@ -419,7 +419,7 @@ try {
   await alice.page.keyboard.press('Escape');
   assert.equal(await alice.page.evaluate(() => document.querySelector('.cs-list').hidden && !document.querySelector('#drawer').hidden), true);
   await alice.page.keyboard.press('Escape');
-  assert.equal(await alice.page.evaluate(() => document.querySelector('#drawer').hidden), true);
+  await alice.page.waitForFunction(() => document.querySelector('#drawer').hidden, null, { timeout: 2000 }); // it slides out first
   assert.equal(await alice.page.locator('#tForm .cs-trigger').count(), 1, 'the follow-up dropdown is redrawn in place, not stacked');
   log('ok  custom dropdowns by keyboard: type-to-find on a whip row; Escape closes the list before the drawer');
 
@@ -465,7 +465,7 @@ try {
   // ===== The website =====
   const visitor = await person('Visitor', 'google');
   await visitor.page.goto(`${BASE}/`);
-  assert.match(await visitor.page.locator('h1').innerText(), /Every bill comes down to a count/);
+  assert.match(await visitor.page.locator('h1').innerText(), /The whip count that fills itself in/i);
   await shot(visitor.page, 'site-home', true);
   await visitor.page.fill('form.lead [name=name]', 'Pat Lee'); await visitor.page.fill('form.lead [name=email]', 'pat@leepartners.example');
   await visitor.page.fill('form.lead [name=firm]', 'Lee Partners'); await visitor.page.click('form.lead button[type=submit]');

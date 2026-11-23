@@ -598,7 +598,7 @@ test('single sign-on: Firm plan, verified domain, required for members but not o
 test('the website and the app have their own addresses', async () => {
   const home = await fetch(base + '/'); assert.equal(home.status, 200);
   const h = await home.text();
-  assert.match(h, /Every bill comes down to a count/); assert.match(h, /Start a 14-day trial/); assert.doesNotMatch(h, /aren&#39;t on sale|aren.t on sale/); assert.match(h, /<svg/); assert.doesNotMatch(h, /\{\{\w+\}\}/);
+  assert.match(h, /The whip count that fills itself in/); assert.match(h, /Start a 14-day trial/); assert.doesNotMatch(h, /aren&#39;t on sale|aren.t on sale/); assert.match(h, /<svg/); assert.doesNotMatch(h, /\{\{\w+\}\}/);
   const pricing = await (await fetch(base + '/pricing')).text();
   assert.match(pricing, /<td>3<\/td>/); assert.match(pricing, /Sign in through your firm&#39;s own login page|Sign in through your firm's own login page/); assert.doesNotMatch(pricing, /SAML|OIDC/); assert.doesNotMatch(pricing, /\{\{\w+\}\}/);
   const guide = await (await fetch(base + '/guide')).text();
@@ -1169,6 +1169,9 @@ test('official lists: reading the official pages, keeping returning members, sta
   // A failing source leaves that chamber as it was
   const partial = await o.refreshOfficials(base, { sources: { flsenate: async () => { throw new Error('site down'); }, flhouse: async () => [], houseStaff: async () => ({}) } });
   assert.equal(partial.presets.flsenate.members[0].k, 'old-1'); assert.match(partial.report[0], /site down/);
+  // "Legislative Aide: None" on the official page means nobody, not a person called None
+  assert.deepEqual(o.splitNames('None'), []); assert.deepEqual(o.splitNames('Vacant'), []);
+  assert.deepEqual(o.splitNames('Ana Ruiz and None'), ['Ana Ruiz']);
 });
 
 test('official lists: the server refreshes its own copy and serves the newer one', async () => {

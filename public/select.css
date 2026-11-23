@@ -37,6 +37,5 @@
 td .cs-trigger { padding: 4px 26px 4px 6px; font-size: 13.5px; }
 td .cs-trigger::after { right: 9px; }
 .camp .cs { max-width: min(100%, 340px); }
-form.lead .cs-trigger { font-size: 16px; background: var(--bg, #f3f5f8); border-radius: 7px; padding: 9px 34px 9px 11px; }
 .brandrow .cs { max-width: min(100%, 280px); }
 .brandrow .cs-trigger { font-weight: 600; }

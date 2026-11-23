@@ -3,6 +3,9 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const POS = ['No', 'Lean no', 'Undecided', 'Lean yes', 'Yes'];
+const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Official pages say "Legislative Aide: None" when there is nobody in the job.
+const NOBODY = /^(none|vacant|tbd|tba|n\/?a|to be (announced|determined)|position vacant|unassigned)\.?$/i;
 const PROB = [0.03, 0.25, 0.5, 0.75, 0.97];
 const RULES = { majority: ['Simple majority', (n) => Math.floor(n / 2) + 1], three5: ['Three-fifths', (n) => Math.ceil(n * 0.6)], two3: ['Two-thirds', (n) => Math.ceil(n * 2 / 3)] };
 const PARTY_ORDER = { D: 0, I: 1, R: 2 };
@@ -79,6 +82,7 @@ function normalize(st) {
 function normMember(m) {
   m.history = Array.isArray(m.history) ? m.history : []; m.staffers = Array.isArray(m.staffers) ? m.staffers : [];
   if (m.staff) { m.staffers.push({ id: uid(), name: m.staff, role: '', phone: '', email: '', notes: '' }); delete m.staff; }
+  m.staffers = m.staffers.filter((x) => !(x.src === 'directory' && NOBODY.test(String(x.name || '').trim()))); // "Legislative Aide: None" is not a person
   m.pos = Math.min(4, Math.max(0, +m.pos || 0)); m.mov = Math.min(5, Math.max(1, +m.mov || 3));
   return m;
 }
@@ -175,7 +179,7 @@ async function staffFor(key) {
   try { const res = await fetch(`/staff/${key}.json`); STAFF[key] = res.ok ? await res.json() : null; } catch (_) { STAFF[key] = null; }
   return STAFF[key];
 }
-const dirStaff = (key, ref) => ((STAFF[key] && STAFF[key].people[ref]) || []).map(([n, t, ph, em]) => ({ id: uid(), name: n, role: t, phone: ph, email: em, notes: '', fmt: true, src: 'directory' }));
+const dirStaff = (key, ref) => ((STAFF[key] && STAFF[key].people[ref]) || []).filter((r) => !NOBODY.test(String(r[0] || '').trim())).map(([n, t, ph, em]) => ({ id: uid(), name: n, role: t, phone: ph, email: em, notes: '', fmt: true, src: 'directory' }));
 // Official staff show up on their own: every member of a built-in chamber gets
 // the staff from the official list, including campaigns made before the list
 // existed, and names added when the list is refreshed. Staff someone removed
@@ -380,6 +384,7 @@ function loadPreset(key, cmteIdx, backed, st = S) {
 let S = exampleState();
 let view = 'floor', page = 'count', openId = null, renderTimer = null;
 const PAGES = ['portfolio', 'count', 'brief', 'monitor', 'contacts', 'workspace'];
+let LAST_PAGE = '';
 let BOOK = { v: 2, active: 'ex', list: [{ id: 'ex', name: S.campaign.bill }] };
 let ME = null, ROLE = 'owner', PEOPLE = {}, JOIN = null;
 const ACCOUNT = { list: [], loaded: false };
@@ -714,7 +719,7 @@ function recordTrend() {
   if (S.trend.length > 90) S.trend = S.trend.slice(-90);
 }
 function commit(msg) { recordTrend(); save(); render(); if (msg) toast(msg); }
-let toastT; function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2600); }
+let toastT; function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2600); }
 function copyText(v, fallbackEl) {
   const fail = () => { if (fallbackEl) { fallbackEl.focus(); fallbackEl.select(); toast('Copy is blocked here. The text is selected: copy it by hand.'); } else toast('Copy is blocked here. Select the text instead.'); };
   try { navigator.clipboard.writeText(v).then(() => toast('Copied'), fail); } catch (_) { fail(); }
@@ -736,6 +741,7 @@ function seatLayout(n) {
   const size = Math.max(2.5, Math.min(gap / 2 - 3, (Math.PI * radii[0]) / Math.max(1, counts[0]) / 2 - 2, 20));
   return { seats: seats.sort((p, q) => q.a - p.a), size };
 }
+const HEMI = { id: null, pos: null, short: null };
 function renderHemi(nd) {
   if (!S.members.length) { $('#hemi').innerHTML = SYNC.loading ? '<p class="note" style="margin:24px 0">Loading the campaign.</p>' : chamberPicker(); $('#tally').innerHTML = ''; $('#path').textContent = ''; return; }
   const order = S.members.slice().sort((a, b) => b.pos - a.pos || (PARTY_ORDER[a.party] ?? 1) - (PARTY_ORDER[b.party] ?? 1));
@@ -744,8 +750,10 @@ function renderHemi(nd) {
   const grp = S.members.filter(inView), cnt = (p) => grp.filter((m) => m.pos === p).length;
   const need = view === 'floor' ? nd.needF : nd.needC, defeat = dirOf(S) < 0;
   const have = defeat ? cnt(0) + cnt(1) : cnt(4) + cnt(3), target = defeat ? grp.length - need + 1 : need, where = view === 'floor' ? 'on the floor' : 'in committee';
-  $('#hemi').innerHTML = `<svg viewBox="0 0 600 322" style="--sw:${Math.min(2, size / 4).toFixed(2)}px" role="group" aria-label="Seating chart coloured by position">
-    ${order.map((m, i) => `<circle class="seat p${m.pos}${m.cmte ? ' cmte' : ''}${inView(m) ? '' : ' dim'}" cx="${seats[i].x.toFixed(1)}" cy="${seats[i].y.toFixed(1)}" r="${size.toFixed(1)}" tabindex="0" role="button" data-open="${esc(m.id)}" aria-label="${esc(m.name)}, ${POS[m.pos]}"><title>${esc(m.name)} (${esc(m.party)}-${esc(m.district)}): ${POS[m.pos]}</title></circle>`).join('')}
+  const prev = HEMI.id === S.id ? HEMI.pos : null, intro = HEMI.id !== S.id;
+  HEMI.pos = new Map(S.members.map((m) => [m.id, m.pos])); HEMI.id = S.id;
+  $('#hemi').innerHTML = `<svg class="${intro ? 'intro' : ''}" viewBox="0 0 600 322" style="--sw:${Math.min(2, size / 4).toFixed(2)}px" role="group" aria-label="Seating chart coloured by position">
+    ${order.map((m, i) => `<circle class="seat p${m.pos}${m.cmte ? ' cmte' : ''}${inView(m) ? '' : ' dim'}${prev && prev.has(m.id) && prev.get(m.id) !== m.pos ? ' pop' : ''}" style="--i:${i}" cx="${seats[i].x.toFixed(1)}" cy="${seats[i].y.toFixed(1)}" r="${size.toFixed(1)}" tabindex="0" role="button" data-open="${esc(m.id)}" aria-label="${esc(m.name)}, ${POS[m.pos]}"><title>${esc(m.name)} (${esc(m.party)}-${esc(m.district)}): ${POS[m.pos]}</title></circle>`).join('')}
     <text class="hub" x="300" y="268" text-anchor="middle" font-size="46" font-weight="800">${grp.length ? have : 0}<tspan font-size="22" font-weight="500"> / ${grp.length ? target : 0}</tspan></text>
     <text class="hub small" x="300" y="292" text-anchor="middle" font-size="13">${defeat ? 'no and lean no / needed to block' : 'yes and lean yes / needed'}${view === 'cmte' ? ' in committee' : ''}</text>
   </svg>`;
@@ -755,6 +763,9 @@ function renderHemi(nd) {
     <div class="need${left > 70 ? ' flip' : ''}" style="left:${left}%"><span>${need} to pass</span></div></div>
     <div class="legend">${[4, 3, 2, 1, 0].map((p) => `<span><span class="dot b${p}"></span>${POS[p]} <b>${cnt(p)}</b></span>`).join('')}${nd.c ? `<span>Outlined seats sit on ${esc(S.campaign.committee || 'the committee')}</span>` : ''}</div>`;
   const short = target - have, soft = defeat ? cnt(1) : cnt(3), play = cnt(2) + (defeat ? cnt(3) : cnt(1));
+  // Reaching the votes you need, after a change you made: a small celebration.
+  if (view === 'floor' && prev && HEMI.short > 0 && short <= 0) setTimeout(() => toast(defeat ? 'You have enough votes to block it.' : 'You have the votes to pass it.'), 250);
+  if (view === 'floor') HEMI.short = short;
   $('#path').innerHTML = short > 0
     ? `Counting leaners you are <b>${short} short</b> ${defeat ? 'of blocking it ' : ''}${where}. ${play} undecided or leaning against you are in play.`
     : `Counting leaners you have <b>${-short} to spare</b> ${where}${defeat ? ' to block it' : ''}. ${soft} of your votes are only leaning.`;
@@ -767,7 +778,21 @@ function movesList(days) {
 function renderOdds(nd, base) {
   const defeat = dirOf(S) < 0;
   $('#oddsLabel').textContent = defeat ? 'Odds of defeating it today' : 'Odds of passage today';
-  $('#odds').innerHTML = S.members.length ? `${pct(goal(S, base.both))}<small>%</small>` : '<small>No members yet</small>';
+  const oe = $('#odds');
+  if (!S.members.length) { oe.innerHTML = '<small>No members yet</small>'; oe.className = 'big'; delete oe.dataset.v; }
+  else {
+    const to = pct(goal(S, base.both)), from = oe.dataset.v === undefined || oe.dataset.id !== S.id ? to : +oe.dataset.v;
+    oe.dataset.v = to; oe.dataset.id = S.id;
+    const n = goal(S, base.both) * 100;
+    oe.className = `big ${n >= 60 ? 'good' : n >= 35 ? 'mid' : 'low'}`;
+    const paint = (v) => { oe.innerHTML = `${v}<small>%</small>`; };
+    if (from === to || REDUCED || !/^\d+$/.test(String(to)) || !/^\d+$/.test(String(from))) paint(to);
+    else {
+      oe.classList.add('bump'); setTimeout(() => oe.classList.remove('bump'), 500);
+      const t0 = performance.now(), tick = (t) => { const k = Math.min(1, (t - t0) / 650), e = 1 - Math.pow(1 - k, 3); paint(Math.round(from + (to - from) * e)); if (k < 1 && oe.dataset.v == to) requestAnimationFrame(tick); else paint(oe.dataset.v); };
+      requestAnimationFrame(tick);
+    }
+  }
   $('#stages').innerHTML = !S.members.length ? '<p class="note">The odds appear once the chamber is loaded and you mark where members stand.</p>' : defeat
     ? `<div class="stage"><b>${nd.c ? pct(1 - base.cm) + '%' : 'n/a'}</b><span>Stopped in committee (${nd.c - nd.needC + 1} of ${nd.c} to block)</span></div><div class="stage"><b>${pct(1 - base.fl)}%</b><span>Fails on the floor (${nd.n - nd.needF + 1} of ${nd.n} to block)</span></div>`
     : `<div class="stage"><b>${nd.c ? pct(base.cm) + '%' : 'n/a'}</b><span>Clears committee (${nd.needC} of ${nd.c})</span></div><div class="stage"><b>${pct(base.fl)}%</b><span>Wins the floor (${nd.needF} of ${nd.n})</span></div>`;
@@ -1385,9 +1410,22 @@ let staffEdit = null, repKind = 'client', outKind = null;
 const ROLES = ['Chief of Staff', 'Legislative Director', 'Legislative Assistant', 'Scheduler', 'District Director', 'Communications Director', 'Committee staff'];
 const isEmail = (v) => /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(v);
 const copyBtn = (v) => `<button type="button" class="btn sm" data-copy="${esc(v)}">Copy</button>`;
-function showDrawer(html) { const d = $('#drawer'); d.innerHTML = html; d.hidden = false; $('#scrim').hidden = false; d.scrollTop = 0; const f = $('button, input', d); if (f) f.focus(); }
+let drawerClosing = null;
+function showDrawer(html) {
+  const d = $('#drawer'), sc = $('#scrim'), was = d.hidden || d.classList.contains('closing');
+  if (drawerClosing) { clearTimeout(drawerClosing); drawerClosing = null; }
+  d.classList.remove('closing'); sc.classList.remove('closing');
+  d.innerHTML = html; d.hidden = false; sc.hidden = false; d.scrollTop = 0;
+  if (was) { d.classList.remove('opening'); void d.offsetWidth; d.classList.add('opening'); }
+  const f = $('button, input', d); if (f) f.focus({ preventScroll: true });
+}
 function closeDrawer() {
-  openId = null; RQ = null; schedOpen = false; staffEdit = null; outKind = null; $('#drawer').hidden = true; $('#scrim').hidden = true;
+  openId = null; RQ = null; schedOpen = false; staffEdit = null; outKind = null;
+  const d = $('#drawer'), sc = $('#scrim');
+  if (!d.hidden && !REDUCED) {
+    d.classList.remove('opening'); d.classList.add('closing'); sc.classList.add('closing');
+    clearTimeout(drawerClosing); drawerClosing = setTimeout(() => { drawerClosing = null; d.hidden = true; sc.hidden = true; d.classList.remove('closing'); sc.classList.remove('closing'); }, 210);
+  } else { d.hidden = true; sc.hidden = true; }
   const n = S.members.length; S.members = S.members.filter((m) => !m.draft); if (S.members.length !== n) render();
 }
 function contactBlock(m) {
@@ -1859,6 +1897,7 @@ function render() {
     w.innerHTML = `This ${esc(S.preset.label)} list is from before the November 3, 2026 election, when new Florida legislators took office. ${fresh && canEditNow() ? 'Positions and notes for returning members are kept. <button class="btn sm primary" data-act="updateMembers">Update to the current members</button>' : 'Check each member against the official site before relying on it.'}`;
   }
   PAGES.forEach((k) => { $('#' + k + 'Page').hidden = page !== k; });
+  if (LAST_PAGE !== page) { const pg = $('#' + page + 'Page'); if (pg && LAST_PAGE) { pg.classList.remove('pagein'); void pg.offsetWidth; pg.classList.add('pagein'); } LAST_PAGE = page; }
   if (page === 'brief') renderBrief();
   else if (page === 'monitor') { if (typeof renderMonitor === 'function') renderMonitor(); }
   else if (page === 'contacts') { if (typeof renderContacts === 'function') renderContacts(); }

@@ -50,7 +50,9 @@ function block(ls, heading) {
   return { address: addr.join(', ').replace(/\s+,/g, ','), phone: ph };
 }
 // "Ann Lee, Bo Diaz, and Cy Park" -> ["Ann Lee", "Bo Diaz", "Cy Park"]
-export const splitNames = (s) => String(s || '').split(/,\s*(?:and\s+)?|\s+and\s+/).map((x) => x.trim()).filter((x) => /\p{L}/u.test(x));
+// Pages say "Legislative Aide: None" or "Vacant" when there is nobody; those are not people.
+const NOBODY = /^(none|vacant|tbd|tba|n\/?a|to be (announced|determined)|position vacant|unassigned)\.?$/i;
+export const splitNames = (s) => String(s || '').split(/,\s*(?:and\s+)?|\s+and\s+/).map((x) => x.trim()).filter((x) => /\p{L}/u.test(x) && !NOBODY.test(x));
 
 // ---------- standard email formats ----------
 const plain = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z-]/g, '').toLowerCase();

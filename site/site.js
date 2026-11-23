@@ -1,83 +1,98 @@
 'use strict';
-// The website's behavior: the House filling in as you scroll, a dotted
-// progress line, the header changing when you leave the dark chamber, and
-// the contact form.
+// The website's motion: the hero letters spreading out, the House filling in
+// and then ticking over like a live count, things easing in as you scroll,
+// callouts drawing onto the screenshot, the carousel and the rotating tabs.
 document.documentElement.classList.add('js');
 
 (function () {
-  const $ = (s, el = document) => el.querySelector(s);
+  const $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const body = document.body;
 
-  // ---------- the House, 435 seats ----------
-  // An illustration, drawn the way the app draws a chamber: seats in rows,
-  // ordered left to right. Each step of the story colours them a little more.
+  // ---------- announcement ----------
+  const ann = $('#announce');
+  if (ann) {
+    let off = false; try { off = localStorage.getItem('hc.announce') === ann.dataset.v; } catch (_) { /* private mode */ }
+    if (off) ann.classList.add('gone');
+    $('button', ann)?.addEventListener('click', () => { ann.classList.add('gone'); try { localStorage.setItem('hc.announce', ann.dataset.v); } catch (_) { /* fine */ } });
+  }
+
+  // ---------- header: light once you leave the dark hero ----------
+  const hero = $('.hero');
+  const onScroll = () => { if (hero) body.classList.toggle('past', scrollY > hero.offsetHeight - 80); };
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+  if (!hero) body.classList.add('past');
+
+  // ---------- the House: 435 seats ----------
   const svg = $('#chamber');
   if (svg) {
     const NS = 'http://www.w3.org/2000/svg', N = 435, ROWS = 12, CX = 500, CY = 500, R0 = 190, R1 = 480;
-    let seed = 7; const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t ^= t + Math.imul(t ^ (t >>> 7), 61 | t); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    const radii = Array.from({ length: ROWS }, (_, k) => R0 + ((R1 - R0) * k) / (ROWS - 1));
-    const sum = radii.reduce((a, b) => a + b, 0);
-    const counts = radii.map((r) => Math.round((N * r) / sum));
-    counts[ROWS - 1] += N - counts.reduce((a, b) => a + b, 0);
+    let seed = 11; const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t ^= t + Math.imul(t ^ (t >>> 7), 61 | t); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const radii = Array.from({ length: ROWS }, (_, k) => R0 + ((R1 - R0) * k) / (ROWS - 1)), sum = radii.reduce((a, b) => a + b, 0);
+    const counts = radii.map((r) => Math.round((N * r) / sum)); counts[ROWS - 1] += N - counts.reduce((a, b) => a + b, 0);
     const seats = [];
-    radii.forEach((r, k) => {
-      for (let j = 0; j < counts[k]; j++) {
-        const a = Math.PI * (1 - j / (counts[k] - 1));
-        seats.push({ a, x: CX + r * Math.cos(a), y: CY - r * Math.sin(a) });
-      }
-    });
+    radii.forEach((r, k) => { for (let j = 0; j < counts[k]; j++) { const a = Math.PI * (1 - j / (counts[k] - 1)); seats.push({ a, x: CX + r * Math.cos(a), y: CY - r * Math.sin(a) }); } });
     seats.sort((p, q) => q.a - p.a);
     svg.setAttribute('viewBox', '0 0 1000 510');
-    const dots = seats.map((s) => { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', s.x.toFixed(1)); c.setAttribute('cy', s.y.toFixed(1)); c.setAttribute('r', '7.6'); svg.appendChild(c); return c; });
-    // Where each seat leans: mostly by side of the chamber, with some crossing over.
-    const lean = seats.map((_, i) => i / N + (rnd() - 0.5) * 0.5);
-    const order = lean.map((v, i) => [v, i]).sort((p, q) => q[0] - p[0]).map(([, i]) => i);
-    const YES = 209, UND = 15, NEED = 218;
-    const yes = new Set(order.slice(0, YES)), und = new Set(order.slice(YES, YES + UND));
-    const cos = new Set([...yes].filter(() => rnd() < 0.13).slice(0, 26));
-    const next = [...und].slice(0, 3);
-    const read = $('#stRead'), big = read && $('b', read), small = read && $('span', read);
-    const STEPS = [
-      { cls: () => '', b: N, s: 'Seats in the House' },
-      { cls: (i) => (cos.has(i) ? 'y' : ''), b: cos.size, s: `Yes so far · ${NEED} needed` },
-      { cls: (i) => (yes.has(i) ? 'y' : und.has(i) ? 'u' : 'n'), b: YES, s: `Yes · ${N - YES - UND} no · ${UND} undecided` },
-      { cls: (i) => (yes.has(i) ? 'y' : und.has(i) ? 'u glow' : 'n'), b: NEED - YES, s: `Votes short · ${UND} undecided to work`, focus: true },
-    ];
-    let cur = -1;
-    const count = (to) => {
-      if (!big) return;
-      const from = +big.dataset.v || 0; big.dataset.v = to;
-      if (reduced) { big.textContent = to; return; }
-      const t0 = performance.now(), step = (t) => { const k = Math.min(1, (t - t0) / 700), e = 1 - Math.pow(1 - k, 3); big.textContent = Math.round(from + (to - from) * e); if (k < 1) requestAnimationFrame(step); };
-      requestAnimationFrame(step);
+    const dots = seats.map((s) => { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', s.x.toFixed(1)); c.setAttribute('cy', s.y.toFixed(1)); c.setAttribute('r', '7.4'); svg.appendChild(c); return c; });
+    const lean = seats.map((_, i) => i / N + (rnd() - 0.5) * 0.45), order = lean.map((v, i) => [v, i]).sort((p, q) => q[0] - p[0]).map(([, i]) => i);
+    const state = new Array(N).fill('');
+    order.forEach((i, k) => { state[i] = k < 212 ? 'y' : k < 232 ? 'u' : 'n'; });
+    const paint = (i) => dots[i].setAttribute('class', state[i]);
+    const start = () => {
+      hero && hero.classList.add('ready');
+      if (reduced) { dots.forEach((_, i) => paint(i)); return; }
+      // fill in a sweep from left to right, then tick over like a live count
+      dots.forEach((_, i) => setTimeout(() => paint(i), 700 + i * 4));
+      setTimeout(() => {
+        setInterval(() => {
+          if (document.hidden) return;
+          const i = order[200 + Math.floor(rnd() * 45)], d = dots[i];
+          d.setAttribute('class', 'flash');
+          setTimeout(() => { state[i] = state[i] === 'u' ? (rnd() < 0.6 ? 'y' : 'n') : 'u'; paint(i); }, 180);
+        }, 900);
+      }, 700 + N * 4 + 400);
     };
-    const show = (n) => {
-      if (n === cur) return; cur = n; const st = STEPS[n];
-      dots.forEach((d, i) => d.setAttribute('class', `${st.cls(i)}${st.focus && next.includes(i) ? ' next' : ''}`.trim()));
-      svg.classList.toggle('focus', Boolean(st.focus));
-      count(st.b); if (small) small.textContent = st.s;
-    };
-    show(0);
-    const steps = [...document.querySelectorAll('.step')];
-    if ('IntersectionObserver' in window) {
-      const io = new IntersectionObserver((es) => es.forEach((e) => {
-        if (!e.isIntersecting) return;
-        steps.forEach((s) => s.classList.toggle('on', s === e.target));
-        show(Math.min(STEPS.length - 1, +e.target.dataset.step || 0));
-      }), { rootMargin: '-40% 0px -40% 0px' });
-      steps.forEach((s) => io.observe(s));
-    } else { steps.forEach((s) => s.classList.add('on')); show(STEPS.length - 1); }
-  }
+    if (document.readyState === 'complete') start(); else addEventListener('load', start);
+  } else if (hero) hero.classList.add('ready');
 
-  // ---------- reading progress and the header ----------
-  const bar = $('.progress i'), story = $('.story'), body = document.body;
-  const onScroll = () => {
-    const h = document.documentElement.scrollHeight - innerHeight;
-    if (bar) bar.style.width = `${h > 0 ? Math.min(100, (scrollY / h) * 100) : 0}%`;
-    if (story && body.classList.contains('home')) body.classList.toggle('past', scrollY > story.offsetTop + story.offsetHeight - 70);
-  };
-  addEventListener('scroll', onScroll, { passive: true }); addEventListener('resize', onScroll); onScroll();
-  if (!story) body.classList.add('past');
+  // ---------- ease in on scroll ----------
+  const io = 'IntersectionObserver' in window && !reduced ? new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -12% 0px' }) : null;
+  $$('[data-in], .callouts, .closing').forEach((el) => (io ? io.observe(el) : el.classList.add('in')));
+
+  // ---------- carousel ----------
+  $$('.carousel').forEach((car) => {
+    const slides = $$('.slide', car), bar = car.nextElementSibling, dots = bar ? $$('.dots i', bar) : [], num = bar && $('.num', bar), line = $('.progress-line', car);
+    let k = 0, timer = null; const T = 5200;
+    const show = (n) => {
+      k = (n + slides.length) % slides.length;
+      slides.forEach((s, i) => s.classList.toggle('on', i === k)); dots.forEach((d, i) => d.classList.toggle('on', i === k));
+      if (num) num.textContent = `${String(k + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+      if (line && !reduced) { line.style.transition = 'none'; line.style.width = '0'; void line.offsetWidth; line.style.transition = `width ${T}ms linear`; line.style.width = '100%'; }
+      clearTimeout(timer); if (!reduced) timer = setTimeout(() => show(k + 1), T);
+    };
+    bar && $('[data-dir="-1"]', bar)?.addEventListener('click', () => show(k - 1));
+    bar && $('[data-dir="1"]', bar)?.addEventListener('click', () => show(k + 1));
+    show(0);
+  });
+
+  // ---------- rotating feature tabs ----------
+  $$('.stagebox').forEach((box) => {
+    const tabs = $$('.tabbar [role=tab]', box), panes = $$('.pane', box), glow = $('.glow', box), bar = $('.tabbar', box);
+    const T = 6500; let k = 0, timer = null, hover = false;
+    box.style.setProperty('--t', `${T}ms`);
+    const pick = (n, user) => {
+      k = (n + tabs.length) % tabs.length;
+      tabs.forEach((t, i) => { t.setAttribute('aria-selected', String(i === k)); t.tabIndex = i === k ? 0 : -1; const ii = $('i', t); if (ii) { ii.style.animation = 'none'; void ii.offsetWidth; ii.style.animation = ''; } });
+      panes.forEach((p, i) => p.classList.toggle('on', i === k));
+      const p = panes[k]; if (glow && p) { glow.style.setProperty('--gx', p.dataset.gx || '30%'); glow.style.setProperty('--gy', p.dataset.gy || '60%'); glow.style.setProperty('--gc', p.dataset.gc || 'rgba(19,102,214,.45)'); }
+      clearTimeout(timer); if (!reduced && !user) timer = setTimeout(() => { if (!hover) pick(k + 1); else pick(k); }, T);
+      if (user) { bar.classList.add('paused'); timer = setTimeout(() => { bar.classList.remove('paused'); pick(k + 1); }, T * 1.6); }
+    };
+    tabs.forEach((t, i) => t.addEventListener('click', () => pick(i, true)));
+    box.addEventListener('mouseenter', () => { hover = true; }); box.addEventListener('mouseleave', () => { hover = false; });
+    pick(0);
+  });
 
   // ---------- contact form ----------
   document.addEventListener('submit', async (e) => {
