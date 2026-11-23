@@ -386,6 +386,18 @@ try {
   await alice.page.click('#pgPortfolio');
   await alice.page.waitForFunction(() => /Hearing: HB 77, Commerce committee/.test((document.querySelector('.today') || {}).textContent || ''), null, { timeout: 15000 });
   await alice.page.click('#pgCount'); await settle(alice.page);
+  // Once the House has voted and the bill has gone to the Senate, the House count shows the vote, not odds,
+  // and the Senate is counted as a campaign of its own
+  const voted = await alice.page.evaluate(() => {
+    const keep = STORY.data;
+    STORY.data = { ...keep, timeline: [...(keep.timeline || []), { date: '2026-11-21', chamber: 'lower', kind: 'passed', plain: 'Passed the full House, 80 to 30', text: 'Passed' }], stage: { ...keep.stage, where: 'committee', chamber: 'upper', now: 'In the Senate.' } };
+    render();
+    const out = { label: $('#oddsLabel').textContent, odds: $('#odds').textContent, path: $('#path').textContent, buttons: [...document.querySelectorAll('[data-act=countOther]')].map((b) => b.dataset.label) };
+    STORY.data = keep; render(); return out;
+  });
+  assert.equal(voted.label, 'The Florida House vote'); assert.equal(voted.odds, 'Passed');
+  assert.match(voted.path, /Passed the full House, 80 to 30/); assert.ok(voted.buttons.length >= 2 && voted.buttons.every((l) => l === 'Florida Senate'), voted.buttons.join());
+  assert.notEqual(await alice.page.textContent('#odds'), 'Passed', 'back to odds once the House has not voted');
   // Setup offers only Florida's two chambers, for when the bill crosses over
   await alice.page.click('.tools [data-act=setup]');
   assert.deepEqual(await alice.page.$$eval('#drawer [data-act=pickChamber]', (bs) => bs.map((b) => b.dataset.label)), ['Florida House', 'Florida Senate']);

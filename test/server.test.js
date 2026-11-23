@@ -797,6 +797,13 @@ test('campaign bills are followed: each new step is noted once, for the team and
   assert.deepEqual(news.map((n) => n.plain), ['Approved by the Finance committee, with changes']);
   const s = await t.story('PA', 'HB 9', ''); assert.equal(reads, 2, 'a fresh story comes from what was read'); assert.equal(s.news.length, 1); assert.match(s.stage.now, /floor|full House/);
   assert.equal(t.stageFor({ bill: 'HB 9', leg: 'PA' }).now, s.stage.now);
+  assert.equal(t.todayFor({ bill: 'HB 9', leg: 'PA', chamber: 'lower' }).voted, null, 'no vote yet');
+  // The House passes it and the Senate takes it up: a House count is now the vote, not a forecast
+  steps = [...steps, { date: '2026-05-02', chamber: 'lower', text: 'Final passage', kinds: ['passage'] }, { date: '2026-05-06', chamber: 'upper', text: 'Referred to Finance', kinds: ['referral-committee'] }];
+  await t.refresh('PA', 'HB 9', '');
+  const house = t.todayFor({ bill: 'HB 9', leg: 'PA', chamber: 'lower' });
+  assert.deepEqual([house.voted.kind, house.voted.date, house.chamber], ['passed', '2026-05-02', 'lower']);
+  assert.equal(t.todayFor({ bill: 'HB 9', leg: 'PA', chamber: 'upper' }).voted, null, 'the Senate has not voted');
 });
 
 test('each chamber goes by its own name: House, Assembly, House of Delegates', async () => {

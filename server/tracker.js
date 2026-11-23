@@ -115,7 +115,10 @@ export function makeTracker(cfg, store, { read = billRecord } = {}) {
     const key = billKey(summary.leg, summary.bill, summary.session), row = q.get.get(key);
     if (!row || !row.story) return null;
     const s = JSON.parse(row.story), today = new Date(now - 864e5).toISOString().slice(0, 10);
-    return { bill: s.bill || summary.bill, title: s.title || '', now: s.stage && s.stage.now, where: s.stage && s.stage.where, changedAt: row.changed_at, checkedAt: row.checked_at,
+    // A chamber that has voted, while the bill has moved on, is history rather than a forecast.
+    const st = s.stage || {}, vote = summary.chamber ? (s.timeline || []).filter((t) => (t.kind === 'passed' || t.kind === 'failed') && t.chamber === summary.chamber).pop() : null;
+    const voted = vote && (vote.kind === 'failed' || ['law', 'vetoed'].includes(st.where) || (st.chamber && st.chamber !== summary.chamber)) ? { kind: vote.kind, date: vote.date, plain: vote.plain } : null;
+    return { bill: s.bill || summary.bill, title: s.title || '', now: st.now, where: st.where, changedAt: row.changed_at, checkedAt: row.checked_at, voted, chamber: summary.chamber || '',
       hearings: (s.hearings || []).filter((h) => h.date >= today), news: q.newsSince.all(key, now - 7 * 864e5) };
   }
   return { story, refresh, tick, tracked, newsFor, stageFor, todayFor, addSource };

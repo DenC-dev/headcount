@@ -453,7 +453,8 @@ function storyLine() {
   const counting = campaignChamber().chamber, there = d.stage.chamber, leg = billLegislature();
   const moving = ['filed', 'committee-wait', 'committee', 'floor', 'crossed'].includes(d.stage.where);
   const other = moving && there && counting && there !== counting && S.members.length && canEditNow() ? legChoices(leg).find((c) => c.chamber === there) : null;
-  el.innerHTML = `<span class="dot${fresh ? ' fresh' : ''}"></span><b>${esc(billNumberOf())}</b> ${esc(d.stage.now)} ${page === 'count' ? '<button class="linkbtn" data-page="brief">What happens next</button>' : ''}${other ? ` <button class="btn sm primary" data-act="pickChamber" data-v="${esc(other.value)}" data-label="${esc(other.label)}">Count the ${esc(other.label)}</button>` : ''}`;
+  const done = other ? chamberDone() : null;
+  el.innerHTML = `<span class="dot${fresh ? ' fresh' : ''}"></span><b>${esc(billNumberOf())}</b> ${esc(d.stage.now)} ${page === 'count' ? '<button class="linkbtn" data-page="brief">What happens next</button>' : ''}${done && done.there ? ` ${countThere(done, 'btn sm primary')}` : other ? ` <button class="btn sm primary" data-act="pickChamber" data-v="${esc(other.value)}" data-label="${esc(other.label)}">Count the ${esc(other.label)}</button>` : ''}`;
 }
 const VOTE_WORD = { yes: 'Yes', no: 'No', other: 'Not voting' };
 // A hearing's start as a local time ("1:00 pm" on the date), for calendar links.
@@ -939,6 +940,39 @@ function seatLayout(n) {
   const size = Math.max(2.5, Math.min(gap / 2 - 3, (Math.PI * radii[0]) / Math.max(1, counts[0]) / 2 - 2, 20));
   return { seats: seats.sort((p, q) => q.a - p.a), size };
 }
+// The chamber being counted already voted and the bill has moved on (to the
+// other chamber, the governor, or law): the count here is history, not a forecast.
+function chamberDone() {
+  const d = storyNow(), ch = campaignChamber().chamber;
+  if (!d || !ch) return null;
+  const vote = (d.timeline || []).filter((t) => (t.kind === 'passed' || t.kind === 'failed') && t.chamber === ch).pop();
+  if (!vote) return null;
+  const st = d.stage || {}, over = ['law', 'vetoed'].includes(st.where), moved = st.chamber && st.chamber !== ch;
+  if (!over && !moved && vote.kind !== 'failed') return null; // back here, say for a concurrence vote: the count matters again
+  const there = moved && !over ? legChoices(billLegislature()).find((c) => c.chamber === st.chamber) || null : null;
+  const fromVote = S.members.some((m) => m.history.some((h) => /^From the public record/.test(h.note || '')));
+  const here = (legChoices(billLegislature()).find((c) => c.chamber === ch) || {}).label || 'chamber';
+  return { here, vote, passed: vote.kind === 'passed', there, law: st.where === 'law', vetoed: st.where === 'vetoed', fromVote };
+}
+const countThere = (x, cls = 'linkbtn') => (x && x.there ? `<button class="${cls}" data-act="countOther" data-v="${esc(x.there.value)}" data-ch="${esc(x.there.chamber)}" data-label="${esc(x.there.label)}">Count the ${esc(x.there.label)}</button>` : '');
+const CH_WORD = /(House of Delegates|General Assembly|Assembly|House|Senate|Legislature|Council)$/;
+// A new campaign for the same bill in the other chamber, with the same goal and client.
+// The count that already happened stays where it is.
+async function countOther(v, chamber, label) {
+  const number = billNumberOf(), leg = billLegislature();
+  const have = (ACCOUNT.list || []).find((c) => c.id !== S.id && !c.archived && c.summary && c.summary.bill === number && c.summary.leg === leg && c.summary.chamber === chamber);
+  if (have) return switchTo(`cloud:${have.id}`);
+  const word = (label.match(CH_WORD) || [label])[0], base = S.campaign.bill.replace(/\s*\((House of Delegates|General Assembly|Assembly|House|Senate)\)$/, '');
+  const side = S.campaign.side, client = S.campaign.clientId || '', session = S.brief.session || '';
+  newCampDrawer();
+  $('#n_bill').value = `${clipWords(base, 120)} (${word})`;
+  const ls = $('#n_leg'); if (ls && [...ls.options].some((o) => o.value === leg)) ls.value = leg;
+  nChamberSync(true);
+  const from = $('#n_from'); if (from && [...from.options].some((o) => o.value === v)) { from.value = v; from.dataset.user = '1'; }
+  $('#n_side').value = side; const k = $('#n_client'); if (k && client) k.value = client;
+  if (session) $('#nForm').dataset.session = session;
+  $('#nForm').requestSubmit();
+}
 const HEMI = { id: null, pos: null, short: null };
 function renderHemi(nd) {
   if (!S.members.length) { $('#hemi').innerHTML = SYNC.loading ? '<p class="note" style="margin:24px 0">Loading the campaign.</p>' : chamberPicker(); $('#tally').innerHTML = ''; $('#path').textContent = ''; return; }
@@ -965,9 +999,8 @@ function renderHemi(nd) {
   // Reaching the votes you need, after a change you made: a small celebration.
   if (view === 'floor' && prev && HEMI.short > 0 && short <= 0) setTimeout(() => toast(defeat ? 'You have enough votes to block it.' : 'You have the votes to pass it.'), 250);
   if (view === 'floor') HEMI.short = short;
-  const voted = (() => { const d = storyNow(), ch = campaignChamber().chamber; if (!d || view !== 'floor' || !ch) return null; return (d.timeline || []).filter((t) => (t.kind === 'passed' || t.kind === 'failed') && t.chamber === ch).pop() || null; })();
-  const there = voted && storyNow().stage && storyNow().stage.chamber !== campaignChamber().chamber ? legChoices(billLegislature()).find((c) => c.chamber === storyNow().stage.chamber) : null;
-  const votedLine = voted ? `<span class="voted"><b>${esc(voted.plain)}, ${esc(fmtDay(voted.date))}.</b> Positions here come from that vote.${there ? ` It is now in the ${esc(there.label)}. <button class="linkbtn" data-act="pickChamber" data-v="${esc(there.value)}" data-label="${esc(there.label)}">Count the ${esc(there.label)}</button>` : ''}</span> ` : '';
+  const done = view === 'floor' ? chamberDone() : null;
+  const votedLine = done ? `<span class="voted"><b>${esc(done.vote.plain)}, ${esc(fmtDay(done.vote.date))}.</b> ${done.fromVote ? 'Positions here come from that vote.' : '<button class="linkbtn" data-act="fromRecord">Fill the count from that vote</button>'}${done.there ? ` It is now in the ${esc(done.there.label)}. ${countThere(done)}` : ''}</span> ` : '';
   $('#path').innerHTML = votedLine || (short > 0
     ? `Counting leaners you are <b>${short} short</b> ${defeat ? 'of blocking it ' : ''}${where}. ${play} undecided or leaning against you are in play.`
     : `Counting leaners you have <b>${-short} to spare</b> ${where}${defeat ? ' to block it' : ''}. ${soft} of your votes are only leaning.`);
@@ -978,10 +1011,14 @@ function movesList(days) {
   return out.sort((a, b) => (a.h.d < b.h.d ? 1 : -1));
 }
 function renderOdds(nd, base) {
-  const defeat = dirOf(S) < 0;
-  $('#oddsLabel').textContent = defeat ? 'Odds of defeating it today' : 'Odds of passage today';
+  const defeat = dirOf(S) < 0, done = S.members.length ? chamberDone() : null;
+  $('#oddsLabel').textContent = done ? `The ${done.here} vote` : defeat ? 'Odds of defeating it today' : 'Odds of passage today';
   const oe = $('#odds');
-  if (!S.members.length) { oe.innerHTML = '<small>No members yet</small>'; oe.className = 'big'; delete oe.dataset.v; }
+  if (done) {
+    const win = done.passed !== defeat;
+    oe.innerHTML = done.passed ? 'Passed' : 'Failed'; oe.className = `big word ${win ? 'good' : 'low'}`; delete oe.dataset.v;
+    $('#stages').innerHTML = `<p class="donenote">${esc(done.vote.plain)}, ${esc(fmtDay(done.vote.date))}.${done.there ? ` It may come back here if the ${esc(done.there.label)} changes it.` : ''}</p>${done.there ? `<p>${countThere(done)}</p>` : ''}`;
+  } else if (!S.members.length) { oe.innerHTML = '<small>No members yet</small>'; oe.className = 'big'; delete oe.dataset.v; }
   else {
     const to = pct(goal(S, base.both)), from = oe.dataset.v === undefined || oe.dataset.id !== S.id ? to : +oe.dataset.v;
     oe.dataset.v = to; oe.dataset.id = S.id;
@@ -995,9 +1032,9 @@ function renderOdds(nd, base) {
       requestAnimationFrame(tick);
     }
   }
-  $('#stages').innerHTML = !S.members.length ? '<p class="note">The odds appear once the chamber is loaded and you mark where members stand.</p>' : defeat
+  if (!done) $('#stages').innerHTML = !S.members.length ? '<p class="note">The odds appear once the chamber is loaded and you mark where members stand.</p>' : defeat
     ? `<div class="stage"><b>${nd.c ? pct(1 - base.cm) + '%' : 'n/a'}</b><span>Stopped in committee (${nd.c - nd.needC + 1} of ${nd.c} to block)</span></div><div class="stage"><b>${pct(1 - base.fl)}%</b><span>Fails on the floor (${nd.n - nd.needF + 1} of ${nd.n} to block)</span></div>`
-    : `<div class="stage"><b>${nd.c ? pct(base.cm) + '%' : 'n/a'}</b><span>Clears committee (${nd.needC} of ${nd.c})</span></div><div class="stage"><b>${pct(base.fl)}%</b><span>Wins the floor (${nd.needF} of ${nd.n})</span></div>`;
+    : `<div class="stage"><b>${nd.c ? pct(base.cm) + '%' : 'n/a'}</b><span>Clears committee (needs ${nd.needC} of ${nd.c})</span></div><div class="stage"><b>${pct(base.fl)}%</b><span>Wins the floor (needs ${nd.needF} of ${nd.n})</span></div>`;
   const now = goal(S, base.both);
   const pts = S.trend.slice(-30).concat(S.trend.length && S.trend[S.trend.length - 1].d === today() ? [] : [{ d: today(), p: now }]);
   if (pts.length < 2 || !S.members.length) $('#spark').innerHTML = '<p class="note">The trend appears after a second day of changes.</p>';
@@ -1026,7 +1063,7 @@ function renderCalls(nd, base) {
       <div><button class="who" data-open="${esc(m.id)}">${verbFor(S, m)} ${esc(m.name)}</button> <span class="note">${esc(m.party)}-${esc(m.district)}</span><div class="why">${esc(why)}</div>
       <div class="why">${contact(m).phone ? `<span class="tel">${esc(contact(m).phone)}</span> · ` : ''}${lc ? `last contact ${esc(inDays(lc.d))}` : 'never contacted'}</div></div>
       <div class="gain">+${(r.gain * 100).toFixed(1)} pts<small>movable ${m.mov}/5</small></div></li>`;
-  }).join('') : `<li style="display:block" class="note">${S.members.length ? 'No single meeting moves the odds right now.' : 'The call sheet fills in once the campaign has a roster.'}</li>`;
+  }).join('') : `<li style="display:block" class="note">${!S.members.length ? 'The call sheet fills in once the campaign has a roster.' : chamberDone() ? `The ${esc(chamberDone().here)} has voted. ${chamberDone().there ? countThere(chamberDone()) + ' to plan meetings there.' : ''}` : 'No single meeting moves the odds right now.'}</li>`;
   const plan = $('#plan');
   if (S.plan.length) {
     const p = passage(S.members, nudged(S, baseProbs(S), S.plan), nd).both;
@@ -1056,7 +1093,8 @@ function renderTasks() {
   $('#tasks').innerHTML = (open.length ? open.map(taskHtml).join('') : upcoming().length ? '' : '<li style="display:block" class="note">Nothing scheduled. Request a meeting from any member, or add a follow-up.</li>')
     + (done.length ? `<li style="display:block"><details><summary class="note">Recently completed (${done.length})</summary><ul class="tasks">${done.map(taskHtml).join('')}</ul></details></li>` : '');
 }
-function lastTouch(m) { const h = m.history[m.history.length - 1]; return h ? `${fmtDay(h.d)} · ${h.type}${h.who ? ` (${h.who})` : ''}` : 'None logged'; }
+const touchWord = (h) => (h.type !== 'Count update' ? h.type : /^From the public record/.test(h.note || '') ? 'From the vote record' : `Marked ${POS[h.to] || ''}`.trim());
+function lastTouch(m) { const h = m.history[m.history.length - 1]; return h ? `${fmtDay(h.d)} · ${touchWord(h)}${h.who ? ` (${h.who})` : ''}` : 'None logged'; }
 function renderRows() {
   const q = $('#q').value.trim().toLowerCase(), raw = $('#fGroup').value, fp = /^p\d$/.test(raw) ? raw[1] : '', fg = fp ? '' : raw, so = 'pos';
   const group = (m) => !fg || (fg === 'cmte' ? m.cmte : fg === 'cold' ? !lastContact(m) : fg === 'staff' ? m.staffers.length > 0 : m.party === fg);
@@ -1770,7 +1808,7 @@ function summaryOf(st) {
   return {
     odds: st.members.length ? Math.round(goal(st, base.both) * 1000) / 1000 : null, side: c.side, n: nd.n, needF: nd.needF,
     counts: [4, 3, 2, 1, 0].map((p) => st.members.filter((m) => m.pos === p).length), trend: (st.trend || []).slice(-12),
-    cmteDate: c.cmteDate || '', floorDate: c.floorDate || '', bill: billNumberOf(st), leg: billLegislature(st), session: st.brief.session || '', billStatus: st.brief.status || '',
+    cmteDate: c.cmteDate || '', floorDate: c.floorDate || '', bill: billNumberOf(st), leg: billLegislature(st), chamber: campaignChamber(st).chamber || '', session: st.brief.session || '', billStatus: st.brief.status || '',
     requested: ups.filter((x) => x.status === 'requested').length, meetings: ups.filter((x) => x.status === 'invited').slice(0, 3).map((x) => ({ start: x.start, title: x.title })),
     openTasks: st.tasks.filter((t) => !t.done).length, dueDates: st.tasks.filter((t) => !t.done && t.due).map((t) => t.due).sort().slice(0, 20),
   };
@@ -1848,7 +1886,7 @@ function renderBills() {
     return `<tr class="prow" data-bill="${esc(b.id)}" tabindex="0">
       <td><b>${esc(b.number)}</b>${b.priority === 'high' ? ' <span class="prio" title="High priority">High</span>' : ''}<div class="meta">${esc(legLabel(b.juris))}${b.session ? ` · ${esc(b.session)}` : ''}</div></td>
       <td><span class="btitle">${esc(clipWords(b.title || '', 120))}</span>${b.client ? `<div class="meta">${esc(b.client)}</div>` : ''}</td>
-      <td><span class="pchip ${tone}">${pw}</span>${b.campaignId ? `<div class="meta">${b.odds !== null && b.odds !== undefined ? `${pct(b.odds)}% odds` : 'Whip count'}</div>` : ''}</td>
+      <td><span class="pchip ${tone}">${pw}</span>${b.campaignId ? `<div class="meta">${b.voted ? esc(b.voted.plain) : b.odds !== null && b.odds !== undefined ? `${pct(b.odds)}% odds` : 'Whip count'}</div>` : ''}</td>
       <td>${b.now ? `${fresh ? '<span class="dot fresh" title="Moved in the last three days"></span> ' : ''}${esc(b.now)}` : '<span class="meta">Reading the record</span>'}${h ? `<div class="hmeta">Hearing ${esc(fmtDay(h.date))}${h.time ? `, ${esc(h.time)}` : ''}${h.committee ? ` · ${esc(h.committee)}` : ''}</div>` : ''}</td></tr>`; };
   el.innerHTML = `${BILLS.adding ? billAddForm() : ''}
     <div class="panel">
@@ -1920,7 +1958,7 @@ function renderPeople() {
     && (!f.show || (f.show === 'with' ? p.withUs > 0 && !p.against : f.show === 'against' ? p.against > 0 : f.show === 'split' ? p.withUs > 0 && p.against > 0 : f.show === 'never' ? !p.lastContact : true)));
   list = list.slice().sort((a, b) => f.sort === 'score' ? (b.score ?? -1) - (a.score ?? -1) : f.sort === 'contact' ? String(a.lastContact || '0').localeCompare(String(b.lastContact || '0')) : f.sort === 'name' ? a.name.localeCompare(b.name) : b.bills - a.bills || a.name.localeCompare(b.name));
   const total = PEOPLE_PAGE.list.length, never = PEOPLE_PAGE.list.filter((p) => !p.lastContact).length, allies = PEOPLE_PAGE.list.filter((p) => p.score !== null && p.score >= 75).length;
-  const chip = (x) => `<span class="pchip ${x.withUs ? 'good' : x.against ? 'bad' : 'muted'}" title="${esc(x.campaign)}">${esc(x.word)}</span>`;
+  const chip = (x) => `<span class="pchip ${x.withUs ? 'good' : x.against ? 'bad' : 'muted'}" title="${esc(x.campaign)}: ${esc(x.word)}">${esc(clipWords(String(x.campaign).split(':')[0], 18))} · ${esc(x.word)}</span>`;
   el.innerHTML = total ? `<div class="panel">
     <div class="row"><span class="label">Everyone in your campaigns</span><span class="note">${total} legislators</span></div>
     <div class="bstats"><div><b>${total}</b><span>legislators</span></div><div><b class="${allies ? 'good' : ''}">${allies}</b><span>with you on most bills</span></div><div><b class="${never ? 'warn' : ''}">${never}</b><span>no contact logged yet</span></div></div>
@@ -2019,11 +2057,12 @@ function renderPortfolio() {
     const cnt = s.counts || [0, 0, 0, 0, 0], have = s.side === 'defeat' ? cnt[3] + cnt[4] : cnt[0] + cnt[1];
     const target = s.side === 'defeat' ? (s.n || 0) - (s.needF || 0) + 1 : s.needF;
     const overdue = (s.dueDates || []).filter((d) => dayDiff(d) < 0).length, next = s.cmteDate || s.floorDate ? soonest(s) : null;
+    const tday = todayOf(c.id) || {}, ch = s.chamber || tday.chamber, house = ch && s.leg ? (legChoices(s.leg).find((x) => x.chamber === ch) || {}).label || '' : '', voted = tday.voted;
     return `<tr class="prow" data-opencamp="${esc(c.id)}" tabindex="0">
       <td><b>${esc(c.name || 'Untitled campaign')}</b>${c.archived ? ' <span class="status">Archived</span>' : ''}${c.visibility === 'team' ? ' <span class="status">Closed</span>' : ''}<div class="meta">${esc((todayOf(c.id) || {}).now || s.billStatus || '')}</div></td>
       <td>${esc(c.client || '')}</td>
-      <td class="num">${odds === null || odds === undefined ? '<span class="note">No roster</span>' : `<b>${pct(odds)}%</b>${delta ? ` <span class="${delta > 0 ? 'good' : 'bad'}">${delta > 0 ? '+' : ''}${delta}</span>` : ''}<div class="meta">${s.side === 'defeat' ? 'to defeat' : 'to pass'}</div>`}</td>
-      <td class="num">${s.n ? `<b>${have}</b> of ${target}<div class="meta">${have >= target ? 'enough' : `${target - have} short`}</div>` : ''}</td>
+      <td class="num">${voted ? `<b class="${(voted.kind === 'passed') === (s.side !== 'defeat') ? 'good' : 'bad'}">${voted.kind === 'passed' ? 'Passed' : 'Failed'}</b><div class="meta">${esc(fmtDay(voted.date))}</div>` : odds === null || odds === undefined ? '<span class="note">No roster</span>' : `<b>${pct(odds)}%</b>${delta ? ` <span class="${delta > 0 ? 'good' : 'bad'}">${delta > 0 ? '+' : ''}${delta}</span>` : ''}<div class="meta">${s.side === 'defeat' ? 'to defeat' : 'to pass'}</div>`}</td>
+      <td class="num">${s.n ? `<b>${have}</b> ${s.side === 'defeat' ? 'against' : 'for'} · ${target} needed<div class="meta">${house ? `${esc(house)} · ` : ''}${voted ? 'voted' : have >= target ? 'enough' : `${target - have} short`}</div>` : ''}</td>
       <td>${next ? `${esc(next[0])}<div class="meta">${esc(fmtDay(next[1]))}, ${esc(inDays(next[1]))}</div>` : ''}</td>
       <td class="num">${(s.meetings || []).length ? `${s.meetings.length} booked` : ''}${s.requested ? `<div class="meta">${s.requested} requested</div>` : ''}</td>
       <td class="num">${overdue ? `<span class="bad"><b>${overdue} overdue</b></span>` : ''}${s.openTasks ? `<div class="meta">${s.openTasks} open</div>` : ''}</td>
@@ -2962,6 +3001,7 @@ document.addEventListener('click', async (e) => {
       nChamberSync(true); $('#nSearch').hidden = true; $('#nMsg').textContent = `${t.dataset.n} chosen. Check the chamber, then create the campaign.`; return;
     }
     case 'glossary': { const m = $('#helpMenu'); if (m) m.open = false; return glossaryDrawer(t.dataset.term || ''); }
+    case 'countOther': t.disabled = true; try { await countOther(t.dataset.v, t.dataset.ch, t.dataset.label || ''); } finally { t.disabled = false; } return;
     case 'pickChamber': {
       const v = t.dataset.v, label = t.dataset.label || t.textContent.trim(); if (!v) return;
       if (S.members.length && !S.example && !sure(`Replace the current roster with the ${label}`)) return;

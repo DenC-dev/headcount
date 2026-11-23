@@ -9,6 +9,12 @@ import { STATES, parseFederal, parseState } from './bills.js';
 // public read-only page (or embedded on a website) for clients and members.
 
 export const POSITIONS = ['support', 'oppose', 'watch', 'amend'];
+// Which chamber a campaign counts, for summaries saved before they said so.
+const PRESET_CHAMBER = { ushouse: 'lower', ussenate: 'upper', flhouse: 'lower', flsenate: 'upper' };
+export function campaignChamber(store, cid) {
+  try { const r = store.q.record.get(cid, 'meta', 'meta'), d = r ? JSON.parse(r.data) : {}, j = (d.campaign || {}).juris; return (j && j.chamber) || PRESET_CHAMBER[(d.preset || {}).key] || ''; } catch (_) { return ''; }
+}
+const withChamber = (store, cid, s) => (s && !s.chamber ? { ...s, chamber: campaignChamber(store, cid) } : s);
 export const PRIORITIES = ['high', 'normal', 'low'];
 const normNumber = (juris, n) => { if (juris === 'US') { const f = parseFederal(n); return f ? f.label : null; } return parseState(n); };
 
@@ -53,9 +59,9 @@ export function makeBillList(cfg, store, tracker) {
   // Campaign bills belong on the list too, with their whip count's side.
   function campaignRows(oid, uid) {
     return store.listOrgCampaigns(oid, uid).filter((c) => !c.archived && c.summary && c.summary.bill && c.summary.leg).map((c) => {
-      const s = c.summary, t = tracker.todayFor(s) || {};
+      const s = c.summary, t = tracker.todayFor(withChamber(store, c.id, s)) || {};
       return { id: `c:${c.id}`, campaignId: c.id, juris: s.leg, number: s.bill, session: s.session || '', title: c.name.replace(/^[^:]*:\s*/, ''), position: s.side === 'defeat' ? 'oppose' : 'support', priority: 'high',
-        clientId: c.clientId || '', client: c.client || '', odds: typeof s.odds === 'number' ? s.odds : null, now: t.now || s.billStatus || '', where: t.where || '', hearings: t.hearings || [], news: (t.news || []).slice(-3), changedAt: t.changedAt || null, checkedAt: t.checkedAt || null };
+        clientId: c.clientId || '', client: c.client || '', odds: typeof s.odds === 'number' ? s.odds : null, voted: t.voted || null, now: t.now || s.billStatus || '', where: t.where || '', hearings: t.hearings || [], news: (t.news || []).slice(-3), changedAt: t.changedAt || null, checkedAt: t.checkedAt || null };
     });
   }
 

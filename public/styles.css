@@ -547,3 +547,6 @@ td.chips { line-height: 2; }
 .hub.small.ok { fill: var(--yes); font-weight: 600; } .hub.small.short { fill: var(--und); font-weight: 600; }
 .panel.chamber .hub.small.ok { fill: #2fc08f; } .panel.chamber .hub.small.short { fill: #e9bd45; }
 #path .voted { display: block; margin-bottom: 6px; color: var(--fg); }
+
+#odds.word{font-size:clamp(44px,6vw,72px);letter-spacing:-.02em}
+#stages .donenote{margin:6px 0 4px;color:var(--fg)}
