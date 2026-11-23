@@ -412,6 +412,95 @@ function autoChamber() {
     catch (e) { const m = $('#q_msg'); if (m) m.textContent = e.message; }
   }, 200);
 }
+// ---------- the bill's story: where it stands, each step in plain words ----------
+let STORY = { key: '', data: null, loading: false, err: '' };
+function storyKey(st = S) {
+  const leg = billLegislature(st), num = billNumberOf(st), cfg = CLOUD.config || {};
+  if (!leg || !num || !signedIn() || !CLOUD.api || !cfg.bills || !(leg === 'US' ? cfg.bills.federal : cfg.bills.states)) return '';
+  return `${leg}|${num}|${st.brief.session || ''}`;
+}
+async function loadStory(force = false) {
+  const key = storyKey(); if (!key) return;
+  if (!force && (STORY.key === key && (STORY.data || STORY.loading || STORY.err))) return;
+  const [jurisdiction, number, session] = key.split('|');
+  STORY = { key, data: STORY.key === key ? STORY.data : null, loading: true, err: '' };
+  try {
+    const q = new URLSearchParams({ jurisdiction, number }); if (session) q.set('session', session); if (force) q.set('fresh', '1');
+    const r = await CLOUD.api('GET', `/api/bills/story?${q}`);
+    if (STORY.key === key) STORY = { key, data: r, loading: false, err: '' };
+    if (STORY.key === storyKey()) hearingDate(r);
+  } catch (e) { if (STORY.key === key) STORY = { key, data: STORY.data, loading: false, err: e.message }; }
+  if (STORY.key === storyKey()) { if (page === 'brief' && !briefEdit) renderBrief(); storyLine(); }
+}
+// When the bill is on a committee's agenda in the chamber being counted, that
+// date becomes the campaign's committee vote (unless someone set a later one).
+function hearingDate(d) {
+  if (!canEditNow() || S.example) return;
+  const ch = campaignChamber().chamber, h = upcomingHearings(d).find((x) => !x.chamber || !ch || x.chamber === ch);
+  if (!h || S.campaign.cmteDate === h.date || (S.campaign.cmteDate && dayDiff(S.campaign.cmteDate) >= 0 && S.campaign.cmteFrom !== 'agenda')) return;
+  S.campaign.cmteDate = h.date; S.campaign.cmteFrom = 'agenda';
+  if (!S.campaign.committee && h.committee) S.campaign.committee = h.committee.slice(0, 80);
+  commit(`On the agenda: ${h.committee || 'committee'} ${fmtDay(h.date)}`);
+}
+const storyNow = () => (STORY.key && STORY.key === storyKey() && STORY.data ? STORY.data : null);
+// One line under the campaign title: where the bill is now.
+function storyLine() {
+  const el = $('#hNow'); if (!el) return;
+  const d = storyNow(), show = d && d.stage && d.stage.now && (page === 'count' || page === 'brief');
+  el.hidden = !show; if (!show) return;
+  const fresh = d.changedAt && Date.now() - d.changedAt < 3 * 864e5;
+  // Counting one chamber while the bill sits in the other: offer the switch.
+  const counting = campaignChamber().chamber, there = d.stage.chamber, leg = billLegislature();
+  const moving = ['filed', 'committee-wait', 'committee', 'floor', 'crossed'].includes(d.stage.where);
+  const other = moving && there && counting && there !== counting && S.members.length && canEditNow() ? legChoices(leg).find((c) => c.chamber === there) : null;
+  el.innerHTML = `<span class="dot${fresh ? ' fresh' : ''}"></span><b>${esc(billNumberOf())}</b> ${esc(d.stage.now)} ${page === 'count' ? '<button class="linkbtn" data-page="brief">What happens next</button>' : ''}${other ? ` <button class="btn sm primary" data-act="pickChamber" data-v="${esc(other.value)}" data-label="${esc(other.label)}">Count the ${esc(other.label)}</button>` : ''}`;
+}
+const VOTE_WORD = { yes: 'Yes', no: 'No', other: 'Not voting' };
+// A hearing's start as a local time ("1:00 pm" on the date), for calendar links.
+function hearingStart(h) {
+  const m = /(\d{1,2})(?::(\d{2}))?\s*([ap])/i.exec(h.time || '');
+  let hr = m ? Number(m[1]) % 12 + (/p/i.test(m[3]) ? 12 : 0) : 9; const mn = m && m[2] ? Number(m[2]) : 0;
+  return new Date(`${h.date}T${String(hr).padStart(2, '0')}:${String(mn).padStart(2, '0')}:00`);
+}
+function hearingLink(h, bill) {
+  if (!CLOUD.calendarLink) return '';
+  const start = hearingStart(h), end = new Date(start.getTime() + 2 * 3600e3);
+  return CLOUD.calendarLink('google', { title: `${bill}: ${h.committee ? `${h.committee} committee` : 'Committee'} hearing`, description: `${bill} is on the agenda.${h.room ? ` Room: ${h.room}.` : ''}`, start, end, location: h.room || '', attendees: [], meet: false });
+}
+const upcomingHearings = (d) => ((d && d.hearings) || []).filter((h) => dayDiff(h.date) >= 0).sort((a, b) => a.date.localeCompare(b.date));
+function storyPanelHtml() {
+  const key = storyKey();
+  if (!key) return '';
+  const d = storyNow();
+  if (!d) return `<section class="story"><span class="label">Where it stands</span><p class="note">${STORY.err && STORY.key === key ? `${esc(STORY.err)} <button class="linkbtn" data-act="storyAgain">Try again</button>` : 'Reading the bill\'s record'}</p></section>`;
+  const st = d.stage || { steps: [], step: 0 }, checked = d.checkedAt ? new Date(d.checkedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const steps = `<ol class="stepper" aria-label="How far the bill has come">${st.steps.map((x, i) => `<li class="${i < st.step || (st.done && i === st.step) ? 'done' : i === st.step ? (st.stopped ? 'stopped' : 'here') : ''}"><span>${esc(x)}</span></li>`).join('')}</ol>`;
+  const stops = (d.stops || []).length ? `<h3>Committee stops</h3><div class="tablewrap"><table class="stops"><thead><tr><th>Committee</th><th>Sent there</th><th>Result</th><th>Committee vote</th></tr></thead><tbody>${d.stops.map((x, i) => `<tr>
+      <td><b>${esc(x.committee)}</b><div class="meta">${esc(chamberWord(x.chamber))}</div></td><td>${esc(fmtDay(x.referred))}</td>
+      <td>${x.result === 'pending' ? `<span class="status st-wait">Waiting</span>${x.hearing && dayDiff(x.hearing.date) >= 0 ? ` <span class="meta">On the agenda ${esc(fmtDay(x.hearing.date))}${x.hearing.time ? `, ${esc(x.hearing.time)}` : ''}</span>` : ''}` : x.result === 'approved' ? `<span class="status st-ok">Approved</span> <span class="meta">${esc(fmtDay(x.resultDate))}</span>` : `<span class="status st-bad">${x.result === 'unfavorable' ? 'Unfavorable' : 'Stopped'}</span> <span class="meta">${esc(fmtDay(x.resultDate))}</span>`}</td>
+      <td>${x.vote ? `${x.vote.yes} yes, ${x.vote.no} no ${x.vote.members && x.vote.members.length ? `<details class="votes"><summary>Who voted how</summary><ul>${x.vote.members.map((m) => `<li><span class="v-${esc(m.v)}">${esc(VOTE_WORD[m.v] || m.v)}</span> ${esc(m.name)}</li>`).join('')}</ul></details>` : ''}` : '<span class="meta">Not recorded</span>'}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const floor = (d.floor || []).length ? `<h3>Floor votes</h3><ul class="floorvotes">${d.floor.map((v) => `<li><b>${esc(chamberWord(v.chamber))}</b>, ${esc(fmtDay(v.date))}: ${v.yes} yes, ${v.no} no${v.motion ? ` <span class="meta">· ${esc(v.motion)}</span>` : ''}</li>`).join('')}</ul>` : '';
+  const news = (d.news || []).filter((n) => Date.now() - n.foundAt < 14 * 864e5);
+  const tl = (d.timeline || []).slice().reverse();
+  return `<section class="story" aria-label="Where the bill stands">
+    <div class="row"><span class="label">Where it stands</span><button class="btn sm" data-act="storyAgain" title="Read the record again now">Check now</button></div>
+    ${steps}
+    <p class="now"><b>Now.</b> ${esc(st.now || 'No recorded actions yet.')}</p>
+    ${st.last && st.last.plain && !(st.now || '').startsWith(st.last.plain) ? `<p class="next"><b>Latest.</b> ${esc(st.last.plain)}${st.last.date ? `, ${esc(fmtDay(st.last.date))}` : ''}.</p>` : ''}
+    ${st.next ? `<p class="next"><b>Next.</b> ${esc(st.next)}</p>` : ''}
+    ${upcomingHearings(d).map((h) => `<div class="hearing"><span class="label">On the agenda</span><p><b>${esc(h.committee ? `${h.committee}${/committee/i.test(h.committee) ? '' : ' committee'}` : 'Committee')}</b>, ${esc(fmtDay(h.date))}${h.time ? ` at ${esc(h.time)}` : ''}${h.room ? `, ${esc(h.room)}` : ''} <span class="meta">(${esc(inDays(h.date))})</span></p><a class="btn sm" href="${esc(hearingLink(h, billNumberOf()))}" target="_blank" rel="noopener">Add to Google Calendar</a></div>`).join('')}
+    ${news.length ? `<div class="news"><span class="label">New in the last two weeks</span><ul>${news.map((n) => `<li><span class="meta">${esc(fmtDay(n.date))}</span> ${esc(n.plain)}</li>`).join('')}</ul></div>` : ''}
+    ${stops}${floor}
+    ${tl.length ? `<details class="timeline"><summary>Every step (${tl.length})</summary><ol>${tl.map((t) => `<li${t.minor ? ' class="minor"' : ''}><span class="when">${esc(fmtDay(t.date))}</span><span class="what">${esc(t.plain)}${t.plain !== t.text ? `<span class="official">Official record: ${esc(t.text)}</span>` : ''}</span></li>`).join('')}</ol></details>` : ''}
+    <p class="note">From ${esc(d.source || 'the public record')}${checked ? `, checked ${esc(checked)}` : ''}. Headcount rereads it every few hours and tells your team when the bill moves.${d.stale ? ` Last check failed: ${esc(d.stale)}` : ''}</p>
+  </section>`;
+}
+function chamberWord(ch) {
+  const leg = billLegislature();
+  if (leg === 'US') return ch === 'upper' ? 'U.S. Senate' : 'U.S. House';
+  const c = chambersOf(leg).find((x) => x.chamber === ch) || chambersOf(leg)[0];
+  return c ? c.label : ch === 'upper' ? 'Senate' : 'House';
+}
 // An empty campaign asks which chamber to count, and loads it in one step.
 function chamberPicker() {
   if (!canEditNow()) return '<p class="note" style="margin:24px 0">No members yet.</p>';
@@ -1044,7 +1133,8 @@ function renderBrief() {
   const b = S.brief, ro = !canEditNow(), cfg = CLOUD.config || {};
   const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft it with AI</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}${typeof intelBriefButtons === 'function' ? intelBriefButtons(b) : ''}</div>`;
   const empty = `<div class="brief" style="text-align:center"><h2 style="font-size:22px">No brief for this bill yet</h2><p class="note" style="margin:0 auto">Look up the bill to fill in its sponsors, status and official summary, then add your summary, talking points and likely objections. Every meeting brief and meeting request for this campaign uses it.</p></div>`;
-  $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty);
+  $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + storyPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty);
+  loadStory();
   if (briefPanel === 'lookup' && $('#lk_j')) $('#lk_j').value = guessJurisdiction();
 }
 function briefPlain(b) {
@@ -1634,7 +1724,7 @@ function summaryOf(st) {
   return {
     odds: st.members.length ? Math.round(goal(st, base.both) * 1000) / 1000 : null, side: c.side, n: nd.n, needF: nd.needF,
     counts: [4, 3, 2, 1, 0].map((p) => st.members.filter((m) => m.pos === p).length), trend: (st.trend || []).slice(-12),
-    cmteDate: c.cmteDate || '', floorDate: c.floorDate || '', bill: st.brief.number || '', billStatus: st.brief.status || '',
+    cmteDate: c.cmteDate || '', floorDate: c.floorDate || '', bill: billNumberOf(st), leg: billLegislature(st), session: st.brief.session || '', billStatus: st.brief.status || '',
     requested: ups.filter((x) => x.status === 'requested').length, meetings: ups.filter((x) => x.status === 'invited').slice(0, 3).map((x) => ({ start: x.start, title: x.title })),
     openTasks: st.tasks.filter((t) => !t.done).length, dueDates: st.tasks.filter((t) => !t.done && t.due).map((t) => t.due).sort().slice(0, 20),
   };
@@ -1664,6 +1754,17 @@ function gettingStarted() {
 }
 
 // ---------- portfolio ----------
+// Today: where every bill stands, hearings coming up and what moved this week,
+// from the server's own reading of each bill.
+let TODAY = { oid: '', at: 0, bills: null };
+async function loadToday() {
+  if (!ORG || !signedIn() || ORG.role === 'guest' || typeof wsPath !== 'function') return;
+  if (TODAY.oid === ORG.id && Date.now() - TODAY.at < 5 * 60e3) return;
+  const oid = ORG.id; TODAY = { oid, at: Date.now(), bills: TODAY.oid === oid ? TODAY.bills : null };
+  try { const r = await CLOUD.api('GET', wsPath('/today')); if (TODAY.oid === oid) { TODAY.bills = r.bills || []; if (page === 'portfolio') renderPortfolio(); } }
+  catch (_) { /* the portfolio works without it */ }
+}
+const todayOf = (id) => (TODAY.bills || []).find((b) => b.id === id);
 function renderPortfolio() {
   const el = $('#portfolioPage');
   if (!signedIn()) { el.innerHTML = `<div class="panel empty">${CLOUD.canSignIn() ? 'Sign in to see every campaign in your workspace in one place. <button class="btn sm primary" data-act="signin">Sign in</button>' : 'The portfolio is part of the full version of Headcount, with accounts. This free version keeps everything in your browser.'}</div>`; return; }
@@ -1677,7 +1778,10 @@ function renderPortfolio() {
     [['Committee vote', s.cmteDate], ['Floor vote', s.floorDate]].forEach(([k, d]) => { if (d && dayDiff(d) >= 0 && dayDiff(d) <= 14) upcoming.push({ when: d + 'T00:00', label: `${k}: ${c.name}`, id: c.id, day: true }); });
     (s.meetings || []).forEach((m) => { const t = new Date(m.start); if (t > Date.now() && t - Date.now() < 7 * 864e5) upcoming.push({ when: m.start, label: m.title, id: c.id }); });
   });
+  (TODAY.oid === ORG.id && TODAY.bills || []).forEach((b) => (b.hearings || []).forEach((h) => { if (dayDiff(h.date) >= 0 && dayDiff(h.date) <= 14) upcoming.push({ when: hearingStart(h).toISOString(), label: `Hearing: ${b.bill}, ${h.committee ? `${h.committee}${/committee/i.test(h.committee) ? '' : ' committee'}` : 'committee'}${h.room ? ` (${h.room})` : ''}`, id: b.id, hearing: h, bill: b.bill, day: !h.time }); }));
   upcoming.sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  const moved = (TODAY.oid === ORG.id && TODAY.bills || []).flatMap((b) => (b.news || []).map((n) => ({ ...n, id: b.id, bill: b.bill }))).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 10);
+  loadToday();
   const row = (c) => {
     const s = c.summary || {}, odds = s.odds, wk = (s.trend || []).filter((t) => t.d <= daysAgo(7)).slice(-1)[0];
     const delta = odds !== null && odds !== undefined && wk ? Math.round((odds - wk.p) * 100) : null;
@@ -1685,7 +1789,7 @@ function renderPortfolio() {
     const target = s.side === 'defeat' ? (s.n || 0) - (s.needF || 0) + 1 : s.needF;
     const overdue = (s.dueDates || []).filter((d) => dayDiff(d) < 0).length, next = s.cmteDate || s.floorDate ? soonest(s) : null;
     return `<tr class="prow" data-opencamp="${esc(c.id)}" tabindex="0">
-      <td><b>${esc(c.name || 'Untitled campaign')}</b>${c.archived ? ' <span class="status">Archived</span>' : ''}${c.visibility === 'team' ? ' <span class="status">Closed</span>' : ''}<div class="meta">${esc(s.billStatus || '')}</div></td>
+      <td><b>${esc(c.name || 'Untitled campaign')}</b>${c.archived ? ' <span class="status">Archived</span>' : ''}${c.visibility === 'team' ? ' <span class="status">Closed</span>' : ''}<div class="meta">${esc((todayOf(c.id) || {}).now || s.billStatus || '')}</div></td>
       <td>${esc(c.client || '')}</td>
       <td class="num">${odds === null || odds === undefined ? '<span class="note">No roster</span>' : `<b>${pct(odds)}%</b>${delta ? ` <span class="${delta > 0 ? 'good' : 'bad'}">${delta > 0 ? '+' : ''}${delta}</span>` : ''}<div class="meta">${s.side === 'defeat' ? 'to defeat' : 'to pass'}</div>`}</td>
       <td class="num">${s.n ? `${have} / ${target}` : ''}</td>
@@ -1695,7 +1799,10 @@ function renderPortfolio() {
       <td class="meta">${esc(fmtDate(c.updatedAt))}</td></tr>`;
   };
   el.innerHTML = `${gettingStarted()}
-    ${upcoming.length ? `<div class="panel"><span class="label">Coming up</span><ul class="moves">${upcoming.slice(0, 8).map((u) => `<li><span class="when">${esc(u.day ? fmtDay(u.when.slice(0, 10)) : fmtWhen(u.when))}</span> · <button class="linkbtn" data-opencamp="${esc(u.id)}">${esc(u.label)}</button></li>`).join('')}</ul></div>` : ''}
+    ${upcoming.length || moved.length ? `<div class="today">
+      ${upcoming.length ? `<div class="panel"><span class="label">Coming up</span><ul class="moves">${upcoming.slice(0, 8).map((u) => `<li><span class="when">${esc(u.day ? fmtDay(u.when.slice(0, 10)) : fmtWhen(u.when))}</span> · <button class="linkbtn" data-opencamp="${esc(u.id)}">${esc(u.label)}</button>${u.hearing ? ` <a class="meta" href="${esc(hearingLink(u.hearing, u.bill))}" target="_blank" rel="noopener">Add to calendar</a>` : ''}</li>`).join('')}</ul></div>` : ''}
+      ${moved.length ? `<div class="panel"><span class="label">Bills that moved this week</span><ul class="moves">${moved.map((n) => `<li><span class="when">${esc(fmtDay(n.date))}</span> · <button class="linkbtn" data-opencamp="${esc(n.id)}">${esc(n.bill)}</button> ${esc(n.plain)}</li>`).join('')}</ul></div>` : ''}
+    </div>` : ''}
     <div class="panel">
       <div class="row"><span class="label">Campaigns in ${esc(ORG.name)}</span>${ORG.role !== 'guest' ? '<button class="btn sm primary" data-act="newCamp">New campaign</button>' : ''}</div>
       <div class="filters">
@@ -1944,9 +2051,11 @@ function render() {
     $('#hBill').textContent = c.bill || (SYNC.loading ? 'Loading' : 'Untitled campaign');
     const camp = S.cloud && ACCOUNT.list.find((e) => e.id === S.id);
     $('#hSub').textContent = `${S.example ? 'Example with invented members · ' : ''}${camp && camp.visibility === 'team' ? 'Closed · ' : ''}${dirOf(S) < 0 ? 'Working to defeat' : 'Working to pass'}${clientOf() ? ` for ${clientOf()}` : ''} · ${c.chamber || 'Chamber not set'} · ${nd.n} members, ${nd.needF} to pass`;
+    storyLine(); if (page === 'count') loadStory();
     $('#hDates').textContent = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]} ${inDays(x[1])} (${fmtDay(x[1])})`).concat((() => { const n = S.tasks.filter((t) => !t.done && t.due && dayDiff(t.due) < 0).length; return n ? [`${n} follow-up${n > 1 ? 's' : ''} overdue`] : []; })()).join(' · ');
   } else {
     $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : page === 'monitor' ? 'Monitor' : page === 'contacts' ? 'Contacts' : ORG ? `${ORG.name} settings` : 'Workspace';
+    storyLine();
     $('#hSub').textContent = ORG ? `${ORG.plan.label} · ${ROLE_LABEL[ORG.role]}${ORG.role === 'guest' ? ': you see only the campaigns you were added to' : ''}` : '';
     $('#hDates').textContent = '';
   }
@@ -2534,6 +2643,7 @@ document.addEventListener('click', async (e) => {
     case 'briefPanelOff': briefPanel = ''; return renderBrief();
     case 'briefCopy': return copyText(briefPlain(S.brief));
     case 'briefPrint': return window.print();
+    case 'storyAgain': STORY.err = ''; loadStory(true); return;
     case 'pickChamber': {
       const v = t.dataset.v, label = t.dataset.label || t.textContent.trim(); if (!v) return;
       if (S.members.length && !S.example && !sure(`Replace the current roster with the ${label}`)) return;
@@ -2663,9 +2773,19 @@ document.addEventListener('submit', async (e) => {
     if (!leg) { $('#nMsg').textContent = 'Choose the legislature, or "Something else" to add the members yourself.'; return; }
     if (!from) { $('#nMsg').textContent = 'Choose the chamber you are counting.'; return; }
     if (!['copy', 'blank'].includes(leg)) { st.campaign.leg = leg; try { localStorage.setItem('headcount.leg', leg); } catch (_) { /* fine */ } }
+    let pick = from;
     if (/^[ps]:/.test(from)) {
       const btn = e.target.querySelector('button.primary'); btn.disabled = true; $('#nMsg').textContent = 'Loading the members';
-      try { await fillChamber(from, st); } catch (err) { btn.disabled = false; $('#nMsg').textContent = err.message; return; }
+      // A bill that has crossed to the other chamber is counted there, unless the person picked the chamber themselves.
+      const choose = $('#n_from'), number = billNumberOf(st), cfg = CLOUD.config || {};
+      if (choose && choose.dataset.user !== '1' && number && signedIn() && cfg.bills && (leg === 'US' ? cfg.bills.federal : cfg.bills.states)) {
+        try {
+          const r = await Promise.race([CLOUD.api('GET', `/api/bills/story?${new URLSearchParams({ jurisdiction: leg, number })}`), new Promise((_, no) => setTimeout(() => no(new Error('slow')), 6000))]);
+          const now = r && r.stage && ['filed', 'committee-wait', 'committee', 'floor', 'crossed'].includes(r.stage.where) && r.stage.chamber, c = now && legChoices(leg).find((x) => x.chamber === now);
+          if (c) pick = c.value;
+        } catch (_) { /* the bill number decides */ }
+      }
+      try { await fillChamber(pick, st); } catch (err) { btn.disabled = false; $('#nMsg').textContent = err.message; return; }
     }
     if (from === 'copy') {
       Object.assign(st.campaign, { chamber: S.campaign.chamber, rule: S.campaign.rule, me: S.campaign.me }, st.campaign.clientId ? {} : { client: S.campaign.client, clientId: S.campaign.clientId || '' });

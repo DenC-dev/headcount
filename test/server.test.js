@@ -691,6 +691,63 @@ test('rosters for any state chamber load from Open States with offices', async (
 test('the bill record says where it started and which chamber has it now', async () => {
   const r = ok(await api('mona', 'GET', '/api/bills/record?jurisdiction=FL&number=HB%20123'));
   assert.equal(r.origin, 'lower'); assert.equal(r.now, 'upper', 'it crossed over to the Senate');
+  assert.deepEqual(r.story.stage.steps, ['Introduced', 'House committee', 'House vote', 'Senate', 'Governor', 'Law'], 'Florida has two chambers');
+});
+
+test('the bill story in plain words: steps, committee stops, where it is and what is next', async () => {
+  const { billStory } = await import('../server/story.js');
+  const pa = billStory([
+    { date: '2026-03-20', chamber: 'lower', text: 'Referred to Finance', kinds: ['referral-committee'] },
+    { date: '2026-04-15', chamber: 'lower', text: 'Reported as amended', kinds: ['amendment-passage', 'committee-passage'] },
+    { date: '2026-04-15', chamber: 'lower', text: 'Laid on the table', kinds: [] },
+    { date: '2026-06-08', chamber: 'lower', text: 'Re-committed to Appropriations', kinds: ['referral-committee'] },
+    { date: '2026-06-09', chamber: 'lower', text: 'Re-reported as committed', kinds: ['committee-passage'] },
+    { date: '2026-06-09', chamber: 'lower', text: 'Third consideration and final passage', kinds: ['passage', 'reading-3'] },
+    { date: '2026-06-18', chamber: 'upper', text: 'Referred to Finance', kinds: ['referral-committee'] },
+  ], [{ chamber: 'lower', motion: 'Committee vote (Finance): Report Bill As Amended', date: '2026-04-15', votes: [{ name: 'Ann Lee', v: 'yes' }, { name: 'Bo Diaz', v: 'no' }] },
+    { chamber: 'lower', motion: 'FINAL PASSAGE', date: '2026-06-09', stance: 'for', votes: [{ name: 'Ann Lee', v: 'yes' }, { name: 'Bo Diaz', v: 'yes' }, { name: 'Cy Park', v: 'no' }] }],
+  { lower: 'House', upper: 'Senate' }, { origin: 'lower' });
+  assert.deepEqual(pa.timeline.map((t) => t.plain), ['Sent to the Finance committee in the House', 'Approved by the Finance committee, with changes', 'Set aside (tabled). It can be taken up again later',
+    'Sent to the Appropriations committee in the House', 'Approved by the Appropriations committee', 'Passed the full House, 2 to 1', 'Sent to the Finance committee in the Senate']);
+  assert.deepEqual(pa.stops.map((x) => [x.committee, x.chamber, x.result]), [['Finance', 'lower', 'approved'], ['Appropriations', 'lower', 'approved'], ['Finance', 'upper', 'pending']]);
+  assert.deepEqual([pa.stops[0].vote.yes, pa.stops[0].vote.no], [1, 1], 'the House Finance vote, not the Senate one');
+  assert.equal(pa.stage.step, 3); assert.equal(pa.stage.now, 'In the Finance committee of the Senate since June 18.'); assert.match(pa.stage.next, /committee has to vote/);
+  const us = billStory([
+    { date: '2025-05-29', chamber: 'lower', text: 'Introduced in House' },
+    { date: '2025-05-29', chamber: 'lower', text: 'Referred to the House Committee on Financial Services.' },
+    { date: '2025-06-10', chamber: 'lower', text: 'Ordered to be Reported (Amended) by the Yeas and Nays: 32 - 19.' },
+    { date: '2025-07-17', chamber: 'lower', text: 'Passed/agreed to in House: On passage Passed by the Yeas and Nays: 294 - 134.' },
+    { date: '2025-07-17', chamber: 'lower', text: 'Motion to reconsider laid on the table Agreed to without objection.' },
+    { date: '2025-07-18', chamber: 'upper', text: 'Received in the Senate.' },
+  ], [], { lower: 'House', upper: 'Senate' }, { origin: 'lower', executive: 'President' });
+  assert.deepEqual(us.timeline.map((t) => t.kind), ['introduced', 'referred', 'cmte-passed', 'passed', 'procedural', 'other']);
+  assert.equal(us.stage.now, 'Passed the House on July 17. Now in the Senate.'); assert.equal(us.stage.steps.at(-2), 'President');
+  const law = billStory([{ date: '2026-03-01', chamber: 'upper', text: 'Passed Senate', kinds: ['passage'] }, { date: '2026-03-05', chamber: 'lower', text: 'Passed Assembly', kinds: ['passage'] }, { date: '2026-04-01', chamber: '', text: 'Chaptered by Secretary of State', kinds: [] }],
+    [], { lower: 'Assembly', upper: 'Senate' }, { origin: 'upper' });
+  assert.equal(law.stage.now, 'Became law on April 1.'); assert.equal(law.stage.done, true);
+});
+
+test('campaign bills are followed: each new step is noted once, for the team and the digest', async () => {
+  const { makeTracker, billKey } = await import('../server/tracker.js');
+  let steps = [{ date: '2026-03-20', chamber: 'lower', text: 'Referred to Finance', kinds: ['referral-committee'] }];
+  const { billStory } = await import('../server/story.js');
+  let reads = 0;
+  const read = async () => { reads++; return { bill: 'HB 9', source: 'Open States', origin: 'lower', now: 'lower', story: billStory(steps, [], { lower: 'House', upper: 'Senate' }, { origin: 'lower' }) }; };
+  const mem = new DatabaseSync(':memory:');
+  mem.exec("CREATE TABLE campaigns (id TEXT PRIMARY KEY, org_id TEXT, archived INTEGER NOT NULL DEFAULT 0, summary TEXT)");
+  mem.prepare('INSERT INTO campaigns (id, org_id, summary) VALUES (?, ?, ?)').run('c1', 'o1', JSON.stringify({ bill: 'HB 9', leg: 'PA', session: '' }));
+  mem.prepare('INSERT INTO campaigns (id, org_id, summary) VALUES (?, ?, ?)').run('c2', 'o1', JSON.stringify({ bill: 'Budget vote' }));
+  const t = makeTracker({ openStatesKey: 'k', congressKey: '' }, { db: mem }, { read });
+  assert.deepEqual([...t.tracked().keys()], [billKey('PA', 'HB 9', '')], 'only campaigns with a bill and a legislature');
+  const T0 = Date.now() - 20 * 3600e3;
+  assert.equal(await t.tick(T0), 1); assert.equal(t.newsFor({ bill: 'HB 9', leg: 'PA' }, 0).length, 0, 'the first read is the starting point');
+  assert.equal(await t.tick(T0 + 1000), 0, 'read again only after eight hours');
+  steps = [...steps, { date: '2026-04-15', chamber: 'lower', text: 'Reported as amended', kinds: ['committee-passage'] }];
+  assert.equal(await t.tick(Date.now()), 1);
+  const news = t.newsFor({ bill: 'H.B. 9', leg: 'pa' }, 0);
+  assert.deepEqual(news.map((n) => n.plain), ['Approved by the Finance committee, with changes']);
+  const s = await t.story('PA', 'HB 9', ''); assert.equal(reads, 2, 'a fresh story comes from what was read'); assert.equal(s.news.length, 1); assert.match(s.stage.now, /floor|full House/);
+  assert.equal(t.stageFor({ bill: 'HB 9', leg: 'PA' }).now, s.stage.now);
 });
 
 test('each chamber goes by its own name: House, Assembly, House of Delegates', async () => {

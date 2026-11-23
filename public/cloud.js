@@ -395,13 +395,13 @@
   // A new event in Google Calendar or Outlook on the web, filled in. The person
   // checks it and clicks Save; their calendar sends the invitations. Google
   // adds a Meet link (vcon=meet); Outlook offers its Teams switch.
-  C.calendarLink = function (kind, { title, description, start, end, location, attendees }) {
+  C.calendarLink = function (kind, { title, description, start, end, location, attendees, meet = true }) {
     const z = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     if (kind === 'outlook') {
       const q = new URLSearchParams({ subject: title, body: description, startdt: start.toISOString(), enddt: end.toISOString(), location: location || '', to: (attendees || []).join(';'), online: '1' });
       return `https://outlook.office.com/calendar/deeplink/compose?${q}`;
     }
-    const q = new URLSearchParams({ text: title, dates: `${z(start)}/${z(end)}`, details: description, location: location || '', add: (attendees || []).join(','), vcon: 'meet' });
+    const q = new URLSearchParams({ text: title, dates: `${z(start)}/${z(end)}`, details: description, location: location || '', add: (attendees || []).join(','), ...(meet ? { vcon: 'meet' } : {}) });
     return `https://calendar.google.com/calendar/r/eventedit?${q}`;
   };
 

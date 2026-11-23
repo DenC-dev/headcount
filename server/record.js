@@ -1,5 +1,6 @@
 import { HttpError } from './db.js';
-import { parseFederal, parseState, currentCongress, STATES } from './bills.js';
+import { parseFederal, parseState, currentCongress, STATES, chamberOf as namedChamber } from './bills.js';
+import { billStory } from './story.js';
 
 // A bill's public record, for filling in a whip count: who sponsored and
 // cosponsored it, which committee has it and who sits there, and how each
@@ -101,8 +102,10 @@ async function federal(cfg, number, congress) {
   const origin = /^h/.test(p.type) ? 'lower' : 'upper';
   const lastChamber = actions.slice().sort((x, y) => String(y.actionDate).localeCompare(String(x.actionDate)))
     .map((a) => String((a.sourceSystem && a.sourceSystem.name) || '')).map((n) => (/house/i.test(n) ? 'lower' : /senate/i.test(n) ? 'upper' : '')).find(Boolean) || '';
+  const actChamber = (a) => { const n = String((a.sourceSystem && a.sourceSystem.name) || ''); return /house/i.test(n) ? 'lower' : /senate/i.test(n) ? 'upper' : /\bHouse\b/.test(a.text || '') ? 'lower' : /\bSenate\b/.test(a.text || '') ? 'upper' : ''; };
+  const story = billStory(actions.slice().reverse().map((a) => ({ date: a.actionDate, text: a.text, chamber: actChamber(a), kinds: [] })), votes, { lower: 'House', upper: 'Senate' }, { origin, executive: 'President' });
   return {
-    bill: p.label, source: 'Congress.gov', origin, now: lastChamber || origin,
+    bill: p.label, source: 'Congress.gov', origin, now: lastChamber || origin, story,
     sponsors: (main.bill.sponsors || []).map(person),
     cosponsors: cos.filter((s) => !s.sponsorshipWithdrawnDate).map(person),
     committees, votes,
@@ -176,8 +179,11 @@ async function state(cfg, code, number, session) {
   const chambers = ['upper', 'lower', 'legislature'];
   const origin = chambers.find((c) => c === (b.from_organization && b.from_organization.classification)) || '';
   const lastChamber = acts.slice().reverse().map((a) => (a.organization && a.organization.classification) || '').find((c) => chambers.includes(c)) || '';
+  const names = Object.fromEntries((namedChamber(code, 'lower') ? ['lower', 'upper'] : ['legislature']).map((c) => [c, (namedChamber(code, c) || {}).short || ({ upper: 'Senate', legislature: (namedChamber(code, 'legislature') || { label: 'Legislature' }).label.replace(/^Nebraska /, '') })[c] || 'House']));
+  const story = billStory(acts.map((a) => ({ date: a.date, text: a.description, chamber: (a.organization && a.organization.classification) || '', kinds: a.classification || [] })), votes, names,
+    { origin: origin || undefined, unicameral: !namedChamber(code, 'lower'), executive: code === 'DC' ? 'Mayor' : 'governor' });
   return {
-    bill: b.identifier || ident, source: 'Open States', origin, now: lastChamber || origin,
+    bill: b.identifier || ident, source: 'Open States', origin, now: lastChamber || origin, story,
     sponsors: sp.filter((s) => s.primary !== false).map((s) => person(s.person, s.name)),
     cosponsors: sp.filter((s) => s.primary === false).map((s) => person(s.person, s.name)),
     committees, votes: votes.filter((v) => v.votes.length).slice(0, 12),

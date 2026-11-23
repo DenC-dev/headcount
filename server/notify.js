@@ -17,7 +17,7 @@ export function localParts(now, tz) {
   return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour), weekday: p.weekday };
 }
 
-export function makeNotifier(cfg, store, mail, monitor = null) {
+export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
   const app = `${cfg.publicUrl}/app`;
   const user = (id) => store.q.user.get(id);
   const footer = (uid, kind, what) => {
@@ -150,17 +150,19 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
         const votes = [['Committee vote', s.cmteDate], ['Floor vote', s.floorDate]].filter(([, d]) => d && d >= today && d <= addDays(today, 7));
         const meetings = (s.meetings || []).filter((m) => { const d = String(m.start).slice(0, 10); return d >= today && d <= addDays(today, 7); });
         const then = (s.trend || []).filter((t) => t.d <= since).slice(-1)[0];
+        const moved = tracker ? tracker.newsFor(s, Date.parse(`${since}T00:00:00Z`)) : [];
         const delta = typeof s.odds === 'number' && then ? Math.round((s.odds - then.p) * 100) : 0;
-        if (!moves.length && !contacts && !overdue.length && !soon.length && !votes.length && !meetings.length && !delta) continue;
+        if (!moves.length && !contacts && !overdue.length && !soon.length && !votes.length && !meetings.length && !delta && !moved.length) continue;
         const lines = [];
         if (typeof s.odds === 'number') lines.push(`Odds ${s.side === 'defeat' ? 'of defeating it' : 'of passage'}: ${Math.round(s.odds * 100)}%${delta ? ` (${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} point${Math.abs(delta) === 1 ? '' : 's'})` : ''}`);
+        moved.forEach((x) => lines.push(`The bill: ${x.plain}${x.date ? ` (${fmtDay(x.date)})` : ''}`));
         if (moves.length) lines.push(`Moved: ${moves.slice(0, 6).join('; ')}${moves.length > 6 ? `; and ${moves.length - 6} more` : ''}`);
         if (contacts) lines.push(`${plural(contacts, 'contact')} logged by the team`);
         votes.forEach(([k, d]) => lines.push(`${k} ${fmtDay(d)}`));
         meetings.forEach((m) => lines.push(`Meeting: ${m.title}, ${new Date(m.start).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: u.tz || 'UTC' })}`));
         overdue.forEach((t) => lines.push(`Overdue follow-up: ${t.text} (was due ${fmtDay(t.due)})`));
         soon.forEach((t) => lines.push(`Follow-up due ${fmtDay(t.due)}: ${t.text}`));
-        totals.moves += moves.length; totals.overdue += overdue.length; totals.contacts += contacts; totals.votes += votes.length;
+        totals.bills = (totals.bills || 0) + moved.length; totals.moves += moves.length; totals.overdue += overdue.length; totals.contacts += contacts; totals.votes += votes.length;
         sections.push({ title: c.name, sub: [store.clientName(c.client_id), o.name].filter(Boolean).join(' · '), lines });
       }
     }
@@ -175,7 +177,7 @@ export function makeNotifier(cfg, store, mail, monitor = null) {
       }
     }
     if (!sections.length) return null;
-    const bits = [totals.moves && plural(totals.moves, 'position change'), totals.monitor && plural(totals.monitor, 'new Monitor item'), totals.votes && plural(totals.votes, 'vote') + ' coming up', totals.overdue && plural(totals.overdue, 'overdue follow-up'), totals.contacts && plural(totals.contacts, 'contact')].filter(Boolean);
+    const bits = [totals.bills && plural(totals.bills, 'bill update'), totals.moves && plural(totals.moves, 'position change'), totals.monitor && plural(totals.monitor, 'new Monitor item'), totals.votes && plural(totals.votes, 'vote') + ' coming up', totals.overdue && plural(totals.overdue, 'overdue follow-up'), totals.contacts && plural(totals.contacts, 'contact')].filter(Boolean);
     const heading = period === 'daily' ? `Headcount for ${fmtDay(today)}` : `Your week in Headcount`;
     return {
       subject: `${heading}: ${bits.slice(0, 2).join(', ') || plural(sections.length, 'campaign') + ' to look at'}`,

@@ -15,6 +15,7 @@ import { makeNotifier } from './notify.js';
 import { makeAuthenticator, verifyGoogleIdToken } from './auth.js';
 import { lookupBill, STATES, CHAMBERS } from './bills.js';
 import { billRecord } from './record.js';
+import { makeTracker } from './tracker.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
@@ -214,7 +215,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   mail = makeMailer(config, store);
   // Email that could not be sent before a restart (a new password, a fixed setting) gets another try right away.
   try { store.q.retryEmails.run(Date.now() - 3 * 864e5); } catch (_) { /* older database */ }
-  const notifier = makeNotifier(config, store, mail, monitor), actions = makeActionCenter(config, store, mail);
+  const tracker = makeTracker(config, store);
+  const notifier = makeNotifier(config, store, mail, monitor, tracker), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
   // Rebuilds the Florida lists and official staff from the official sources
   async function refreshOfficialLists(sources) {
@@ -227,9 +229,11 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     console.log('Official lists refreshed:', report.join('; '));
     return report;
   }
-  const jobs = { officials: refreshOfficialLists, backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now) };
+  const jobs = { officials: refreshOfficialLists, backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now), bills: (now) => tracker.tick(now) };
   const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
   if (!config.monitorOff) timers.push(setInterval(() => jobs.monitor(Date.now()).catch((e) => console.error('Monitor job failed', e)), Math.min(config.monitorEvery, 15 * 60 * 1000)));
+  // Campaign bills are reread in the background, a few every half hour.
+  if (!config.monitorOff) timers.push(setInterval(() => jobs.bills(Date.now()).catch((e) => console.error('Bill tracking failed', e)), 30 * 60e3));
   if (backupDir) { timers.push(setInterval(dailyBackup, 24 * 3600e3)); setTimeout(dailyBackup, 60e3).unref(); }
   if (!config.officialsOff) {
     const due = () => { try { return Date.now() - fs.statSync(path.join(OFFICIALS, 'rosters.json')).mtimeMs > 6 * 864e5; } catch (_) { return true; } };
@@ -419,6 +423,8 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['POST', `/api/campaigns/${C}/invites`, async (m, x) => store.createInvite(m[1], x.user.id, (await x.body()).role)],
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
+    ['GET', `/api/workspaces/${W}/today`, async (m, x) => ({ bills: store.listOrgCampaigns(m[1], x.user.id).filter((c) => !c.archived).map((c) => { const t = tracker.todayFor(c.summary); return t ? { id: c.id, name: c.name, ...t } : null; }).filter(Boolean) })],
+    ['GET', '/api/bills/story', async (m, x) => { limit('story:' + x.user.id, 60); const q = x.url.searchParams; return tracker.story(q.get('jurisdiction'), q.get('number'), q.get('session') || '', { force: q.get('fresh') === '1' }); }],
     ['GET', '/api/bills/record', async (m, x) => { limit('record:' + x.user.id, 30); const q = x.url.searchParams; return billRecord(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
     ['POST', '/api/bills/draft', async (m, x) => {
       if (!draftBrief) throw new HttpError(501, 'AI drafting is not turned on. An admin can add it under Admin settings, AI writing help.');
@@ -552,7 +558,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     } else if (req.method === 'GET' || req.method === 'HEAD') serveStatic(req, res, url.pathname);
     else send(res, 405, { error: 'Method not allowed.' });
   });
-  server.jobs = jobs; server.mail = mail; server.notifier = notifier; server.monitor = monitor;
+  server.jobs = jobs; server.mail = mail; server.notifier = notifier; server.monitor = monitor; server.tracker = tracker;
   server.on('close', () => timers.forEach(clearInterval));
   return server;
 }

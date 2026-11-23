@@ -35,6 +35,13 @@ const mock = http.createServer((req, res) => {
     }
     // Monitor, intelligence, rosters and the action center
     if (u.pathname === '/v3/bill') return j(200, { bills: [{ congress: 119, type: 'HR', number: '1234', title: 'Rural Broadband Access Act', latestAction: { actionDate: '2026-11-16', text: 'Referred to the Subcommittee on Communications and Technology.' }, updateDate: '2026-11-16T10:00:00Z' }, { congress: 119, type: 'S', number: '99', title: 'Highway Funding Act', latestAction: { actionDate: '2026-11-15', text: 'Introduced.' }, updateDate: '2026-11-15T10:00:00Z' }] });
+    if (u.pathname === '/bills' && u.searchParams.get('identifier') === 'HB 77') {
+      const d = new Date(Date.now() + 5 * 864e5), mdy = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(2)}`;
+      return j(200, { results: [{ id: 'ocd-bill/fl77', identifier: 'HB 77', title: 'Broadband Infrastructure Grants', session: '2026', from_organization: { classification: 'lower' }, sponsorships: [], votes: [], actions: [
+        { date: '2026-11-10', description: 'Filed', organization: { classification: 'lower' }, classification: ['filing'] },
+        { date: '2026-11-12', description: 'Referred to Commerce Committee; Appropriations Committee', organization: { classification: 'lower' }, classification: ['referral-committee'] },
+        { date: '2026-11-20', description: `On Committee agenda-- Commerce Committee, ${mdy}, 1:30 pm, 212 Knott Building`, organization: { classification: 'lower' }, classification: [] }] }] });
+    }
     if (u.pathname === '/bills' && u.searchParams.get('q')) return j(200, { results: [{ id: 'ocd-bill/fl77', identifier: 'HB 77', title: 'Broadband Infrastructure Grants', session: '2026', jurisdiction: { id: 'ocd-jurisdiction/country:us/state:fl/government' }, latest_action_description: 'Filed', latest_action_date: '2026-11-10', updated_at: '2026-11-10T00:00:00', openstates_url: 'https://openstates.org/fl/bills/2026/HB77/' }] });
     if (u.pathname === '/people') return j(200, { pagination: { max_page: 1 }, results: [
       { id: 'ocd-person/aaaa-1111', name: 'Corey Simon', party: 'Republican', current_role: { district: '3' }, email: 'simon.corey@flsenate.gov', offices: [{ classification: 'capitol', address: '404 S. Monroe St., Tallahassee, FL 32399', voice: '850-487-5003' }] },
@@ -368,6 +375,17 @@ try {
   await alice.page.locator('.item:has-text("HB 77") [data-x=itemCampaign]').click();
   await alice.page.waitForFunction(() => S.cloud && /^HB 77/.test(S.campaign.bill) && page === 'count' && S.members.length > 100 && S.campaign.juris && S.campaign.juris.state === 'FL' && S.campaign.juris.chamber === 'lower', null, { timeout: 20000 });
   await settle(alice.page);
+  // Where the bill stands, read from its history: in committee, on next week's agenda
+  const hearingDay = await alice.page.evaluate(() => { const d = new Date(Date.now() + 5 * 864e5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  await alice.page.waitForFunction((day) => S.campaign.cmteDate === day && S.campaign.cmteFrom === 'agenda', hearingDay, { timeout: 15000 });
+  assert.match(await alice.page.locator('#hNow').innerText(), /HB 77\s+In the Commerce committee of the House since/i);
+  await alice.page.click('#pgBrief');
+  await alice.page.waitForSelector('section.story .hearing');
+  assert.match(await alice.page.locator('section.story').innerText(), /On the agenda[\s\S]*Commerce Committee[\s\S]*1:30 pm, 212 Knott Building/i);
+  assert.match(await alice.page.locator('section.story .stepper li.here').innerText(), /House committee/i);
+  await alice.page.click('#pgPortfolio');
+  await alice.page.waitForFunction(() => /Hearing: HB 77, Commerce committee/.test((document.querySelector('.today') || {}).textContent || ''), null, { timeout: 15000 });
+  await alice.page.click('#pgCount'); await settle(alice.page);
   // Setup offers only Florida's two chambers, for when the bill crosses over
   await alice.page.click('.tools [data-act=setup]');
   assert.deepEqual(await alice.page.$$eval('#drawer [data-act=pickChamber]', (bs) => bs.map((b) => b.dataset.label)), ['Florida House', 'Florida Senate']);
@@ -405,7 +423,7 @@ try {
   await alice.page.waitForFunction(() => /1 supporter took action/.test(document.querySelector('#drawer').textContent));
   await alice.page.keyboard.press('Escape'); await alice.page.click('[data-page=count]');
   await alice.page.waitForFunction(() => /1 constituent letter/.test(document.querySelector('#rows').textContent));
-  log('ok  campaign started from a Monitor bill: the Florida House loaded without asking, then the Senate; a supporter found their senator and the letter went out');
+  log('ok  campaign started from a Monitor bill: the Florida House loaded without asking, its hearing on the agenda, then the Senate; a supporter found their senator and the letter went out');
 
   // Keyboard on a whip row: open, type to jump, Enter; Escape closes the list but not the drawer around it
   const rowBtn = alice.page.locator('#rows .cs-trigger').first();
