@@ -1,4 +1,5 @@
 import { HttpError } from './db.js';
+import { pacedFetch } from './pace.js';
 
 // Bill lookup for briefs: Congress.gov for federal bills, Open States for state
 // bills. Both need free API keys (see README). Results are normalized into the
@@ -71,7 +72,7 @@ export function stripHtml(html) {
 
 async function getJson(url, headers) {
   let res;
-  try { res = await fetch(url, { headers: { Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(15000) }); }
+  try { res = await pacedFetch(url, { headers: { Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(15000) }); }
   catch (_) { throw new HttpError(502, 'The bill database could not be reached. Try again shortly.'); }
   if (res.status === 404) return null;
   if (res.status === 401 || res.status === 403) throw new HttpError(502, 'The bill service did not accept the key. An admin can check it under Admin settings.');

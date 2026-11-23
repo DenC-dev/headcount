@@ -723,6 +723,10 @@ test('legislators across campaigns: one profile, a position per bill, history wi
   const pr = ok(await api('mona', 'GET', `/api/workspaces/${MW}/legislators/${encodeURIComponent(jo.key)}`));
   assert.equal(pr.history.length, 2); assert.deepEqual(pr.committees, ['Commerce (Chair)']); assert.equal(pr.staff[0].email, 'park.lee@flsenate.gov');
   assert.equal((await api('mona', 'GET', `/api/workspaces/${MW}/legislators/${encodeURIComponent('r:nobody')}`)).status, 404);
+  const rn = ok(await api('mona', 'PATCH', `/api/workspaces/${MW}/legislators/${encodeURIComponent(jo.key)}`, { name: 'Joanne Ward' }));
+  assert.equal(rn.changed, 2, 'fixed in both campaigns');
+  assert.equal(ok(await api('mona', 'GET', `/api/workspaces/${MW}/legislators/${encodeURIComponent(jo.key)}`)).name, 'Joanne Ward');
+  assert.equal((await api('mona', 'PATCH', `/api/workspaces/${MW}/legislators/${encodeURIComponent(jo.key)}`, { name: 'J' })).status, 400);
   for (const id of ['leg1', 'leg2']) ok(await api('mona', 'DELETE', `/api/campaigns/${id}`));
 });
 
@@ -925,6 +929,21 @@ test('server settings: operator only, secrets encrypted and hidden, applied live
   const op = (await post('/api/auth/login', { email: 'olivia@firm.test', password: 'the final password' }, '')).body.token;
   const ivy = (await post('/api/auth/login', { email: 'ivy@firm.test', password: 'ivy long password' }, '')).body.token;
   assert.equal((await fetch(base + '/api/settings', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403, 'only the operator');
+  // Product numbers and feedback: the app reports a few moments, people send notes, the operator sees it all
+  ok({ status: (await post('/api/events', { name: 'record_filled' }, ivy)).status, body: {} });
+  assert.equal((await post('/api/events', { name: 'not_a_real_event' }, ivy)).status, 200, 'unknown events are ignored, not stored');
+  assert.equal((await post('/api/feedback', { message: 'x' }, ivy)).status, 400);
+  assert.equal((await post('/api/feedback', { message: 'The odds confused me at first', page: 'count' }, ivy)).status, 200);
+  assert.equal((await fetch(base + '/api/admin/metrics', { headers: { Authorization: 'Bearer ' + ivy } })).status, 403, 'numbers are for the operator');
+  const mx = await (await fetch(base + '/api/admin/metrics', { headers: { Authorization: 'Bearer ' + op } })).json();
+  assert.ok(mx.weekly.active[0] >= 1); assert.ok(mx.totals.users >= 2); assert.equal(mx.funnel[0][0], 'Signed up'); assert.equal(mx.cohorts.length, 6);
+  assert.equal(mx.feedback[0].message, 'The odds confused me at first'); assert.equal(mx.feedback[0].page, 'count');
+  assert.ok(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE name = 'record_filled'").get().n >= 1);
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE name = 'not_a_real_event'").get().n, 0);
+  // Someone who signed up two days ago and never started a campaign gets one reminder
+  store.db.prepare("INSERT INTO events (at, day, user_id, name) VALUES (?, '2000-01-01', 'lonely-user', 'signup')").run(Date.now() - 30 * 3600e3);
+  server.jobs.nudges(Date.now()); server.jobs.nudges(Date.now());
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE name = 'nudged' AND user_id = 'lonely-user'").get().n, 1, 'reminded once, not twice');
   const get = async () => (await fetch(base + '/api/settings', { headers: { Authorization: 'Bearer ' + op } })).json();
   let s = await get();
   assert.equal(s.fields.congressKey.env, true, 'set by the environment in this test run, so locked');

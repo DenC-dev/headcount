@@ -1,4 +1,5 @@
 import { HttpError } from './db.js';
+import { pacedFetch } from './pace.js';
 import { fedBill, STATES, chamberOf, parseFederal } from './bills.js';
 
 // Public data behind the Monitor, the intelligence panels and the action
@@ -23,7 +24,7 @@ async function getJson(url, { headers, method = 'GET', body, name, notFound = nu
     const again = attempt < 1;
     let res;
     try {
-      res = await fetch(url, { method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
+      res = await pacedFetch(url, { method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
     } catch (_) { if (again) { await pause(); continue; } throw new HttpError(502, `${name} could not be reached. Try again shortly.`); }
     if (res.status === 401 || res.status === 403) throw new HttpError(502, `${name} did not accept the key. An admin can check it under Admin settings.`);
     if (res.status === 429) throw new HttpError(429, `${name} is busy right now. Try again later.`);

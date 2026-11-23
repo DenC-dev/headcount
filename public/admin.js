@@ -147,6 +147,7 @@ function drawSettings(open) {
       <p class="note wide">Messages sent with the Questions form on the website. This address is never shown on the site. If it's empty, they go to the sales address, or to you.</p>
       ${field('salesEmail', 'Sales address shown on the website', { ph: 'sales@yourfirm.com' })}${field('supportEmail', 'Help address shown in the app and emails', { ph: 'help@yourfirm.com' })}
       <div class="wide"><button class="btn primary">Save</button></div></form></details>
+  ${o('usage', false)}<summary>How Headcount is used</summary><div id="svUsage"><p class="note">Opening this counts sign-ups, first counts, invitations and who came back.</p></div></details>
   ${o('leads', false)}<summary>Messages from the website</summary><div id="svLeads"><p class="note">Opening this lists the questions people sent from the website.</p></div></details>
   ${o('customers', false)}<summary>Customers</summary><div id="svCustomers"><p class="note">Opening this lists every workspace using your Headcount.</p></div></details>
   ${o('backups', false)}<summary>Backups</summary>
@@ -208,6 +209,25 @@ document.addEventListener('click', async (e) => {
   if (x === 'svBackup') { try { await CLOUD.download('/api/settings/backup', `headcount-backup-${today()}.db`); toast('Backup downloaded'); } catch (err) { fail(err); } }
 });
 document.addEventListener('toggle', async (e) => {
+  const ub = e.target.querySelector && e.target.querySelector('#svUsage');
+  if (ub && e.target.open) {
+    ub.innerHTML = '<p class="note">Counting</p>';
+    try {
+      const r = await CLOUD.api('GET', '/api/admin/metrics'), w = r.weekly, delta = ([a, b]) => (b ? ` <span class="note">(${a >= b ? '+' : ''}${a - b} on the week before)</span>` : '');
+      const top = r.funnel[0][1] || 0, bar = (n) => `<span class="score-bar" style="display:inline-block;vertical-align:middle;width:140px"><i style="width:${top ? Math.round((n / top) * 100) : 0}%"></i></span>`;
+      const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+      ub.innerHTML = `<p class="note">${pl(r.totals.users, 'person', 'people')}, ${pl(r.totals.workspaces, 'workspace', 'workspaces')}, ${pl(r.totals.campaigns, 'campaign', 'campaigns')} in all.</p>
+        <span class="label">The last 7 days</span>
+        <ul class="hist"><li><b>${w.active[0]}</b> ${w.active[0] === 1 ? 'person' : 'people'} used it${delta(w.active)}</li><li><b>${w.signups[0]}</b> signed up${delta(w.signups)}</li><li><b>${w.campaigns[0]}</b> campaign${w.campaigns[0] === 1 ? '' : 's'} started${delta(w.campaigns)}</li><li><b>${w.contacts[0]}</b> contact${w.contacts[0] === 1 ? '' : 's'} logged, <b>${w.meetings[0]}</b> meeting request${w.meetings[0] === 1 ? '' : 's'}${delta(w.meetings)}</li><li><b>${w.bills[0]}</b> bill${w.bills[0] === 1 ? '' : 's'} followed</li></ul>
+        <span class="label">Did new people get to the good part? (signed up in the last 60 days)</span>
+        <table class="ptable"><tbody>${r.funnel.map(([k, n]) => `<tr><td>${esc(k)}</td><td class="num"><b>${n}</b></td><td>${bar(n)} <span class="note">${top ? Math.round((n / top) * 100) : 0}%</span></td></tr>`).join('')}</tbody></table>
+        <span class="label">Who came back, by the week they signed up</span>
+        <table class="ptable"><thead><tr><th>Signed up the week of</th><th class="num">People</th>${[1, 2, 3, 4, 5].map((k) => `<th class="num">Week ${k}</th>`).join('')}</tr></thead><tbody>${r.cohorts.map((c) => `<tr><td>${esc(c.week)}</td><td class="num">${c.people}</td>${[0, 1, 2, 3, 4].map((k) => `<td class="num">${c.people && c.kept[k] !== undefined ? `${c.kept[k]}%` : ''}</td>`).join('')}</tr>`).join('')}</tbody></table>
+        <span class="label">Feedback from the app</span>
+        ${r.feedback.length ? `<ul class="hist">${r.feedback.map((f) => `<li><div class="row"><span><b>${esc(f.name || f.email)}</b>${f.page ? ` · ${esc(f.page)}` : ''}</span><span class="note">${esc(new Date(f.at).toLocaleDateString())}</span></div><div><a href="mailto:${esc(f.email)}">${esc(f.email)}</a></div><div class="note" style="white-space:pre-wrap">${esc(f.message)}</div></li>`).join('')}</ul>` : '<p class="note">None yet. Everyone has a Send feedback button under Help.</p>'}`;
+    } catch (err) { ub.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+    return;
+  }
   const lb = e.target.querySelector && e.target.querySelector('#svLeads');
   if (lb && e.target.open && !lb.dataset.loaded) {
     lb.dataset.loaded = '1'; lb.innerHTML = '<p class="note">Loading</p>';

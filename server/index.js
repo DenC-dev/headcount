@@ -18,6 +18,7 @@ import { billRecord } from './record.js';
 import { makeTracker } from './tracker.js';
 import { makeBillList } from './billlist.js';
 import { makePeople } from './people.js';
+import { makeMetrics, APP_EVENTS } from './metrics.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
@@ -242,7 +243,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   try { store.q.retryEmails.run(Date.now() - 3 * 864e5); } catch (_) { /* older database */ }
   const tracker = makeTracker(config, store), billList = makeBillList(config, store, tracker);
   tracker.addSource(billList.allBills);
-  const people = makePeople(store);
+  const people = makePeople(store), metrics = makeMetrics(store);
   const notifier = makeNotifier(config, store, mail, monitor, tracker, billList), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
   // Rebuilds the Florida lists and official staff from the official sources
@@ -256,8 +257,23 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     console.log('Official lists refreshed:', report.join('; '));
     return report;
   }
-  const jobs = { officials: refreshOfficialLists, backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now), bills: (now) => tracker.tick(now) };
-  const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
+  // A new person who never got to a first count gets one short, useful nudge.
+  function nudges(now = Date.now()) {
+    if (!mail.enabled) return 0; let n = 0;
+    for (const uid of metrics.needNudge(now)) {
+      const u = store.q.user.get(uid); metrics.track('nudged', { uid });
+      if (!u || !u.email || (store.getPrefs(uid) || {}).digest === 'off') continue;
+      const app = appUrl(), first = String(u.name || '').split(' ')[0];
+      mail.queue({ to: u.email, userId: uid, kind: 'nudge', unsubscribeKind: 'digest', dedupe: `nudge:${uid}`, replyTo: notifier.contactInbox() || undefined,
+        subject: 'Count your first bill in Headcount (about ten seconds)',
+        text: `${first ? `Hi ${first},\n\n` : ''}Type a bill number and pick the legislature. Headcount loads every member of the chamber that has the bill, marks sponsors and recorded votes from the public record, and shows the odds of passage.\n\nStart here: ${app}\n\nStuck, or not what you needed? Reply to this email.`,
+        html: htmlEmail({ eyebrow: 'Getting started', heading: 'Count your first bill', preheader: 'Type a bill number. The count fills itself in.', blocks: [{ lead: `${first ? `${first}, t` : 'T'}ype a bill number and pick the legislature. That's it.` }, { list: ['Every member of the chamber that has the bill, with their office and staff', 'Sponsors and recorded votes marked from the public record', 'The odds of passage, and who to see next'] }, { small: 'Stuck, or not what you needed? Reply to this email: it reaches the people who build Headcount.' }], action: { url: app, label: 'Count a bill' } }) });
+      n++;
+    }
+    return n;
+  }
+  const jobs = { officials: refreshOfficialLists, nudges, backup: dailyBackup, mail: () => mail.work(), digests: (now) => notifier.digests(now), trialNotices: (now) => notifier.trialNotices(now), monitor: (now) => monitor.tick(now), bills: (now) => tracker.tick(now) };
+  const timers = [setInterval(() => jobs.mail().catch((e) => console.error(e)), 5000), setInterval(() => { try { jobs.digests(new Date()); jobs.trialNotices(Date.now()); jobs.nudges(Date.now()); } catch (e) { console.error('Digest job failed', e); } }, config.digestEvery)];
   if (!config.monitorOff) timers.push(setInterval(() => jobs.monitor(Date.now()).catch((e) => console.error('Monitor job failed', e)), Math.min(config.monitorEvery, 15 * 60 * 1000)));
   // Campaign bills are reread in the background, a few every half hour.
   if (!config.monitorOff) timers.push(setInterval(() => jobs.bills(Date.now()).catch((e) => console.error('Bill tracking failed', e)), 30 * 60e3));
@@ -390,6 +406,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['DELETE', `/api/workspaces/${W}/members/${U}`, (m, x) => store.removeMember(m[1], x.user.id, m[2])],
     ['GET', `/api/workspaces/${W}/invites`, (m, x) => ({ invites: store.listOrgInvites(m[1], x.user.id) })],
     ['POST', `/api/workspaces/${W}/invites`, async (m, x) => {
+      metrics.track('invite_created', { uid: x.user.id, oid: m[1] });
       const b = await x.body(), inv = store.createOrgInvite(m[1], x.user.id, b.role, b.email);
       const emailed = Boolean(b.send && inv.email) && notifier.orgInvite({ org: store.q.org.get(m[1]), inviter: x.user, email: inv.email, role: inv.role, link: `${config.publicUrl || `http://localhost:${config.port}`}/invite/${inv.code}` });
       return { ...inv, emailed };
@@ -437,7 +454,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['POST', `/api/workspaces/${W}/billing/seats`, async (m, x) => needBilling().setSeats(m[1], x.user, (await x.body()).seats)],
     ['POST', `/api/workspace-invites/${K}`, (m, x) => store.acceptOrgInvite(m[1], x.user)],
     ['POST', `/api/invites/${K}`, (m, x) => store.acceptInvite(m[1], x.user)],
-    ['POST', '/api/campaigns', async (m, x) => { const b = await x.body(); return store.createCampaign(x.user.id, { id: b.id, orgId: b.workspaceId, name: b.name, clientId: b.clientId, visibility: b.visibility }); }],
+    ['POST', '/api/campaigns', async (m, x) => { const b = await x.body(); const r = store.createCampaign(x.user.id, { id: b.id, orgId: b.workspaceId, name: b.name, clientId: b.clientId, visibility: b.visibility }); metrics.track('campaign_created', { uid: x.user.id, oid: b.workspaceId }); return r; }],
     ['PATCH', `/api/campaigns/${C}`, async (m, x) => store.updateCampaign(m[1], x.user.id, await x.body())],
     ['DELETE', `/api/campaigns/${C}`, (m, x) => store.removeCampaign(m[1], x.user.id)],
     ['GET', `/api/campaigns/${C}/records`, (m, x) => store.records(m[1], x.user.id, Math.max(0, Number(x.url.searchParams.get('since')) || 0))],
@@ -449,13 +466,22 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['GET', `/api/campaigns/${C}/action`, (m, x) => actions.get(m[1], x.user.id)],
     ['PUT', `/api/campaigns/${C}/action`, async (m, x) => actions.save(m[1], x.user.id, await x.body(200_000))],
     ['GET', `/api/campaigns/${C}/action/responses`, (m, x) => actions.responses(m[1], x.user.id)],
-    ['POST', `/api/campaigns/${C}/invites`, async (m, x) => store.createInvite(m[1], x.user.id, (await x.body()).role)],
+    ['POST', `/api/campaigns/${C}/invites`, async (m, x) => { const r = store.createInvite(m[1], x.user.id, (await x.body()).role); metrics.track('invite_created', { uid: x.user.id }); return r; }],
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
     ['GET', `/api/workspaces/${W}/legislators`, (m, x) => people.list(m[1], x.user.id)],
     ['GET', `/api/workspaces/${W}/legislators/${U}`, (m, x) => people.profile(m[1], x.user.id, decodeURIComponent(m[2]))],
+    ['PATCH', `/api/workspaces/${W}/legislators/${U}`, async (m, x) => people.rename(m[1], x.user.id, decodeURIComponent(m[2]), (await x.body()).name)],
     ['GET', `/api/workspaces/${W}/bills`, (m, x) => billList.list(m[1], x.user.id)],
-    ['POST', `/api/workspaces/${W}/bills`, async (m, x) => { limit('track:' + x.user.id, 60); return billList.add(m[1], x.user.id, await x.body()); }],
+    ['POST', `/api/workspaces/${W}/bills`, async (m, x) => { limit('track:' + x.user.id, 60); const r = billList.add(m[1], x.user.id, await x.body()); metrics.track('bill_followed', { uid: x.user.id, oid: m[1] }); return r; }],
+    ['POST', '/api/events', async (m, x) => { limit('events:' + x.user.id, 120); const b = await x.body(); if (APP_EVENTS.has(b.name)) metrics.track(b.name, { uid: x.user.id, oid: typeof b.workspaceId === 'string' ? b.workspaceId.slice(0, 40) : null }); return { ok: true }; }],
+    ['POST', '/api/feedback', async (m, x) => {
+      limit('feedback:' + x.user.id, 10); const b = await x.body(); metrics.feedback(x.user, b);
+      const to = notifier.contactInbox();
+      if (to) mail.queue({ to, kind: 'lead', replyTo: x.user.email, subject: `Feedback from ${x.user.name || x.user.email}: ${String(b.message).replace(/\s+/g, ' ').slice(0, 60)}`, text: `${String(b.message).slice(0, 4000)}\n\nFrom: ${x.user.name || ''} <${x.user.email || ''}>\nPage: ${String(b.page || '').slice(0, 60)}\n\nReply to this email to answer them.` });
+      return { ok: true };
+    }],
+    ['GET', '/api/admin/metrics', (m, x) => { needOperator(x.user); return metrics.summary(); }],
     ['PATCH', `/api/workspaces/${W}/bills/${C}`, async (m, x) => billList.update(m[1], x.user.id, m[2], await x.body())],
     ['DELETE', `/api/workspaces/${W}/bills/${C}`, (m, x) => billList.remove(m[1], x.user.id, m[2])],
     ['POST', `/api/workspaces/${W}/bill-shares`, async (m, x) => billList.addShare(m[1], x.user.id, await x.body())],
@@ -569,7 +595,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     limit('ip:' + clientIp(req), 600);
     const user = await authenticate(req);
     limit('u:' + user.id, 300);
-    store.touchUser(user);
+    store.touchUser(user); metrics.active(user.id);
     const ctx = { user, url, req, body: (max) => readJson(req, max) };
     if (p === '/api/settings/backup' && m === 'GET') {
       needOperator(user);

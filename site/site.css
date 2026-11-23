@@ -360,3 +360,4 @@ form.lead .cs-trigger:hover, form.lead .cs.open .cs-trigger { border-bottom-colo
 .cs-opt { border-radius: 1px; }
 @keyframes csIn { from { opacity: 0; transform: translateY(-4px); } }
 form.lead label .note { font-stretch: 100%; text-transform: none; display: inline; }
+.hero-foot .for { margin: 10px 0 0; font: 500 15px var(--body); font-stretch: 78%; text-transform: uppercase; letter-spacing: .02em; color: var(--signal); }

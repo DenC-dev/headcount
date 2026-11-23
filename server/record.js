@@ -1,4 +1,5 @@
 import { HttpError } from './db.js';
+import { pacedFetch } from './pace.js';
 import { parseFederal, parseState, currentCongress, STATES, chamberOf as namedChamber } from './bills.js';
 import { billStory } from './story.js';
 
@@ -11,7 +12,7 @@ import { billStory } from './story.js';
 const T = 15000;
 async function get(url, headers = {}, kind = 'json') {
   let res;
-  try { res = await fetch(url, { headers: { 'User-Agent': 'Headcount (vote count lookup)', ...(kind === 'json' ? { Accept: 'application/json' } : {}), ...headers }, signal: AbortSignal.timeout(T) }); }
+  try { res = await pacedFetch(url, { headers: { 'User-Agent': 'Headcount (vote count lookup)', ...(kind === 'json' ? { Accept: 'application/json' } : {}), ...headers }, signal: AbortSignal.timeout(T) }); }
   catch (_) { throw new HttpError(502, 'The bill database could not be reached. Try again shortly.'); }
   if (res.status === 404) return null;
   if (res.status === 401 || res.status === 403) throw new HttpError(502, 'The bill service did not accept the key. An admin can check it under Admin settings.');

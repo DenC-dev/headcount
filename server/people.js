@@ -9,6 +9,9 @@ import { HttpError, CONTACT_TYPES } from './db.js';
 const POS = ['No', 'Lean no', 'Undecided', 'Lean yes', 'Yes'];
 const normName = (s) => String(s || '').toLowerCase().replace(/\b(sen|rep|del|asm)\.?\s+/g, '').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 
+// The same person in two campaigns: the official list's id, else name, party and district.
+const keyOf = (m) => (m.ref ? `r_${String(m.ref).replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 80)}` : `n_${crypto.createHash('sha1').update(`${normName(m.name)}|${m.party || ''}|${String(m.district || '').replace(/^0+/, '')}`).digest('hex').slice(0, 16)}`);
+
 export function makePeople(store) {
   // History notes who did it by user id; show their name.
   const names = new Map();
@@ -24,8 +27,7 @@ export function makePeople(store) {
       for (const r of store.q.recordsOf.all(c.id, 'members')) {
         let m; try { m = JSON.parse(r.data); } catch (_) { continue; }
         if (!m || !m.name || m.draft) continue;
-        // The same person in two campaigns: the official list's id, else name, party and district
-        const key = m.ref ? `r_${String(m.ref).replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 80)}` : `n_${crypto.createHash('sha1').update(`${normName(m.name)}|${m.party || ''}|${String(m.district || '').replace(/^0+/, '')}`).digest('hex').slice(0, 16)}`;
+        const key = keyOf(m);
         if (!people.has(key)) people.set(key, { key, name: m.name, party: m.party || '', district: m.district || '', chamber, positions: [], history: [], staff: [], phone: '', email: '', office: '', committees: new Set() });
         const p = people.get(key);
         const pos = typeof m.pos === 'number' ? m.pos : 2, withUs = side === 'pass' ? pos >= 3 : pos <= 1, against = side === 'pass' ? pos <= 1 : pos >= 3;
@@ -61,5 +63,24 @@ export function makePeople(store) {
     return { ...summary(p), phone: p.phone, email: p.email, office: p.office, staff: p.staff, committees: [...p.committees],
       positions: p.positions, history: p.history.sort((a, b) => String(b.d).localeCompare(String(a.d))).slice(0, 80) };
   }
-  return { list, profile };
+  // Fix a legislator's name everywhere: in each campaign this person can edit.
+  function rename(oid, uid, key, name) {
+    const clean = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (clean.length < 2) throw new HttpError(400, 'Type the name.');
+    let changed = 0, skipped = 0;
+    for (const c of store.listOrgCampaigns(oid, uid)) {
+      if (c.archived) continue;
+      const ops = [];
+      for (const r of store.q.recordsOf.all(c.id, 'members')) {
+        let m; try { m = JSON.parse(r.data); } catch (_) { continue; }
+        if (!m || keyOf(m) !== key || m.name === clean) continue;
+        ops.push({ kind: 'members', id: r.rid, data: { ...m, name: clean } });
+      }
+      if (!ops.length) continue;
+      try { store.write(c.id, uid, ops); changed += ops.length; } catch (_) { skipped++; }
+    }
+    if (!changed && !skipped) throw new HttpError(404, 'That legislator is not in any of your campaigns.');
+    return { changed, skipped };
+  }
+  return { list, profile, rename };
 }

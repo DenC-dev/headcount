@@ -536,3 +536,11 @@ details.timeline li.minor { opacity: .62; font-size: 14px; }
 td.chips { line-height: 2; }
 .similar .btnrow input { flex: 1 1 260px; }
 .similar #sim_out { margin-top: 10px; }
+.renamebtn { font-size: 13px; margin: -4px 0 4px; }
+#personNameForm, #myNameForm { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+#personNameForm input, #myNameForm input { flex: 1 1 220px; font-size: 18px; }
+.faststart { border-color: var(--fg); padding: 28px 28px 22px; }
+.faststart h2 { font: 500 clamp(26px, 3.2vw, 38px)/1.1 var(--display); letter-spacing: -.04em; margin: 10px 0 16px; }
+.fsrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.fsrow select { flex: 0 0 200px; } .fsrow input { flex: 1 1 280px; font-size: 17px; } .fsrow .btn { padding: 10px 22px; }
+#fs_out { margin-top: 10px; }
