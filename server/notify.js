@@ -18,6 +18,7 @@ export function localParts(now, tz) {
 }
 
 const KIND_WORD = { bill: 'Bill', reg: 'Rule', contract: 'Contract' };
+const POSITION_WORD = { support: 'Support', oppose: 'Oppose', watch: 'Watching', amend: 'Seeking changes' };
 // One Monitor item in an email: what it is, where, why it matters.
 function monitorItem(i) {
   const where = i.kind === 'bill' ? (i.juris === 'US' ? 'Congress' : i.juris) : i.agency;
@@ -28,7 +29,7 @@ function monitorItem(i) {
     note: !moved && i.reason ? i.reason : '' };
 }
 
-export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
+export function makeNotifier(cfg, store, mail, monitor = null, tracker = null, billList = null) {
   const app = `${cfg.publicUrl}/app`;
   const user = (id) => store.q.user.get(id);
   const footer = (uid, kind, what) => {
@@ -219,6 +220,20 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
         } });
       }
     }
+    // Bills on the workspace's list (no whip count) that moved
+    const listBlocks = [];
+    if (tracker && billList) {
+      for (const o of store.q.userOrgs.all(u.id)) {
+        if (o.my_role === 'guest' || store.blocked(o, u.id, o.my_role)) continue;
+        let rows; try { rows = billList.list(o.id, u.id).bills.filter((b) => !b.campaignId); } catch (_) { continue; }
+        const moved = rows.map((b) => ({ b, news: tracker.newsFor({ bill: b.number, leg: b.juris, session: b.session }, sinceMs) })).filter((x) => x.news.length);
+        if (!moved.length) continue;
+        totals.bills += moved.reduce((n, x) => n + x.news.length, 0);
+        sections.push({ title: `Bills you follow: ${o.name}`, sub: '', lines: moved.flatMap((x) => x.news.map((n) => `${x.b.number}: ${n.plain}${n.date ? ` (${fmtDay(n.date)})` : ''}`)) });
+        listBlocks.push({ title: `Bills you follow: ${o.name}`, sub: 'Moves on your bill list' }, { items: moved.map((x) => ({ chip: { text: POSITION_WORD[x.b.position] || 'Watching', tone: x.b.position === 'support' ? 'good' : x.b.position === 'oppose' ? 'bad' : 'info' },
+          title: [x.b.number, x.b.title].filter(Boolean).join(': '), meta: x.b.now || '', note: x.news.map((n) => `${n.date ? `${fmtDay(n.date)}: ` : ''}${n.plain}`).join(' · ') })) });
+      }
+    }
     const monitorBlocks = [];
     if (monitor && u.monitor !== 'off') {
       for (const o of store.q.userOrgs.all(u.id)) {
@@ -238,7 +253,7 @@ export function makeNotifier(cfg, store, mail, monitor = null, tracker = null) {
       subject: `${heading}: ${bits.slice(0, 2).join(', ') || plural(sections.length, 'campaign') + ' to look at'}`,
       text: `${heading}\n\n${sections.map((x) => `${x.title}${x.sub ? ` (${x.sub})` : ''}\n${x.lines.map((l) => `- ${l}`).join('\n')}`).join('\n\n')}\n\nOpen Headcount: ${app}${textFooter(u.id, 'digest')}`,
       html: htmlEmail({ eyebrow: period === 'daily' ? 'Daily digest' : 'Weekly digest', heading, preheader: bits.join(', ') || 'Your campaigns at a glance',
-        blocks: [...(cards.length ? [{ stats }] : []), ...cards, ...monitorBlocks], action: { url: app, label: 'Open Headcount' }, footer: footer(u.id, 'digest', `you get a ${period} digest`) }),
+        blocks: [...(cards.length ? [{ stats }] : []), ...cards, ...listBlocks, ...monitorBlocks], action: { url: app, label: 'Open Headcount' }, footer: footer(u.id, 'digest', `you get a ${period} digest`) }),
     };
   }
 

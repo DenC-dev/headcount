@@ -33,7 +33,7 @@ export function makeTracker(cfg, store, { read = billRecord } = {}) {
     campaigns: p("SELECT id, org_id, summary FROM campaigns WHERE archived = 0 AND summary IS NOT NULL"),
   };
   const stepKey = (t) => `${t.date}|${t.text}`;
-  const compact = (r) => ({ bill: r.bill, source: r.source, origin: r.origin || '', now: r.now || '', stage: r.story.stage, stops: r.story.stops, floor: r.story.floor, hearings: r.story.hearings || [], timeline: r.story.timeline.slice(-120) });
+  const compact = (r) => ({ bill: r.bill, title: r.title || '', source: r.source, origin: r.origin || '', now: r.now || '', stage: r.story.stage, stops: r.story.stops, floor: r.story.floor, hearings: r.story.hearings || [], timeline: r.story.timeline.slice(-120) });
 
   async function refresh(juris, number, session, now = Date.now()) {
     const key = billKey(juris, number, session), row = q.get.get(key);
@@ -72,8 +72,15 @@ export function makeTracker(cfg, store, { read = billRecord } = {}) {
       if (!keys.has(key)) keys.set(key, { juris: s.leg, number: s.bill, session: s.session || '', campaigns: [] });
       keys.get(key).campaigns.push(c.id);
     }
+    // Bills on workspaces' bill lists, with no whip count of their own
+    for (const source of sources) for (const b of source()) {
+      const key = billKey(b.juris, b.number, b.session);
+      if (!keys.has(key)) keys.set(key, { juris: b.juris, number: b.number, session: b.session || '', campaigns: [] });
+    }
     return keys;
   }
+  const sources = [];
+  const addSource = (fn) => { sources.push(fn); };
 
   async function tick(now = Date.now()) {
     let n = 0;
@@ -108,8 +115,8 @@ export function makeTracker(cfg, store, { read = billRecord } = {}) {
     const key = billKey(summary.leg, summary.bill, summary.session), row = q.get.get(key);
     if (!row || !row.story) return null;
     const s = JSON.parse(row.story), today = new Date(now - 864e5).toISOString().slice(0, 10);
-    return { bill: s.bill || summary.bill, now: s.stage && s.stage.now, where: s.stage && s.stage.where, changedAt: row.changed_at, checkedAt: row.checked_at,
+    return { bill: s.bill || summary.bill, title: s.title || '', now: s.stage && s.stage.now, where: s.stage && s.stage.where, changedAt: row.changed_at, checkedAt: row.checked_at,
       hearings: (s.hearings || []).filter((h) => h.date >= today), news: q.newsSince.all(key, now - 7 * 864e5) };
   }
-  return { story, refresh, tick, tracked, newsFor, stageFor, todayFor };
+  return { story, refresh, tick, tracked, newsFor, stageFor, todayFor, addSource };
 }

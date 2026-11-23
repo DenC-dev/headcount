@@ -92,16 +92,19 @@ const SEARCH_CACHE = new Map();
 export async function searchBills(cfg, { leg, q }) {
   if (!cfg.openStatesKey) throw new HttpError(501, 'Searching bills needs a free Open States key, which an admin adds under Admin settings.');
   const st = String(leg || '').toUpperCase(), words = clip(q, 120);
-  if (st !== 'US' && !STATES[st]) throw new HttpError(400, 'Choose the legislature to search.');
+  if (st !== 'US' && st !== 'ALL' && !STATES[st]) throw new HttpError(400, 'Choose the legislature to search.');
   if (words.length < 3) throw new HttpError(400, 'Type a few words about the bill, like "sales tax" or "broadband".');
   const key = `${st}|${words.toLowerCase()}`, hit = SEARCH_CACHE.get(key);
   if (hit && Date.now() - hit.at < 10 * 60e3) return hit.value;
   const terms = phrases(words).map((p) => (p.includes(' ') ? `"${p}"` : p)).join(' ');
-  const p = new URLSearchParams({ jurisdiction: st === 'US' ? 'ocd-jurisdiction/country:us/government' : ocd(st), q: terms || words, sort: 'updated_desc', per_page: '12' });
+  const p = new URLSearchParams({ q: terms || words, sort: 'updated_desc', per_page: st === 'ALL' ? '20' : '12' });
+  if (st !== 'ALL') p.set('jurisdiction', st === 'US' ? 'ocd-jurisdiction/country:us/government' : ocd(st));
+  p.set('classification', 'bill'); // not resolutions or memorials
   const body = await getJson(`${cfg.openStatesBase}/bills?${p}`, { headers: { 'X-API-KEY': cfg.openStatesKey }, name: 'Open States' });
   const value = ((body && body.results) || []).map((b) => {
-    const f = st === 'US' ? parseFederal(b.identifier) : null;
-    return { number: f ? f.label : clip(b.identifier, 40), title: clip(b.title, 400), session: clip(b.session, 40), status: clip(b.latest_action_description, 200), statusDate: clip(b.latest_action_date, 10), leg: st };
+    const where = st !== 'ALL' ? st : /country:us\/government/.test((b.jurisdiction && b.jurisdiction.id) || '') ? 'US' : stateOf(b.jurisdiction && b.jurisdiction.id) || '';
+    const f = where === 'US' ? parseFederal(b.identifier) : null;
+    return { number: f ? f.label : clip(b.identifier, 40), title: clip(b.title, 400), session: clip(b.session, 40), status: clip(b.latest_action_description, 200), statusDate: clip(b.latest_action_date, 10), leg: where };
   });
   SEARCH_CACHE.set(key, { at: Date.now(), value }); if (SEARCH_CACHE.size > 200) SEARCH_CACHE.delete(SEARCH_CACHE.keys().next().value);
   return value;

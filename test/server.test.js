@@ -692,6 +692,40 @@ test('rosters for any state chamber load from Open States with offices', async (
   assert.equal((await api('mona', 'GET', '/api/rosters/state?state=CA&chamber=legislature')).status, 400, 'California has two chambers');
 });
 
+test('the bill list: follow bills with a position, share them read-only, keep notes private', async () => {
+  const add = await api('mona', 'POST', `/api/workspaces/${MW}/bills`, { juris: 'FL', number: 'hb123', position: 'oppose', priority: 'high', notes: 'Client hates section 4', title: 'Property Insurance' });
+  const b = ok(add); assert.equal(b.number, 'HB 123'); assert.equal(b.position, 'oppose'); assert.equal(b.priority, 'high');
+  assert.equal(ok(await api('mona', 'POST', `/api/workspaces/${MW}/bills`, { juris: 'FL', number: 'HB 123' })).id, b.id, 'the same bill is not added twice');
+  assert.equal((await api('mona', 'POST', `/api/workspaces/${MW}/bills`, { juris: 'US', number: 'HB 9' })).status, 400, 'Congress numbers are H.R. or S.');
+  assert.equal(ok(await api('mona', 'POST', `/api/workspaces/${MW}/bills`, { juris: 'US', number: 'hr 1234' })).number, 'H.R. 1234');
+  const up = ok(await api('mona', 'PATCH', `/api/workspaces/${MW}/bills/${b.id}`, { position: 'amend', notes: 'Fixable' })); assert.equal(up.position, 'amend'); assert.equal(up.notes, 'Fixable');
+  const l = ok(await api('mona', 'GET', `/api/workspaces/${MW}/bills`)); assert.ok(l.bills.some((x) => x.id === b.id));
+  // Sharing: a public page without the team's notes, that can be embedded
+  const sh = ok(await api('mona', 'POST', `/api/workspaces/${MW}/bill-shares`, {})); assert.match(sh.url, /\/bills\/[A-Za-z0-9_-]{16,}$/);
+  const page = await fetch(`${base}/bills/${sh.token}`); assert.equal(page.status, 200); const html = await page.text();
+  assert.match(html, /HB 123/); assert.match(html, /Seeking changes/); assert.doesNotMatch(html, /Fixable|Client hates/); assert.match(page.headers.get('content-security-policy'), /frame-ancestors \*/);
+  assert.match(await (await fetch(`${base}/bills/${sh.token}?embed=1`)).text(), /<table>/);
+  ok(await api('mona', 'DELETE', `/api/workspaces/${MW}/bill-shares/${sh.token}`)); assert.equal((await fetch(`${base}/bills/${sh.token}`)).status, 400);
+  ok(await api('mona', 'DELETE', `/api/workspaces/${MW}/bills/${b.id}`)); assert.ok(!ok(await api('mona', 'GET', `/api/workspaces/${MW}/bills`)).bills.some((x) => x.id === b.id));
+  assert.equal((await api('alice', 'GET', `/api/workspaces/${MW}/bills`)).status, 404, 'other workspaces cannot see it');
+});
+
+test('legislators across campaigns: one profile, a position per bill, history with the team', async () => {
+  const mk = async (id, name, side) => { ok(await api('mona', 'POST', '/api/campaigns', { id, workspaceId: MW, name })); ok(await api('mona', 'POST', `/api/campaigns/${id}/records`, { ops: [
+    { kind: 'meta', data: { campaign: { bill: name, side, chamber: 'Florida Senate', committee: 'Commerce' } } },
+    { kind: 'members', id: 'a', data: { id: 'a', ref: 'fl-s-7', name: 'Jo Ward', party: 'R', district: '7', pos: side === 'pass' ? 4 : 0, cmte: true, role: 'Chair', history: [{ d: '2026-11-02', type: 'Meeting', note: `Met on ${name}`, by: 'Mona' }], staffers: [{ name: 'Lee Park', title: 'Scheduler', email: 'park.lee@flsenate.gov' }] } },
+    { kind: 'members', id: 'b', data: { id: 'b', ref: 'fl-s-9', name: 'Ana Ruiz', party: 'D', district: '9', pos: 2, history: [] } }] })); };
+  await mk('leg1', 'SB 10: Water', 'pass'); await mk('leg2', 'SB 20: Roads', 'defeat');
+  const l = ok(await api('mona', 'GET', `/api/workspaces/${MW}/legislators`));
+  const jo = l.people.find((p) => p.name === 'Jo Ward'), ana = l.people.find((p) => p.name === 'Ana Ruiz');
+  assert.equal(jo.bills, 2); assert.equal(jo.withUs, 2, 'yes on the bill you support and no on the one you oppose'); assert.equal(jo.score, 100); assert.equal(jo.lastContact, '2026-11-02');
+  assert.equal(ana.score, null, 'undecided everywhere: no score yet'); assert.equal(ana.lastContact, '');
+  const pr = ok(await api('mona', 'GET', `/api/workspaces/${MW}/legislators/${encodeURIComponent(jo.key)}`));
+  assert.equal(pr.history.length, 2); assert.deepEqual(pr.committees, ['Commerce (Chair)']); assert.equal(pr.staff[0].email, 'park.lee@flsenate.gov');
+  assert.equal((await api('mona', 'GET', `/api/workspaces/${MW}/legislators/${encodeURIComponent('r:nobody')}`)).status, 404);
+  for (const id of ['leg1', 'leg2']) ok(await api('mona', 'DELETE', `/api/campaigns/${id}`));
+});
+
 test('finding a bill by topic in one legislature', async () => {
   const r = ok(await api('mona', 'GET', '/api/bills/search?leg=FL&q=property%20insurance'));
   assert.ok(r.bills.length); assert.match(r.bills[0].number, /^HB \d+$/); assert.equal(r.bills[0].leg, 'FL'); assert.ok(r.bills[0].title);

@@ -47,7 +47,7 @@ function itemHtml(i) {
   const acts = [
     i.state !== 'tracked' ? `<button class="btn sm" data-x="itemState" data-id="${i.id}" data-state="tracked">Track</button>` : `<button class="btn sm" data-x="itemState" data-id="${i.id}" data-state="new">Stop tracking</button>`,
     i.state !== 'dismissed' ? `<button class="btn sm" data-x="itemState" data-id="${i.id}" data-state="dismissed">Dismiss</button>` : `<button class="btn sm" data-x="itemState" data-id="${i.id}" data-state="new">Restore</button>`,
-    i.kind === 'bill' && !camp ? `<button class="btn sm primary" data-x="itemCampaign" data-id="${i.id}">Start a campaign</button>` : '',
+    i.kind === 'bill' && !camp ? `<button class="btn sm primary" data-x="itemCampaign" data-id="${i.id}">Start a campaign</button><button class="btn sm" data-x="itemFollow" data-id="${i.id}" title="Add it to the Bills page without a whip count">Follow</button>` : '',
     camp ? `<button class="btn sm" data-opencamp="${esc(camp.id)}">Open campaign</button>` : '',
     i.kind === 'bill' && i.juris === 'US' ? `<button class="btn sm" data-x="lobbying" data-number="${esc(i.number)}" data-title="${esc(i.title)}">Who's lobbying on it</button>` : '',
     i.kind === 'contract' ? `<button class="btn sm" data-x="incumbents" data-agency="${esc((i.extra && i.extra.agencyTop) || '')}" data-naics="${esc((i.extra && i.extra.naics) || '')}">Who wins this work</button>` : '',
@@ -139,9 +139,9 @@ async function saveWatch(form) {
 // started: HB in the House, SB in the Senate), so that chamber's members load
 // without asking. The other chamber is one click away when the bill crosses.
 async function campaignFromItem(it, btn) {
-  const w = MON.watches.find((x) => x.id === it.watchId) || {}, leg = it.juris === 'US' ? 'US' : it.juris;
+  const w = (MON.watches || []).find((x) => x.id === it.watchId) || {}, leg = it.juris === 'US' ? 'US' : it.juris;
   const st = blankState(clipWords(`${it.number}: ${it.title}`, 140));
-  st.campaign.clientId = w.clientId || ''; st.campaign.leg = leg; st.campaign.chamber = leg === 'US' ? 'U.S. Congress' : `${stateName(leg)} Legislature`;
+  st.campaign.clientId = w.clientId || it.clientId || ''; st.campaign.leg = leg; st.campaign.chamber = leg === 'US' ? 'U.S. Congress' : `${stateName(leg)} Legislature`;
   st.brief = Object.assign(blankBrief(), { number: it.number, title: it.title, jurisdiction: leg === 'US' ? 'U.S. Congress' : `${stateName(leg)} Legislature`, session: it.session || '', status: it.status || '', url: it.url || '', source: it.source || '' });
   if (btn) { btn.disabled = true; btn.textContent = 'Loading the members'; }
   let chamber = billChamber(it.number, leg);
@@ -154,7 +154,7 @@ async function campaignFromItem(it, btn) {
   let loaded = '';
   if (pick) { try { loaded = await fillChamber(pick.value, st); } catch (_) { /* the count page offers the chambers */ } }
   page = 'count'; await addCampaign(st);
-  try { await CLOUD.api('PATCH', wsPath(`/items/${it.id}`), { state: 'tracked', campaignId: st.id }); } catch (_) { /* the campaign exists either way */ }
+  if (it.id) try { await CLOUD.api('PATCH', wsPath(`/items/${it.id}`), { state: 'tracked', campaignId: st.id }); } catch (_) { /* the campaign exists either way */ }
   MON.items = null;
   toast(loaded ? `Campaign created with the ${pick.label}` : 'Campaign created. Choose the chamber to load its members.');
   if (loaded && recordReady()) { RECORD_CHECK = S.id; fillFromRecord({ auto: true }).finally(() => { RECORD_CHECK = ''; }); }
@@ -447,6 +447,7 @@ document.addEventListener('click', async (e) => {
       try { await CLOUD.api('PATCH', wsPath(`/items/${id}`), { state: t.dataset.state }); toast(t.dataset.state === 'tracked' ? 'Tracking: you will hear when it moves' : t.dataset.state === 'dismissed' ? 'Dismissed' : 'Back in the inbox'); } catch (err) { fail(err); }
       MON.watches = null; renderMonitor(); return;
     }
+    case 'itemFollow': { const it = (MON.items || []).find((i) => String(i.id) === id); if (!it) return; try { const r = await CLOUD.api('POST', wsPath('/bills'), { juris: it.juris, number: it.number, session: it.session || '', title: it.title, position: 'watch' }); toast(`Following ${r.number} on the Bills page`); if (typeof BILLS !== 'undefined') BILLS.at = 0; } catch (e) { fail(e); } return; }
     case 'itemCampaign': { const it = (MON.items || []).find((i) => String(i.id) === id); if (it) await campaignFromItem(it, t); return; }
     case 'lobbying': return lobbyingDrawer(t.dataset.number, t.dataset.title);
     case 'incumbents': return incumbentsDrawer(t.dataset.agency, t.dataset.naics);

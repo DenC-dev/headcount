@@ -468,10 +468,13 @@ function hearingLink(h, bill) {
   return CLOUD.calendarLink('google', { title: `${bill}: ${h.committee ? `${h.committee} committee` : 'Committee'} hearing`, description: `${bill} is on the agenda.${h.room ? ` Room: ${h.room}.` : ''}`, start, end, location: h.room || '', attendees: [], meet: false });
 }
 const upcomingHearings = (d) => ((d && d.hearings) || []).filter((h) => dayDiff(h.date) >= 0).sort((a, b) => a.date.localeCompare(b.date));
-function storyPanelHtml() {
-  const key = storyKey();
+// ext: { d, leg, number } shows a bill that is not the open campaign's (the Bills page).
+let STORY_LEG = '';
+function storyPanelHtml(ext = null) {
+  const key = ext ? 'ext' : storyKey();
   if (!key) return '';
-  const d = storyNow();
+  const d = ext ? ext.d : storyNow();
+  STORY_LEG = ext ? ext.leg : billLegislature();
   if (!d) return `<section class="story"><span class="label">Where it stands</span><p class="note">${STORY.err && STORY.key === key ? `${esc(STORY.err)} <button class="linkbtn" data-act="storyAgain">Try again</button>` : 'Reading the bill\'s record'}</p></section>`;
   const st = d.stage || { steps: [], step: 0 }, checked = d.checkedAt ? new Date(d.checkedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   const steps = `<ol class="stepper" aria-label="How far the bill has come">${st.steps.map((x, i) => `<li class="${i < st.step || (st.done && i === st.step) ? 'done' : i === st.step ? (st.stopped ? 'stopped' : 'here') : ''}"><span>${esc(x)}</span></li>`).join('')}</ol>`;
@@ -483,20 +486,49 @@ function storyPanelHtml() {
   const news = (d.news || []).filter((n) => Date.now() - n.foundAt < 14 * 864e5);
   const tl = (d.timeline || []).slice().reverse();
   return `<section class="story" aria-label="Where the bill stands">
-    <div class="row"><span class="label">Where it stands</span><span class="btnrow"><button class="linkbtn" data-act="glossary">What the words mean</button><button class="btn sm" data-act="storyAgain" title="Read the record again now">Check now</button></span></div>
+    <div class="row"><span class="label">Where it stands</span><span class="btnrow"><button class="linkbtn" data-act="glossary">What the words mean</button>${ext ? '' : '<button class="btn sm" data-act="storyAgain" title="Read the record again now">Check now</button>'}</span></div>
     ${steps}
     <p class="now"><b>Now.</b> ${esc(st.now || 'No recorded actions yet.')}</p>
     ${st.last && st.last.plain && !(st.now || '').startsWith(st.last.plain) ? `<p class="next"><b>Latest.</b> ${esc(st.last.plain)}${st.last.date ? `, ${esc(fmtDay(st.last.date))}` : ''}.</p>` : ''}
     ${st.next ? `<p class="next"><b>Next.</b> ${esc(st.next)}</p>` : ''}
-    ${upcomingHearings(d).map((h) => `<div class="hearing"><span class="label">On the agenda</span><p><b>${esc(h.committee ? `${h.committee}${/committee/i.test(h.committee) ? '' : ' committee'}` : 'Committee')}</b>, ${esc(fmtDay(h.date))}${h.time ? ` at ${esc(h.time)}` : ''}${h.room ? `, ${esc(h.room)}` : ''} <span class="meta">(${esc(inDays(h.date))})</span></p><a class="btn sm" href="${esc(hearingLink(h, billNumberOf()))}" target="_blank" rel="noopener">Add to Google Calendar</a></div>`).join('')}
+    ${upcomingHearings(d).map((h) => `<div class="hearing"><span class="label">On the agenda</span><p><b>${esc(h.committee ? `${h.committee}${/committee/i.test(h.committee) ? '' : ' committee'}` : 'Committee')}</b>, ${esc(fmtDay(h.date))}${h.time ? ` at ${esc(h.time)}` : ''}${h.room ? `, ${esc(h.room)}` : ''} <span class="meta">(${esc(inDays(h.date))})</span></p><a class="btn sm" href="${esc(hearingLink(h, ext ? ext.number : billNumberOf()))}" target="_blank" rel="noopener">Add to Google Calendar</a></div>`).join('')}
     ${news.length ? `<div class="news"><span class="label">New in the last two weeks</span><ul>${news.map((n) => `<li><span class="meta">${esc(fmtDay(n.date))}</span> ${esc(n.plain)}</li>`).join('')}</ul></div>` : ''}
     ${stops}${floor}
     ${tl.length ? `<details class="timeline"><summary>Every step (${tl.length})</summary><ol>${tl.map((t) => `<li${t.minor ? ' class="minor"' : ''}><span class="when">${esc(fmtDay(t.date))}</span><span class="what">${esc(t.plain)}${t.plain !== t.text ? `<span class="official">Official record: ${esc(t.text)}</span>` : ''}</span></li>`).join('')}</ol></details>` : ''}
     <p class="note">From ${esc(d.source || 'the public record')}${checked ? `, checked ${esc(checked)}` : ''}. Headcount rereads it every few hours and tells your team when the bill moves.${d.stale ? ` Last check failed: ${esc(d.stale)}` : ''}</p>
   </section>`;
 }
+// Similar bills in other legislatures (Plural's "global bill search"): a few
+// words from the bill's name, searched in every state and Congress.
+const STOP = new Set('a an and act acts amending amend the of to for in on by with from relating concerning providing further known as its or be this that relative regarding regards'.split(' '));
+function similarWords() {
+  const name = String(S.campaign.bill || '').split(':').slice(1).join(':') || S.brief.title || '';
+  return name.toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z ]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)).slice(0, 4).join(' ');
+}
+function similarHtml() {
+  const cfg = CLOUD.config || {};
+  if (SIMILAR.key && SIMILAR.key !== storyKey()) SIMILAR = { key: '', q: '', html: '' };
+  if (!signedIn() || !cfg.bills || !cfg.bills.states || S.example || !storyKey()) return '';
+  return `<section class="panel noprint similar"><span class="label">Similar bills elsewhere</span>
+    <p class="note">The same idea in other states or Congress: useful for model language, allies and arguments that already worked.</p>
+    <div class="btnrow"><input id="sim_q" value="${esc(SIMILAR.q || similarWords())}" aria-label="Words to search for" placeholder="A few words about the bill"><button class="btn" data-act="simSearch">Search every state</button></div>
+    <div id="sim_out">${SIMILAR.html || ''}</div></section>`;
+}
+let SIMILAR = { key: '', q: '', html: '' };
+async function similarSearch() {
+  const q = $('#sim_q').value.trim(), out = $('#sim_out'), mine = billLegislature(), num = billNumberOf();
+  if (q.length < 3) { out.innerHTML = '<p class="note">Type a few words.</p>'; return; }
+  SIMILAR = { key: storyKey(), q, html: '<p class="note">Searching every state and Congress</p>' }; out.innerHTML = SIMILAR.html;
+  const put = (html) => { SIMILAR = { key: storyKey(), q, html }; const o = $('#sim_out'); if (o) o.innerHTML = html; }; // the page may have been redrawn meanwhile
+  try {
+    const r = await CLOUD.api('GET', `/api/bills/search?${new URLSearchParams({ leg: 'ALL', q })}`);
+    const list = r.bills.filter((b) => !(b.leg === mine && b.number.replace(/\W/g, '') === num.replace(/\W/g, '')));
+    const html = list.length ? `<ul class="ns-list">${list.map((b) => `<li><div><b>${esc(b.number)}</b> <span class="meta">${esc(legLabel(b.leg))} · ${esc(b.session)}</span><div>${esc(clipWords(b.title, 150))}</div><div class="meta">${esc(b.status)}${b.statusDate ? `, ${esc(fmtDay(b.statusDate))}` : ''}</div></div><button type="button" class="btn sm" data-act="simFollow" data-n="${esc(b.number)}" data-leg="${esc(b.leg)}" data-s="${esc(b.session)}" data-title="${esc(b.title)}">Follow</button></li>`).join('')}</ul>` : '<p class="note">No similar bills found. Try fewer or different words.</p>';
+    put(html);
+  } catch (e) { put(`<p class="note">${esc(e.message)}</p>`); }
+}
 function chamberWord(ch) {
-  const leg = billLegislature();
+  const leg = STORY_LEG || billLegislature();
   if (leg === 'US') return ch === 'upper' ? 'U.S. Senate' : 'U.S. House';
   const c = chambersOf(leg).find((x) => x.chamber === ch) || chambersOf(leg)[0];
   return c ? c.label : ch === 'upper' ? 'Senate' : 'House';
@@ -541,7 +573,7 @@ function loadPreset(key, cmteIdx, backed, st = S) {
 // ---------- workspace: campaigns in this browser, or in your account ----------
 let S = exampleState();
 let view = 'floor', page = 'count', openId = null, renderTimer = null;
-const PAGES = ['portfolio', 'count', 'brief', 'monitor', 'contacts', 'workspace'];
+const PAGES = ['portfolio', 'bills', 'people', 'count', 'brief', 'monitor', 'contacts', 'workspace'];
 let LAST_PAGE = '';
 let BOOK = { v: 2, active: 'ex', list: [{ id: 'ex', name: S.campaign.bill }] };
 let ME = null, ROLE = 'owner', PEOPLE = {}, JOIN = null;
@@ -1141,7 +1173,7 @@ function renderBrief() {
   const b = S.brief, ro = !canEditNow(), cfg = CLOUD.config || {};
   const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft it with AI</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}${typeof intelBriefButtons === 'function' ? intelBriefButtons(b) : ''}</div>`;
   const empty = `<div class="brief" style="text-align:center"><h2 style="font-size:22px">No brief for this bill yet</h2><p class="note" style="margin:0 auto">Look up the bill to fill in its sponsors, status and official summary, then add your summary, talking points and likely objections. Every meeting brief and meeting request for this campaign uses it.</p></div>`;
-  $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + storyPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty);
+  $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + storyPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty) + similarHtml();
   loadStory();
   if (briefPanel === 'lookup' && $('#lk_j')) $('#lk_j').value = guessJurisdiction();
 }
@@ -1761,6 +1793,159 @@ function gettingStarted() {
     <p class="note">New to Headcount? The <a href="${GUIDE}" target="_blank" rel="noopener">step-by-step guide</a> walks through everything.</p></div>`;
 }
 
+// ---------- bills you follow ----------
+// Every bill the team follows, with or without a whip count: the team's
+// position, priority and client, where each stands, its next hearing and what
+// moved. Lists can be shared as a public page or embedded on a website.
+const POSITION = { support: ['Support', 'good'], oppose: ['Oppose', 'bad'], watch: ['Watching', 'muted'], amend: ['Seeking changes', 'warn'] };
+let BILLS = { oid: '', at: 0, bills: null, shares: [], adding: false, f: { q: '', pos: '', leg: '', client: '', sort: 'moved' } };
+async function loadBills(force = false) {
+  if (!ORG || !signedIn() || typeof wsPath !== 'function') return;
+  if (!force && BILLS.oid === ORG.id && BILLS.bills && Date.now() - BILLS.at < 60e3) return;
+  const oid = ORG.id;
+  try { const r = await CLOUD.api('GET', wsPath('/bills')); if (ORG && ORG.id === oid) { Object.assign(BILLS, { oid, at: Date.now(), bills: r.bills, shares: r.shares }); if (page === 'bills') renderBills(); } }
+  catch (e) { if (page === 'bills') $('#billsPage').innerHTML = `<div class="panel empty">${esc(e.message)}</div>`; }
+}
+const legLabel = (j) => (j === 'US' ? 'Congress' : ((CLOUD.config || {}).states || {})[j] || j);
+function billAddForm() {
+  const states = (CLOUD.config || {}).states || {}, last = lastLeg();
+  return `<form id="tbForm" class="form panel" style="animation:popIn .2s var(--spring)">
+    <div class="row wide"><span class="label">Follow a bill</span><button type="button" class="btn sm" data-act="tbCancel">Cancel</button></div>
+    <label>Legislature<select id="tb_leg" name="juris" required><option value="US" ${last === 'US' ? 'selected' : ''}>U.S. Congress</option>${Object.entries(states).sort((a, b) => a[1].localeCompare(b[1])).map(([k, v]) => `<option value="${k}" ${k === last ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+    <label>Bill number<input id="tb_num" name="number" required placeholder="HB 123, SB 45, H.R. 1234" autocomplete="off"></label>
+    <p class="wide note" style="margin-top:-4px"><button type="button" class="linkbtn" data-act="tbSearchToggle">Don't know the number? Search by topic</button></p>
+    <div class="wide nsearch" id="tbSearch" hidden><div class="btnrow"><input id="tbs_q" placeholder="A few words, like sales tax or broadband" aria-label="Search bills by topic" autocomplete="off"><button type="button" class="btn" data-act="tbSearch">Search</button></div><div id="tbs_out" class="ns-out" role="status"></div></div>
+    <label>Our position<select name="position">${Object.entries(POSITION).map(([k, v]) => `<option value="${k}" ${k === 'watch' ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></label>
+    <label>Priority<select name="priority"><option value="high">High</option><option value="normal" selected>Normal</option><option value="low">Low</option></select></label>
+    <label>Client<select name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('')}</select></label>
+    <input type="hidden" name="title" id="tb_title"><input type="hidden" name="session" id="tb_session">
+    <label class="wide">Notes for the team <span class="note">(optional, never shared)</span><textarea name="notes" rows="2" placeholder="Why it matters to the client, who to talk to"></textarea></label>
+    <div class="wide btnrow"><button class="btn primary">Follow this bill</button><span class="note" id="tbMsg" role="status"></span></div>
+  </form>`;
+}
+function renderBills() {
+  const el = $('#billsPage'); if (!el) return;
+  if (!ORG) { el.innerHTML = ''; return; }
+  if (BILLS.oid !== ORG.id || !BILLS.bills) { el.innerHTML = '<div class="panel empty">Loading the bills you follow</div>'; loadBills(true); return; }
+  loadBills();
+  const f = BILLS.f, q = f.q.trim().toLowerCase(), todayIso = today();
+  const next = (b) => (b.hearings || []).filter((h) => h.date >= todayIso).sort((x, y) => x.date.localeCompare(y.date))[0];
+  let list = BILLS.bills.filter((b) => (!f.pos || b.position === f.pos) && (!f.leg || b.juris === f.leg) && (!f.client || b.clientId === f.client) && (!q || `${b.number} ${b.title} ${b.client} ${b.notes || ''} ${b.now}`.toLowerCase().includes(q)));
+  const prio = { high: 0, normal: 1, low: 2 };
+  list = list.slice().sort((a, b) => f.sort === 'hearing' ? String((next(a) || {}).date || '9999').localeCompare(String((next(b) || {}).date || '9999'))
+    : f.sort === 'priority' ? (prio[a.priority] - prio[b.priority]) || String(a.number).localeCompare(String(b.number), undefined, { numeric: true })
+      : f.sort === 'number' ? String(a.juris + a.number).localeCompare(String(b.juris + b.number), undefined, { numeric: true })
+        : (b.changedAt || 0) - (a.changedAt || 0) || (b.addedAt || 0) - (a.addedAt || 0));
+  const legs = [...new Set(BILLS.bills.map((b) => b.juris))], counts = Object.fromEntries(Object.keys(POSITION).map((k) => [k, BILLS.bills.filter((b) => b.position === k).length]));
+  const hearingsSoon = BILLS.bills.filter((b) => { const h = next(b); return h && dayDiff(h.date) <= 14; }).length, moved = BILLS.bills.filter((b) => b.changedAt && Date.now() - b.changedAt < 7 * 864e5).length;
+  const row = (b) => { const h = next(b), [pw, tone] = POSITION[b.position] || POSITION.watch, fresh = b.changedAt && Date.now() - b.changedAt < 3 * 864e5;
+    return `<tr class="prow" data-bill="${esc(b.id)}" tabindex="0">
+      <td><b>${esc(b.number)}</b>${b.priority === 'high' ? ' <span class="prio" title="High priority">High</span>' : ''}<div class="meta">${esc(legLabel(b.juris))}${b.session ? ` · ${esc(b.session)}` : ''}</div></td>
+      <td><span class="btitle">${esc(clipWords(b.title || '', 120))}</span>${b.client ? `<div class="meta">${esc(b.client)}</div>` : ''}</td>
+      <td><span class="pchip ${tone}">${pw}</span>${b.campaignId ? `<div class="meta">${b.odds !== null && b.odds !== undefined ? `${pct(b.odds)}% odds` : 'Whip count'}</div>` : ''}</td>
+      <td>${b.now ? `${fresh ? '<span class="dot fresh" title="Moved in the last three days"></span> ' : ''}${esc(b.now)}` : '<span class="meta">Reading the record</span>'}${h ? `<div class="hmeta">Hearing ${esc(fmtDay(h.date))}${h.time ? `, ${esc(h.time)}` : ''}${h.committee ? ` · ${esc(h.committee)}` : ''}</div>` : ''}</td></tr>`; };
+  el.innerHTML = `${BILLS.adding ? billAddForm() : ''}
+    <div class="panel">
+      <div class="row"><span class="label">Bills you follow</span><span class="btnrow"><button class="btn sm" data-act="tbShare">Share the list</button><button class="btn sm primary" data-act="tbAdd">Follow a bill</button></span></div>
+      ${BILLS.bills.length ? `<div class="bstats"><div><b>${BILLS.bills.length}</b><span>bills</span></div><div><b class="${counts.support ? 'good' : ''}">${counts.support}</b><span>support</span></div><div><b class="${counts.oppose ? 'bad' : ''}">${counts.oppose}</b><span>oppose</span></div><div><b>${counts.watch + counts.amend}</b><span>watching or seeking changes</span></div><div><b class="${moved ? 'warn' : ''}">${moved}</b><span>moved this week</span></div><div><b>${hearingsSoon}</b><span>hearings in two weeks</span></div></div>
+      <div class="btnrow filters"><input id="bl_q" placeholder="Find a bill, client or note" value="${esc(f.q)}" aria-label="Find a bill">
+        <select id="bl_pos" aria-label="Position"><option value="">Every position</option>${Object.entries(POSITION).map(([k, v]) => `<option value="${k}" ${f.pos === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select>
+        ${legs.length > 1 ? `<select id="bl_leg" aria-label="Legislature"><option value="">Every legislature</option>${legs.map((j) => `<option value="${j}" ${f.leg === j ? 'selected' : ''}>${esc(legLabel(j))}</option>`).join('')}</select>` : ''}
+        ${CLIENTS.length ? `<select id="bl_client" aria-label="Client"><option value="">Every client</option>${CLIENTS.map((k) => `<option value="${esc(k.id)}" ${f.client === k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</select>` : ''}
+        <select id="bl_sort" aria-label="Sort"><option value="moved" ${f.sort === 'moved' ? 'selected' : ''}>Recently moved</option><option value="hearing" ${f.sort === 'hearing' ? 'selected' : ''}>Next hearing</option><option value="priority" ${f.sort === 'priority' ? 'selected' : ''}>Priority</option><option value="number" ${f.sort === 'number' ? 'selected' : ''}>Bill number</option></select></div>
+      <div class="tablewrap"><table class="ptable btable"><thead><tr><th>Bill</th><th>What it is</th><th>Position</th><th>Where it stands</th></tr></thead><tbody>${list.map(row).join('') || '<tr><td colspan="4" class="note">No bills match.</td></tr>'}</tbody></table></div>`
+    : `<div class="empty-hint"><p><b>Follow every bill that matters, not only the ones you count.</b> Add a bill by number or topic, mark whether you support or oppose it, and Headcount reads where it stands every few hours: its committee, its next hearing, every move, in plain words. Moves go in your digest.</p><button class="btn primary" data-act="tbAdd">Follow your first bill</button></div>`}
+    </div>
+    ${BILLS.shares.length || BILLS.sharing ? sharePanel() : ''}`;
+}
+function sharePanel() {
+  const embed = (u) => `<iframe src="${u}?embed=1" width="100%" height="520" style="border:0" title="Bills we follow"></iframe>`;
+  return `<div class="panel"><span class="label">Shared lists</span>
+    <p class="note">A read-only page of the bills, your positions and where each stands, for clients, members or your website. Notes stay private. Anyone with the link can see it.</p>
+    ${isAdmin() ? `<div class="btnrow"><select id="sh_client" aria-label="Which bills"><option value="">Every bill in ${esc(ORG.name)}</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">Only ${esc(k.name)}'s bills</option>`).join('')}</select><button class="btn sm primary" data-act="tbShareMake">Create a link</button></div>` : '<p class="note">An admin creates the links.</p>'}
+    <ul class="shares">${BILLS.shares.map((x) => `<li><div><b>${esc(x.client ? `${x.client}'s bills` : `Every bill in ${ORG.name}`)}</b><div class="meta">${esc(x.url)}</div></div><span class="btnrow"><a class="btn sm" href="${esc(x.url)}" target="_blank" rel="noopener">Open</a><button class="btn sm" data-act="tbCopy" data-v="${esc(x.url)}">Copy link</button><button class="btn sm" data-act="tbCopy" data-v="${esc(embed(x.url))}">Copy embed code</button>${isAdmin() ? `<button class="btn sm warn" data-act="tbShareOff" data-token="${esc(x.token)}">Turn off</button>` : ''}</span></li>`).join('')}</ul></div>`;
+}
+async function billDrawer(id) {
+  const b = (BILLS.bills || []).find((x) => x.id === id); if (!b) return;
+  if (b.campaignId) return cloudOpen(b.campaignId).then(() => { page = 'brief'; render(); });
+  const head = `<div class="row"><h2>${esc(b.number)}</h2><button class="btn sm" data-act="close">Close</button></div><p class="note">${esc(legLabel(b.juris))}${b.session ? ` · ${esc(b.session)}` : ''}${b.client ? ` · ${esc(b.client)}` : ''}</p>${b.title ? `<p>${esc(b.title)}</p>` : ''}`;
+  const form = `<form id="tbEdit" class="form" data-id="${esc(b.id)}">
+    <label>Our position<select name="position">${Object.entries(POSITION).map(([k, v]) => `<option value="${k}" ${b.position === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></label>
+    <label>Priority<select name="priority">${['high', 'normal', 'low'].map((k) => `<option value="${k}" ${b.priority === k ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></label>
+    <label class="wide">Client<select name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived || k.id === b.clientId).map((k) => `<option value="${esc(k.id)}" ${k.id === b.clientId ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</select></label>
+    <label class="wide">Notes for the team<textarea name="notes" rows="3">${esc(b.notes || '')}</textarea></label>
+    <div class="wide btnrow"><button class="btn primary">Save</button><button type="button" class="btn" data-act="tbCount" data-id="${esc(b.id)}">Start a whip count</button><button type="button" class="btn warn" data-act="tbRemove" data-id="${esc(b.id)}">Stop following</button></div></form>`;
+  showDrawer(`${head}${form}<p class="note">Reading the bill's record</p>`);
+  try {
+    const q = new URLSearchParams({ jurisdiction: b.juris, number: b.number }); if (b.session) q.set('session', b.session);
+    const d = await CLOUD.api('GET', `/api/bills/story?${q}`);
+    if ($('#tbEdit') && $('#tbEdit').dataset.id === b.id) showDrawer(`${head}${storyPanelHtml({ d, leg: b.juris, number: b.number })}${form}`);
+  } catch (e) { if ($('#tbEdit') && $('#tbEdit').dataset.id === b.id) showDrawer(`${head}<p class="note">${esc(e.message)}</p>${form}`); }
+}
+async function billListSearch() {
+  const out = $('#tbs_out'), q = $('#tbs_q').value.trim(), leg = $('#tb_leg').value;
+  if (q.length < 3) { out.innerHTML = '<p class="note">Type a few words about the bill.</p>'; return; }
+  out.innerHTML = `<p class="note">Searching ${esc(legLabel(leg))}</p>`;
+  try {
+    const r = await CLOUD.api('GET', `/api/bills/search?${new URLSearchParams({ leg, q })}`);
+    out.innerHTML = r.bills.length ? `<ul class="ns-list">${r.bills.map((b) => `<li><div><b>${esc(b.number)}</b> <span class="meta">${esc(b.session)}</span><div>${esc(clipWords(b.title, 160))}</div><div class="meta">${esc(b.status)}</div></div><button type="button" class="btn sm" data-act="tbPick" data-n="${esc(b.number)}" data-title="${esc(b.title)}" data-s="${esc(b.session)}">Choose</button></li>`).join('')}</ul>` : `<p class="note">Nothing in ${esc(legLabel(leg))} matches. Try other words.</p>`;
+  } catch (e) { out.innerHTML = `<p class="note">${esc(e.message)}</p>`; }
+}
+
+// ---------- legislators ----------
+// Every legislator in any campaign: where they stand on each of your bills,
+// how often they are with you, and when anyone last talked to them.
+let PEOPLE_PAGE = { oid: '', at: 0, list: null, f: { q: '', sort: 'bills', show: '' } };
+async function loadPeople2(force = false) {
+  if (!ORG || !signedIn() || typeof wsPath !== 'function') return;
+  if (!force && PEOPLE_PAGE.oid === ORG.id && PEOPLE_PAGE.list && Date.now() - PEOPLE_PAGE.at < 60e3) return;
+  const oid = ORG.id;
+  try { const r = await CLOUD.api('GET', wsPath('/legislators')); if (ORG && ORG.id === oid) { Object.assign(PEOPLE_PAGE, { oid, at: Date.now(), list: r.people }); if (page === 'people') renderPeople(); } }
+  catch (e) { if (page === 'people') $('#peoplePage').innerHTML = `<div class="panel empty">${esc(e.message)}</div>`; }
+}
+const partyWord = (p) => ({ D: 'Democrat', R: 'Republican', I: 'Independent' })[p] || p || '';
+function renderPeople() {
+  const el = $('#peoplePage'); if (!el || !ORG) return;
+  if (PEOPLE_PAGE.oid !== ORG.id || !PEOPLE_PAGE.list) { el.innerHTML = '<div class="panel empty">Gathering everyone from your campaigns</div>'; loadPeople2(true); return; }
+  loadPeople2();
+  const f = PEOPLE_PAGE.f, q = f.q.trim().toLowerCase();
+  let list = PEOPLE_PAGE.list.filter((p) => (!q || `${p.name} ${p.district} ${p.chamber} ${partyWord(p.party)}`.toLowerCase().includes(q))
+    && (!f.show || (f.show === 'with' ? p.withUs > 0 && !p.against : f.show === 'against' ? p.against > 0 : f.show === 'split' ? p.withUs > 0 && p.against > 0 : f.show === 'never' ? !p.lastContact : true)));
+  list = list.slice().sort((a, b) => f.sort === 'score' ? (b.score ?? -1) - (a.score ?? -1) : f.sort === 'contact' ? String(a.lastContact || '0').localeCompare(String(b.lastContact || '0')) : f.sort === 'name' ? a.name.localeCompare(b.name) : b.bills - a.bills || a.name.localeCompare(b.name));
+  const total = PEOPLE_PAGE.list.length, never = PEOPLE_PAGE.list.filter((p) => !p.lastContact).length, allies = PEOPLE_PAGE.list.filter((p) => p.score !== null && p.score >= 75).length;
+  const chip = (x) => `<span class="pchip ${x.withUs ? 'good' : x.against ? 'bad' : 'muted'}" title="${esc(x.campaign)}">${esc(x.word)}</span>`;
+  el.innerHTML = total ? `<div class="panel">
+    <div class="row"><span class="label">Everyone in your campaigns</span><span class="note">${total} legislators</span></div>
+    <div class="bstats"><div><b>${total}</b><span>legislators</span></div><div><b class="${allies ? 'good' : ''}">${allies}</b><span>with you on most bills</span></div><div><b class="${never ? 'warn' : ''}">${never}</b><span>no contact logged yet</span></div></div>
+    <div class="btnrow filters"><input id="pp_q" placeholder="Find a legislator or district" value="${esc(f.q)}" aria-label="Find a legislator">
+      <select id="pp_show" aria-label="Show"><option value="">Everyone</option><option value="with" ${f.show === 'with' ? 'selected' : ''}>Only with you</option><option value="against" ${f.show === 'against' ? 'selected' : ''}>Against you on a bill</option><option value="split" ${f.show === 'split' ? 'selected' : ''}>With you on some, against on others</option><option value="never" ${f.show === 'never' ? 'selected' : ''}>No contact logged</option></select>
+      <select id="pp_sort" aria-label="Sort"><option value="bills" ${f.sort === 'bills' ? 'selected' : ''}>Most of your bills</option><option value="score" ${f.sort === 'score' ? 'selected' : ''}>Most often with you</option><option value="contact" ${f.sort === 'contact' ? 'selected' : ''}>Longest since contact</option><option value="name" ${f.sort === 'name' ? 'selected' : ''}>Name</option></select></div>
+    <div class="tablewrap"><table class="ptable btable"><thead><tr><th>Legislator</th><th>With you</th><th>On your bills</th><th>Last contact</th></tr></thead><tbody>
+    ${list.slice(0, 400).map((p) => `<tr class="prow" data-person="${esc(p.key)}" tabindex="0"><td><b>${esc(p.name)}</b><div class="meta">${esc([partyWord(p.party), p.district ? `District ${p.district}` : '', p.chamber].filter(Boolean).join(' · '))}</div></td>
+      <td>${p.score === null ? '<span class="meta">No positions yet</span>' : `<div class="score-bar" title="With you on ${p.withUs} of ${p.bills} bills"><i style="width:${p.score}%"></i></div><span class="meta">${p.withUs} of ${p.bills} bill${p.bills === 1 ? '' : 's'}</span>`}</td>
+      <td class="chips">${p.positions.slice(0, 4).map(chip).join(' ')}${p.positions.length > 4 ? ` <span class="meta">+${p.positions.length - 4}</span>` : ''}</td>
+      <td>${p.lastContact ? `${esc(fmtDay(p.lastContact))}<div class="meta">${esc(inDays(p.lastContact))} · ${p.contacts} contact${p.contacts === 1 ? '' : 's'}</div>` : '<span class="meta">Never</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">No one matches.</td></tr>'}
+    </tbody></table></div>${list.length > 400 ? `<p class="note">Showing 400 of ${list.length}. Search to narrow it.</p>` : ''}</div>`
+    : '<div class="panel"><div class="empty-hint"><p><b>Legislators appear here once a campaign has members.</b> Each one gets a profile across all your bills: where they stand on each, how often they are with you, and every call and meeting your team has logged.</p><button class="btn primary" data-act="newCamp">Start a campaign</button></div></div>';
+}
+async function personDrawer(key) {
+  showDrawer('<div class="row"><h2>Loading</h2><button class="btn sm" data-act="close">Close</button></div>');
+  try {
+    const p = await CLOUD.api('GET', wsPath(`/legislators/${encodeURIComponent(key)}`));
+    const tel = (n) => `<a href="tel:${esc(String(n).replace(/[^0-9+]/g, ''))}">${esc(n)}</a>`;
+    showDrawer(`<div class="row"><h2>${esc(p.name)}</h2><button class="btn sm" data-act="close">Close</button></div>
+      <p class="note">${esc([partyWord(p.party), p.district ? `District ${p.district}` : '', p.chamber].filter(Boolean).join(' · '))}</p>
+      <div class="bstats"><div><b class="${p.score !== null && p.score >= 50 ? 'good' : p.score !== null ? 'bad' : ''}">${p.score === null ? '–' : `${p.score}%`}</b><span>with you</span></div><div><b>${p.bills}</b><span>of your bills</span></div><div><b>${p.contacts}</b><span>contacts logged</span></div></div>
+      ${p.phone || p.email || p.office ? `<p>${[p.phone && tel(p.phone), p.email && `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>`, p.office && esc(p.office)].filter(Boolean).join(' · ')}</p>` : ''}
+      <span class="label">Where they stand</span>
+      <ul class="moves">${p.positions.map((x) => `<li><span class="pchip ${x.withUs ? 'good' : x.against ? 'bad' : 'muted'}">${esc(x.word)}</span> <button class="linkbtn" data-opencamp="${esc(x.campaignId)}">${esc(x.campaign)}</button> <span class="meta">${x.side === 'defeat' ? 'you oppose it' : 'you support it'}${x.committee ? ' · on the committee' : ''}${x.role ? ` (${esc(x.role)})` : ''}</span></li>`).join('')}</ul>
+      ${p.committees.length ? `<span class="label">Committees in your campaigns</span><p>${p.committees.map(esc).join('; ')}</p>` : ''}
+      ${p.staff.length ? `<span class="label">Staff</span><ul class="moves">${p.staff.map((s) => `<li><b>${esc(s.name)}</b>${s.title ? `, ${esc(s.title)}` : ''}${s.email ? ` · <a href="mailto:${esc(s.email)}">${esc(s.email)}</a>` : ''}${s.phone ? ` · ${tel(s.phone)}` : ''}</li>`).join('')}</ul>` : ''}
+      <span class="label">History with your team</span>
+      ${p.history.length ? `<ul class="moves">${p.history.slice(0, 40).map((h) => `<li><span class="when">${esc(fmtDay(h.d))}</span> · <b>${esc(h.type)}</b>${h.note ? `: ${esc(h.note)}` : ''} <span class="meta">${esc(h.campaign)}${h.by ? ` · ${esc(h.by)}` : ''}</span></li>`).join('')}</ul>` : '<p class="note">Nothing logged yet. Log calls and meetings from a campaign\'s member panel.</p>'}`);
+  } catch (e) { showDrawer(`<div class="row"><h2>Legislator</h2><button class="btn sm" data-act="close">Close</button></div><p class="bad">${esc(e.message)}</p>`); }
+}
+
 // ---------- portfolio ----------
 // Today: where every bill stands, hearings coming up and what moved this week,
 // from the server's own reading of each bill.
@@ -2047,12 +2232,12 @@ function render() {
   autoStaff(); recordDaily();
   { const mr = $('#menuRecord'); if (mr) mr.hidden = !(signedIn() && S.cloud && !S.example && canEditNow()); }
   const c = S.campaign, cfg = CLOUD.config || {}, campaignPage = page === 'count' || page === 'brief', team = signedIn() && ORG && ORG.role !== 'guest';
-  if ((page === 'monitor' || page === 'contacts') && !team && signedIn() && ORG) page = 'portfolio';
+  if ((page === 'monitor' || page === 'contacts' || page === 'bills' || page === 'people') && !team && signedIn() && ORG) page = 'portfolio';
   renderSwitcher();
   $('.camp').hidden = !campaignPage;
   $('#setupBtn').hidden = !campaignPage;
   ['pgPortfolio', 'pgWorkspace'].forEach((id) => { $('#' + id).hidden = !signedIn(); });
-  ['pgMonitor', 'pgContacts'].forEach((id) => { $('#' + id).hidden = !team; });
+  ['pgMonitor', 'pgContacts', 'pgBills', 'pgPeople'].forEach((id) => { $('#' + id).hidden = !team; });
   PAGES.forEach((k) => { $('#pg' + k[0].toUpperCase() + k.slice(1)).setAttribute('aria-pressed', page === k); });
   if (campaignPage) {
     const nd = needs(S);
@@ -2062,7 +2247,7 @@ function render() {
     storyLine(); if (page === 'count') loadStory();
     $('#hDates').textContent = [['Committee vote', c.cmteDate], ['Floor vote', c.floorDate]].filter((x) => x[1]).map((x) => `${x[0]} ${inDays(x[1])} (${fmtDay(x[1])})`).concat((() => { const n = S.tasks.filter((t) => !t.done && t.due && dayDiff(t.due) < 0).length; return n ? [`${n} follow-up${n > 1 ? 's' : ''} overdue`] : []; })()).join(' · ');
   } else {
-    $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : page === 'monitor' ? 'Monitor' : page === 'contacts' ? 'Contacts' : ORG ? `${ORG.name} settings` : 'Workspace';
+    $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : page === 'bills' ? 'Bills you follow' : page === 'people' ? 'Legislators' : page === 'monitor' ? 'Monitor' : page === 'contacts' ? 'Contacts' : ORG ? `${ORG.name} settings` : 'Workspace';
     storyLine();
     $('#hSub').textContent = ORG ? `${ORG.plan.label} · ${ROLE_LABEL[ORG.role]}${ORG.role === 'guest' ? ': you see only the campaigns you were added to' : ''}` : '';
     $('#hDates').textContent = '';
@@ -2098,6 +2283,8 @@ function render() {
   if (page === 'brief') renderBrief();
   else if (page === 'monitor') { if (typeof renderMonitor === 'function') renderMonitor(); }
   else if (page === 'contacts') { if (typeof renderContacts === 'function') renderContacts(); }
+  else if (page === 'bills') renderBills();
+  else if (page === 'people') renderPeople();
   else if (page === 'portfolio') renderPortfolio();
   else if (page === 'workspace') renderWorkspace();
   else {
@@ -2702,6 +2889,19 @@ document.addEventListener('click', async (e) => {
     case 'briefCopy': return copyText(briefPlain(S.brief));
     case 'briefPrint': return window.print();
     case 'storyAgain': STORY.err = ''; loadStory(true); return;
+    case 'simSearch': return similarSearch();
+    case 'simFollow': try { const r = await CLOUD.api('POST', wsPath('/bills'), { juris: t.dataset.leg, number: t.dataset.n, session: t.dataset.s, title: t.dataset.title, position: 'watch' }); t.textContent = 'Following'; t.disabled = true; BILLS.at = 0; toast(`Following ${r.number} on the Bills page`); } catch (err) { fail(err); } return;
+    case 'tbAdd': BILLS.adding = true; renderBills(); { const n = $('#tb_num'); if (n) n.focus(); } return;
+    case 'tbCancel': BILLS.adding = false; return renderBills();
+    case 'tbSearchToggle': { const box = $('#tbSearch'); box.hidden = !box.hidden; if (!box.hidden) $('#tbs_q').focus(); return; }
+    case 'tbSearch': return billListSearch();
+    case 'tbPick': $('#tb_num').value = t.dataset.n; $('#tb_title').value = t.dataset.title || ''; $('#tb_session').value = t.dataset.s || ''; $('#tbSearch').hidden = true; $('#tbMsg').textContent = `${t.dataset.n} chosen.`; return;
+    case 'tbShare': BILLS.sharing = true; renderBills(); { const sp = document.querySelector('.shares'); if (sp) sp.scrollIntoView({ behavior: 'smooth', block: 'center' }); } return;
+    case 'tbShareMake': try { const r = await CLOUD.api('POST', wsPath('/bill-shares'), { clientId: ($('#sh_client') || {}).value || '' }); BILLS.shares = [r, ...BILLS.shares]; renderBills(); copyText(r.url); toast('Link created and copied'); } catch (err) { fail(err); } return;
+    case 'tbShareOff': if (sure('Turn off this link')) { try { await CLOUD.api('DELETE', wsPath(`/bill-shares/${t.dataset.token}`)); BILLS.shares = BILLS.shares.filter((x) => x.token !== t.dataset.token); renderBills(); toast('The link no longer works'); } catch (err) { fail(err); } } return;
+    case 'tbCopy': copyText(t.dataset.v); toast('Copied'); return;
+    case 'tbRemove': if (sure('Stop following this bill')) { try { await CLOUD.api('DELETE', wsPath(`/bills/${t.dataset.id}`)); BILLS.bills = BILLS.bills.filter((x) => x.id !== t.dataset.id); closeDrawer(); renderBills(); toast('No longer following it'); } catch (err) { fail(err); } } return;
+    case 'tbCount': { const b = (BILLS.bills || []).find((x) => x.id === t.dataset.id); if (!b) return; closeDrawer(); await campaignFromItem({ id: '', number: b.number, juris: b.juris, session: b.session, title: b.title, clientId: b.clientId }); loadBills(true); return; }
     case 'nSearchToggle': { const box = $('#nSearch'); box.hidden = !box.hidden; if (!box.hidden) $('#ns_q').focus(); return; }
     case 'nSearch': return billSearch();
     case 'nPick': {
@@ -2792,11 +2992,26 @@ document.addEventListener('input', (e) => {
   else if ((id === 'rq_body' || id === 'rq_subject') && RQ) { RQ.edited = true; rqRead(); }
   else if (id === 'n_bill') nChamberSync();
   else if (id === 'gl_q') glossaryFilter();
+  else if (id === 'pp_q') { PEOPLE_PAGE.f.q = e.target.value; renderPeople(); const el = $('#pp_q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  else if (id === 'bl_q') { BILLS.f.q = e.target.value; renderBills(); const el = $('#bl_q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target && e.target.id === 'ns_q') { e.preventDefault(); billSearch(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target && e.target.id === 'ns_q') { e.preventDefault(); billSearch(); }
+  if (e.key === 'Enter' && e.target && e.target.id === 'tbs_q') { e.preventDefault(); billListSearch(); }
+  if (e.key === 'Enter' && e.target && e.target.id === 'sim_q') { e.preventDefault(); similarSearch(); }
+  if (e.key === 'Enter' && e.target && e.target.matches && e.target.matches('tr[data-bill]')) billDrawer(e.target.dataset.bill);
+  if (e.key === 'Enter' && e.target && e.target.matches && e.target.matches('tr[data-person]')) personDrawer(e.target.dataset.person);
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest || e.target.closest('a,button,select,input')) return;
+  const r = e.target.closest('tr[data-bill]'); if (r) return billDrawer(r.dataset.bill);
+  const pr = e.target.closest('tr[data-person]'); if (pr) personDrawer(pr.dataset.person);
+});
 document.addEventListener('change', (e) => {
   const id = e.target.id;
   if (id === 'n_leg') { const f = $('#n_from'); if (f) delete f.dataset.user; nChamberSync(true); }
+  else if (id === 'pp_show' || id === 'pp_sort') { PEOPLE_PAGE.f[id === 'pp_show' ? 'show' : 'sort'] = e.target.value; renderPeople(); }
+  else if (['bl_pos', 'bl_leg', 'bl_client', 'bl_sort'].includes(id)) { BILLS.f[{ bl_pos: 'pos', bl_leg: 'leg', bl_client: 'client', bl_sort: 'sort' }[id]] = e.target.value; renderBills(); }
   else if (id === 'n_from') e.target.dataset.user = '1';
 });
 document.addEventListener('submit', async (e) => {
@@ -2832,6 +3047,19 @@ document.addEventListener('submit', async (e) => {
     S.tasks.push(stamp({ id: uid(), text: cut('text', 200), due: fd.get('due') || '', mid: '', done: false, assignee: S.cloud ? String(fd.get('for') || '') : '' }));
     if (S.tasks.length > 300) S.tasks = S.tasks.slice(-300);
     e.target.reset(); save(); render(); return toast('Follow-up added');
+  }
+  if (id === 'tbForm') {
+    const msg = $('#tbMsg'), body = Object.fromEntries(fd.entries());
+    try { localStorage.setItem('headcount.leg', body.juris); } catch (_) { /* fine */ }
+    msg.textContent = 'Adding it';
+    try { const r = await CLOUD.api('POST', wsPath('/bills'), body); BILLS.bills = [r, ...BILLS.bills.filter((x) => x.id !== r.id)]; BILLS.adding = false; renderBills(); toast(`Following ${r.number}`); setTimeout(() => loadBills(true), 4000); }
+    catch (err) { msg.textContent = err.message; }
+    return;
+  }
+  if (id === 'tbEdit') {
+    try { const r = await CLOUD.api('PATCH', wsPath(`/bills/${e.target.dataset.id}`), Object.fromEntries(fd.entries())); BILLS.bills = BILLS.bills.map((x) => (x.id === r.id ? r : x)); closeDrawer(); renderBills(); toast('Saved'); }
+    catch (err) { fail(err); }
+    return;
   }
   if (id === 'nForm') {
     const st = blankState(clipWords(fd.get('bill'), 140)); st.campaign.side = fd.get('side');

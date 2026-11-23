@@ -16,6 +16,8 @@ import { makeAuthenticator, verifyGoogleIdToken } from './auth.js';
 import { lookupBill, STATES, CHAMBERS } from './bills.js';
 import { billRecord } from './record.js';
 import { makeTracker } from './tracker.js';
+import { makeBillList } from './billlist.js';
+import { makePeople } from './people.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
 import { makeCrm } from './crm.js';
@@ -186,6 +188,29 @@ function simplePage(res, ok, title, message, href, label) {
   res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escHtml(title)} · Headcount</title><link rel="stylesheet" href="/site/site.css"></head>
 <body><main class="narrow"><p class="eyebrow">Headcount</p><h1>${escHtml(title)}</h1><p>${escHtml(message)}</p><p><a class="button" href="${escHtml(href)}">${escHtml(label)}</a></p></main></body></html>`);
 }
+// A workspace's bill list as a public, read-only page (or, with ?embed=1, a
+// compact table for an iframe on a website). No private notes; can be framed.
+const POS_WORD = { support: ['Support', '#0f9a6c'], oppose: ['Oppose', '#d23b4e'], watch: ['Watching', '#5d6168'], amend: ['Seeking changes', '#b7860f'] };
+function sharedBillsPage(res, d, embed) {
+  const day = (iso) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '');
+  const today = new Date().toISOString().slice(0, 10);
+  const place = (j) => (j === 'US' ? 'Congress' : STATES[j] || j);
+  const rows = d.bills.map((b) => { const [w, c] = POS_WORD[b.position] || POS_WORD.watch, h = (b.hearings || []).find((x) => x.date >= today);
+    return `<tr><td><b>${escHtml(b.number)}</b><div class="m">${escHtml(place(b.juris))}</div></td><td>${escHtml(b.title || '')}${h ? `<div class="h">Hearing ${escHtml(day(h.date))}${h.time ? `, ${escHtml(h.time)}` : ''}${h.committee ? ` · ${escHtml(h.committee)}` : ''}</div>` : ''}</td>
+      <td><span class="pos" style="color:${c};border-color:${c}">${w}</span></td><td>${escHtml(b.now || 'Not read yet')}</td></tr>`; }).join('');
+  res.writeHead(200, { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Type': MIME['.html'], 'Cache-Control': 'public, max-age=300',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-ancestors *; base-uri 'none'; form-action 'none'" });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escHtml(d.title)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..700&display=swap">
+<style>body{margin:0;font:15px/1.5 Archivo,Helvetica,Arial,sans-serif;color:#0b0f17;background:${embed ? '#fff' : '#f4f4f3'}}main{max-width:1080px;margin:0 auto;padding:${embed ? '8px' : '40px 20px'}}
+h1{font-weight:600;font-size:${embed ? '18px' : '34px'};letter-spacing:-.03em;margin:0 0 4px}.sub{color:#5d6168;margin:0 0 18px}table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e3df}
+th{text-align:left;font:600 11px Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;color:#5d6168;padding:10px 12px;border-bottom:1px solid #e3e3df}td{padding:12px;border-bottom:1px solid #eee;vertical-align:top}
+.m{color:#5d6168;font-size:13px}.h{color:#1366d6;font-size:13px;margin-top:4px}.pos{display:inline-block;border:1px solid;padding:2px 8px;font:600 11px Archivo,Arial;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+footer{color:#5d6168;font-size:12px;margin-top:14px}footer a{color:#5d6168}@media(max-width:640px){th:nth-child(4),td:nth-child(4){display:none}}</style></head>
+<body><main>${embed ? '' : `<h1>${escHtml(d.title)}</h1><p class="sub">${escHtml(d.org)} · ${d.bills.length} bill${d.bills.length === 1 ? '' : 's'} · Where each stands is read from the public record every few hours.</p>`}
+<table><thead><tr><th>Bill</th><th>What it is</th><th>Position</th><th>Where it stands</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No bills on this list yet.</td></tr>'}</tbody></table>
+<footer>Shared by ${escHtml(d.org)} with <a href="/" target="_blank" rel="noopener">Headcount</a>.</footer></main></body></html>`);
+}
 function unsubscribePage(res, ok, message) {
   res.writeHead(ok ? 200 : 400, { ...SECURITY, 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': csp() });
   res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email settings · Headcount</title><link rel="stylesheet" href="/site/site.css"></head>
@@ -215,8 +240,10 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
   mail = makeMailer(config, store);
   // Email that could not be sent before a restart (a new password, a fixed setting) gets another try right away.
   try { store.q.retryEmails.run(Date.now() - 3 * 864e5); } catch (_) { /* older database */ }
-  const tracker = makeTracker(config, store);
-  const notifier = makeNotifier(config, store, mail, monitor, tracker), actions = makeActionCenter(config, store, mail);
+  const tracker = makeTracker(config, store), billList = makeBillList(config, store, tracker);
+  tracker.addSource(billList.allBills);
+  const people = makePeople(store);
+  const notifier = makeNotifier(config, store, mail, monitor, tracker, billList), actions = makeActionCenter(config, store, mail);
   store.notify = notifier.handle; monitor.setAlertHandler(notifier.monitorAlert);
   // Rebuilds the Florida lists and official staff from the official sources
   async function refreshOfficialLists(sources) {
@@ -425,6 +452,14 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['POST', `/api/campaigns/${C}/invites`, async (m, x) => store.createInvite(m[1], x.user.id, (await x.body()).role)],
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
+    ['GET', `/api/workspaces/${W}/legislators`, (m, x) => people.list(m[1], x.user.id)],
+    ['GET', `/api/workspaces/${W}/legislators/${U}`, (m, x) => people.profile(m[1], x.user.id, decodeURIComponent(m[2]))],
+    ['GET', `/api/workspaces/${W}/bills`, (m, x) => billList.list(m[1], x.user.id)],
+    ['POST', `/api/workspaces/${W}/bills`, async (m, x) => { limit('track:' + x.user.id, 60); return billList.add(m[1], x.user.id, await x.body()); }],
+    ['PATCH', `/api/workspaces/${W}/bills/${C}`, async (m, x) => billList.update(m[1], x.user.id, m[2], await x.body())],
+    ['DELETE', `/api/workspaces/${W}/bills/${C}`, (m, x) => billList.remove(m[1], x.user.id, m[2])],
+    ['POST', `/api/workspaces/${W}/bill-shares`, async (m, x) => billList.addShare(m[1], x.user.id, await x.body())],
+    ['DELETE', `/api/workspaces/${W}/bill-shares/${K}`, (m, x) => billList.dropShare(m[1], x.user.id, m[2])],
     ['GET', `/api/workspaces/${W}/today`, async (m, x) => ({ bills: store.listOrgCampaigns(m[1], x.user.id).filter((c) => !c.archived).map((c) => { const t = tracker.todayFor(c.summary); return t ? { id: c.id, name: c.name, ...t } : null; }).filter(Boolean) })],
     ['GET', '/api/bills/search', async (m, x) => { limit('search:' + x.user.id, 20); const q = x.url.searchParams; return { bills: await sources.searchBills(config, { leg: q.get('leg'), q: q.get('q') }) }; }],
     ['GET', '/api/bills/story', async (m, x) => { limit('story:' + x.user.id, 60); const q = x.url.searchParams; return tracker.story(q.get('jurisdiction'), q.get('number'), q.get('session') || '', { force: q.get('fresh') === '1' }); }],
@@ -558,6 +593,9 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
         console.error(e);
         send(res, 500, { error: 'Something went wrong on the server.' });
       });
+    } else if ((req.method === 'GET' || req.method === 'HEAD') && /^\/bills\/[A-Za-z0-9_-]{16,40}$/.test(url.pathname)) {
+      try { limit('share:' + clientIp(req), 120); sharedBillsPage(res, billList.publicList(url.pathname.slice(7)), url.searchParams.get('embed') === '1'); }
+      catch (e) { simplePage(res, false, 'This list is not shared', e.message || 'The link may have been turned off.', '/', 'Headcount'); }
     } else if (req.method === 'GET' || req.method === 'HEAD') serveStatic(req, res, url.pathname);
     else send(res, 405, { error: 'Method not allowed.' });
   });

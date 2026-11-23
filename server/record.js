@@ -105,7 +105,7 @@ async function federal(cfg, number, congress) {
   const actChamber = (a) => { const n = String((a.sourceSystem && a.sourceSystem.name) || ''); return /house/i.test(n) ? 'lower' : /senate/i.test(n) ? 'upper' : /\bHouse\b/.test(a.text || '') ? 'lower' : /\bSenate\b/.test(a.text || '') ? 'upper' : ''; };
   const story = billStory(actions.slice().reverse().map((a) => ({ date: a.actionDate, text: a.text, chamber: actChamber(a), kinds: [] })), votes, { lower: 'House', upper: 'Senate' }, { origin, executive: 'President' });
   return {
-    bill: p.label, source: 'Congress.gov', origin, now: lastChamber || origin, story,
+    bill: p.label, title: main.bill.title || '', source: 'Congress.gov', origin, now: lastChamber || origin, story,
     sponsors: (main.bill.sponsors || []).map(person),
     cosponsors: cos.filter((s) => !s.sponsorshipWithdrawnDate).map(person),
     committees, votes,
@@ -183,7 +183,7 @@ async function state(cfg, code, number, session) {
   const story = billStory(acts.map((a) => ({ date: a.date, text: a.description, chamber: (a.organization && a.organization.classification) || '', kinds: a.classification || [] })), votes, names,
     { origin: origin || undefined, unicameral: !namedChamber(code, 'lower'), executive: code === 'DC' ? 'Mayor' : 'governor' });
   return {
-    bill: b.identifier || ident, source: 'Open States', origin, now: lastChamber || origin, story,
+    bill: b.identifier || ident, title: b.title || '', source: 'Open States', origin, now: lastChamber || origin, story,
     sponsors: sp.filter((s) => s.primary !== false).map((s) => person(s.person, s.name)),
     cosponsors: sp.filter((s) => s.primary === false).map((s) => person(s.person, s.name)),
     committees, votes: votes.filter((v) => v.votes.length).slice(0, 12),
