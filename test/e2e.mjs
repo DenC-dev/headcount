@@ -379,7 +379,7 @@ try {
   assert.equal(await alice.page.evaluate(() => contact(S.members[0]).email), 'simon.corey@flsenate.gov');
   await alice.page.click('#moreMenu summary'); await alice.page.click('[data-x=actionCenter]');
   await alice.page.waitForSelector('#acForm');
-  assert.equal(await alice.page.inputValue('#ac_juris'), 'st-upper'); assert.equal(await alice.page.inputValue('#ac_state'), 'FL');
+  assert.equal(await alice.page.inputValue('#ac_juris'), 'FL:upper');
   await alice.page.click('#acGo');
   await alice.page.waitForFunction(() => ACT.data && ACT.data.action && ACT.data.action.active);
   const actUrl = await alice.page.evaluate(() => ACT.data.action.url);

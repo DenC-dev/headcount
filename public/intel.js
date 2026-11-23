@@ -173,12 +173,13 @@ function intelBriefButtons(b) {
 }
 
 // ---------- rosters for every legislature ----------
+const osChamberOptions = (st) => chambersOf(st, ((CLOUD.config || {}).states || {})[st]).map((c) => `<option value="${c.chamber}">${esc(c.label)}</option>`).join('');
 function rosterLoaderHtml() {
   const cfg = CLOUD.config || {};
   if (!cfg.rosters || !signedIn()) return '';
   return `<details><summary class="note">Load any state legislature, with emails and offices</summary>
     <div class="btnrow"><select id="os_state" aria-label="State">${Object.entries(cfg.states || {}).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select>
-    <select id="os_chamber" aria-label="Chamber"><option value="upper">Senate</option><option value="lower">House or Assembly</option><option value="legislature">Nebraska Legislature</option></select>
+    <select id="os_chamber" aria-label="Chamber">${osChamberOptions(Object.keys(cfg.states || {})[0])}</select>
     <button class="btn" data-x="osRoster">Get the roster</button></div><p class="note" id="osMsg" role="status">Current members from Open States.</p></details>`;
 }
 async function fetchRoster(btn) {
@@ -227,7 +228,7 @@ async function actionDrawer() {
   const d = ACT.data || {}, a = d.action, stats = d.stats || { responses: 0, byMember: {} }, ro = !canEditNow(), j = (a && a.juris) || guessJuris();
   const top = Object.entries(stats.byMember || {}).map(([id, n]) => [S.members.find((m) => m.id === id), n]).filter((x) => x[0]).sort((x, y) => y[1] - x[1]).slice(0, 8);
   const st = (CLOUD.config && CLOUD.config.states) || {};
-  const jv = j ? (j.level === 'us' ? `us-${j.chamber}` : `st-${j.chamber}`) : '';
+  const jv = j ? (j.level === 'us' ? `us:${j.chamber}` : `${j.state}:${j.chamber}`) : '';
   showDrawer(`<div class="row"><h2>Action center</h2><button class="btn sm" data-act="close">Close</button></div>
   <p class="note">A public page where supporters enter their address, see which of this campaign's legislators represent them, and send a letter to the office${CLOUD.config && CLOUD.config.email ? ' by email where the office publishes one' : ''}, or call. Each letter counts toward that member in your whip count.</p>
   ${a ? `<div class="panel"><span class="label">${a.active ? 'Live' : 'Turned off'}</span><p style="margin:6px 0"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.url)}</a> ${copyBtn(a.url)}</p>
@@ -241,8 +242,7 @@ async function actionDrawer() {
     <label class="wide">The letter (supporters can edit it)<textarea id="ac_letter" rows="9">${esc(a ? a.letter : defaultLetter())}</textarea></label>
     <label class="wide">Call script<textarea id="ac_call" rows="2">${esc(a ? a.callScript : `Say you are a constituent, give your address, and ask the ${honorific() || 'legislator'} to ${S.campaign.side === 'defeat' ? 'vote no on' : 'vote yes on'} ${S.brief.number || S.campaign.bill}.`)}</textarea></label>
     <label>Who supporters can write to<select id="ac_targets"><option value="all">Every member in the count</option><option value="cmte">Committee members</option><option value="swing">Undecided and leaning members</option></select></label>
-    <label>These legislators are<select id="ac_juris"><option value="">Choose</option><option value="us-lower" ${jv === 'us-lower' ? 'selected' : ''}>U.S. House</option><option value="us-upper" ${jv === 'us-upper' ? 'selected' : ''}>U.S. Senate</option><option value="st-upper" ${jv === 'st-upper' ? 'selected' : ''}>A state senate</option><option value="st-lower" ${jv === 'st-lower' ? 'selected' : ''}>A state house or assembly</option></select></label>
-    <label>State, for a legislature<select id="ac_state"><option value="">Choose</option>${Object.entries(st).map(([k, v]) => `<option value="${k}" ${j && j.state === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+    <label>These legislators sit in<select id="ac_juris"><option value="">Choose</option>${[['us:lower', 'U.S. House'], ['us:upper', 'U.S. Senate'], ...Object.entries(st).flatMap(([k, v]) => chambersOf(k, v).map((c) => [`${k}:${c.chamber}`, c.label]))].map(([v, label]) => `<option value="${v}" ${jv === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
     <label class="check"><input type="checkbox" id="ac_active" ${!a || a.active ? 'checked' : ''}> Page is live</label>
     <div class="wide btnrow"><button class="btn primary" id="acGo">${a ? 'Save changes' : 'Publish the page'}</button></div>
     <p class="note wide" id="acMsg" role="status">Supporters' districts come from the U.S. Census address lookup and are matched to each member's district number in this count.</p>
@@ -252,8 +252,7 @@ async function saveAction() {
   const pick = $('#ac_targets').value, jv = $('#ac_juris').value;
   const list = S.members.filter((m) => (pick === 'cmte' ? m.cmte : pick === 'swing' ? m.pos >= 1 && m.pos <= 3 : true));
   const targets = list.map((m) => { const c = contact(m); return { id: m.id, name: m.name, party: m.party, district: m.district, email: c.email, phone: c.phone || c.dphone, form: c.form, title: honorific() }; });
-  const juris = jv ? { level: jv.startsWith('us') ? 'us' : 'state', chamber: jv.endsWith('upper') ? 'upper' : 'lower', state: $('#ac_state').value } : null;
-  if (juris && juris.level === 'state' && !juris.state) { $('#acMsg').textContent = 'Choose the state.'; return; }
+  const [jst, jch] = jv.split(':'), juris = jv ? (jst === 'us' ? { level: 'us', chamber: jch } : { level: 'state', state: jst, chamber: jch }) : null;
   if (!juris) { $('#acMsg').textContent = 'Choose which chamber these legislators sit in, so supporters can be matched to them.'; return; }
   $('#acGo').disabled = true;
   try {
@@ -460,6 +459,7 @@ document.addEventListener('click', (e) => {
 }, true);
 document.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.id === 'os_state') { const c = $('#os_chamber'); if (c) c.innerHTML = osChamberOptions(t.value); return; }
   if (t.id === 'mw_kind') { document.querySelectorAll('.mwf').forEach((f) => { f.hidden = f.dataset.for !== t.value; }); return; }
   if (t.id === 'mon_kind') { MON.kind = t.value; loadItems(); return; }
   if (t.id === 'ct_tag') { CRM.tag = t.value; renderContacts(); return; }

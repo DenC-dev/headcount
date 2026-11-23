@@ -149,7 +149,7 @@ async function state(cfg, code, number, session) {
       return out;
     });
     for (const name of referred.slice(0, 6)) {
-      const want = norm(name), chamberHint = /\bhouse\b/i.test(name) ? 'lower' : /\bsenate\b/i.test(name) ? 'upper' : (b.from_organization && b.from_organization.classification) || '';
+      const want = norm(name), chamberHint = /\b(house|assembly|delegates)\b/i.test(name) ? 'lower' : /\bsenate\b/i.test(name) ? 'upper' : (b.from_organization && b.from_organization.classification) || '';
       const hit = list.find((c) => norm(c.name) === want && (!chamberHint || c.chamber === chamberHint)) || list.find((c) => norm(c.name) === want);
       if (/calendar|special order/i.test(name)) continue;
       const cm = hit ? (hit.memberships || []).map((m) => m.person && m.person.current_role && m.person.current_role.org_classification).find(Boolean) : '';

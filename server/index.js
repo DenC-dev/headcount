@@ -13,7 +13,7 @@ import { forJson, PLANS } from './plans.js';
 import { makeMailer, htmlEmail } from './mail.js';
 import { makeNotifier } from './notify.js';
 import { makeAuthenticator, verifyGoogleIdToken } from './auth.js';
-import { lookupBill, STATES } from './bills.js';
+import { lookupBill, STATES, CHAMBERS } from './bills.js';
 import { billRecord } from './record.js';
 import { makeMonitor } from './monitor.js';
 import { makeActionCenter } from './act.js';
@@ -247,6 +247,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     google: localAccounts() && config.googleClientId ? { clientId: config.googleClientId } : null,
     bills: { federal: Boolean(config.congressKey), states: Boolean(config.openStatesKey) },
     states: STATES,
+    chambers: CHAMBERS,
     ai: aiOn(),
     supportEmail: config.supportEmail,
     email: mail.enabled,

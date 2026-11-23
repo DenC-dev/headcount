@@ -11,6 +11,27 @@ const FED_TYPES = [
   ['hr', 'H.R.', 'house-bill'], ['s', 'S.', 'senate-bill'],
 ];
 export const STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', PR: 'Puerto Rico', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
+// What each legislature calls its chambers, and what their members are called.
+// The lower chamber is the House unless listed here: Open States' chamber list
+// says Assembly for California, Nevada, New Jersey, New York and Wisconsin, and
+// the official names are the House of Delegates in Maryland, Virginia and West
+// Virginia and the General Assembly in New Jersey. Nebraska and the District of
+// Columbia have a single chamber.
+const LOWER = { CA: 'Assembly', NV: 'Assembly', NY: 'Assembly', WI: 'Assembly', NJ: 'General Assembly', MD: 'House of Delegates', VA: 'House of Delegates', WV: 'House of Delegates' };
+const SINGLE = { NE: ['Nebraska Legislature', 'Senator'], DC: ['Council of the District of Columbia', 'Councilmember'] };
+export function chambersOf(st) {
+  const name = STATES[st]; if (!name) return [];
+  if (SINGLE[st]) return [{ chamber: 'legislature', label: SINGLE[st][0], title: SINGLE[st][1] }];
+  const lower = LOWER[st] || 'House';
+  const title = lower === 'House of Delegates' ? 'Delegate' : /Assembly/.test(lower) && st !== 'WI' ? 'Assemblymember' : 'Representative';
+  return [{ chamber: 'upper', label: `${name} Senate`, title: 'Senator' }, { chamber: 'lower', label: `${name} ${lower}`, title, short: lower }];
+}
+export const CHAMBERS = Object.fromEntries(Object.keys(STATES).map((st) => [st, chambersOf(st)]));
+// The chamber's name ("California Assembly") and its members' title ("Assemblymember").
+export function chamberOf(st, chamber) {
+  const list = CHAMBERS[st] || [];
+  return list.find((c) => c.chamber === chamber) || (chamber === 'legislature' || chamber === 'upper' ? list.find((c) => c.chamber === 'legislature') : null) || null;
+}
 
 export function currentCongress(d = new Date()) {
   const y = d.getUTCFullYear();

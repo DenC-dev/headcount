@@ -1,12 +1,21 @@
 import crypto from 'node:crypto';
 import { HttpError, clean } from './db.js';
 import { districtsFor, normDistrict, addressLine } from './sources.js';
+import { chamberOf } from './bills.js';
 
 // The action center: a public page for each campaign where supporters enter
 // their address, find their own legislators among the campaign's targets, and
 // send them a letter (by email where the office publishes one) or call. Each
 // response counts toward that member in the campaign's whip count.
 
+// How a letter greets a legislator: Senator, Representative, Assemblymember,
+// Delegate or Councilmember, from the chamber the page targets.
+function titleFor(juris) {
+  const j = typeof juris === 'string' ? (() => { try { return JSON.parse(juris); } catch (_) { return null; } })() : juris;
+  if (!j) return 'Representative';
+  if (j.level === 'us') return j.chamber === 'upper' ? 'Senator' : 'Representative';
+  return (chamberOf(j.state, j.chamber) || { title: j.chamber === 'upper' ? 'Senator' : 'Representative' }).title;
+}
 const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || ''));
 
 export function makeActionCenter(cfg, store, mail) {
@@ -92,7 +101,7 @@ export function makeActionCenter(cfg, store, mail) {
   function whereYouAre(a, d) {
     const juris = a.juris ? JSON.parse(a.juris) : null;
     if (juris && juris.level === 'us') return juris.chamber === 'upper' ? `${d.state}` : `${d.state} congressional district ${d.cd === 'AL' ? 'at large' : d.cd}`;
-    if (juris && juris.level === 'state') return juris.chamber === 'lower' ? d.label.lower || (d.lower ? `House district ${d.lower}` : '') : d.label.upper || (d.upper ? `Senate district ${d.upper}` : '');
+    if (juris && juris.level === 'state') return juris.chamber === 'lower' ? d.label.lower || (d.lower ? `${(chamberOf(juris.state, 'lower') || { short: 'House' }).short} district ${d.lower}` : '') : d.label.upper || (d.upper ? `${juris.chamber === 'legislature' ? 'Legislative' : 'Senate'} district ${d.upper}` : '');
     return '';
   }
   function match(a, d) {
@@ -139,7 +148,7 @@ export function makeActionCenter(cfg, store, mail) {
     const org = store.q.org.get(a.org_id); let emailed = 0;
     for (const t of mine) {
       if (!t.email || !mail.enabled) continue;
-      const salutation = `Dear ${t.title || (a.juris && JSON.parse(a.juris).chamber === 'upper' ? 'Senator' : 'Representative')} ${t.name.split(' ').slice(-1)[0]},`;
+      const salutation = `Dear ${t.title || titleFor(a.juris)} ${t.name.split(' ').slice(-1)[0]},`;
       const body = `${salutation}\n\n${message.replace(/^dear [^\n]*\n+/i, '')}\n\n${name}\n${d.matched}\n${email}\n\n--\n${unverified ? 'The address above is as the sender typed it; it could not be matched automatically.\n' : ''}Sent by a constituent through ${org ? org.name : 'an advocacy'} action page on Headcount. Reply to this email to reach ${name} directly.`;
       if (mail.queue({ to: t.email, kind: 'constituent', replyTo: email, subject, text: body, dedupe: `act:${a.id}:${t.id}:${email.toLowerCase()}:${new Date().toISOString().slice(0, 10)}` })) emailed++;
     }

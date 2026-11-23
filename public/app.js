@@ -335,12 +335,20 @@ function contact(m) {
   return { phone: m.phone || r.ph || '', email: m.email || r.em || '', office: r.of || '', dphone: r.dph || '', doffice: r.dof || '', url: r.url || '', form: r.cf || '',
     phoneUsual: !m.phone && Boolean(r.phf), emailUsual: !m.email && Boolean(r.emf) };
 }
+// Each state's chambers by their own names (the California Assembly, the
+// Maryland House of Delegates, the Texas House) and what members are called,
+// as the server lists them.
+function chambersOf(st, name = '') {
+  const list = CLOUD.config && CLOUD.config.chambers && CLOUD.config.chambers[st];
+  if (list && list.length) return list;
+  return st === 'NE' ? [{ chamber: 'legislature', label: 'Nebraska Legislature', title: 'Senator' }] : [{ chamber: 'upper', label: `${name || st} Senate`, title: 'Senator' }, { chamber: 'lower', label: `${name || st} House`, title: 'Representative' }];
+}
 // The chambers someone can count: the built-in ones, and every state once
 // legislator data is turned on.
 function chamberOptions() {
   const cfg = CLOUD.config || {}, states = cfg.rosters && signedIn() ? cfg.states || {} : {};
   const presets = ROSTERS ? Object.entries(ROSTERS).filter(([k]) => !/^os-/.test(k)).map(([k, p]) => `<option value="p:${esc(k)}">${esc(p.label)}</option>`).join('') : '';
-  const live = Object.entries(states).filter(([k]) => !(ROSTERS && ['FL'].includes(k))).flatMap(([k, v]) => (k === 'NE' ? [[`s:${k}:legislature`, `${v} Legislature`]] : [[`s:${k}:upper`, `${v} Senate`], [`s:${k}:lower`, `${v} House or Assembly`]])).map(([val, label]) => `<option value="${val}">${esc(label)}</option>`).join('');
+  const live = Object.entries(states).filter(([k]) => !(ROSTERS && ['FL'].includes(k))).flatMap(([k, v]) => chambersOf(k, v).map((c) => [`s:${k}:${c.chamber}`, c.label])).map(([val, label]) => `<option value="${val}">${esc(label)}</option>`).join('');
   return { presets, live };
 }
 // Fills a campaign with a chamber's current members and staff: "p:ushouse" or "s:TX:upper".
@@ -1143,7 +1151,18 @@ function download(name, text, type) {
 }
 
 // ---------- text a lobbyist takes out of the tool ----------
-const honorific = () => (/senate/i.test(S.campaign.chamber) ? 'Senator' : /house|assembly/i.test(S.campaign.chamber) ? 'Representative' : '');
+// What to call a member of this campaign's chamber: Senator, Representative,
+// Assemblymember, Delegate or Councilmember.
+function honorific() {
+  const ch = campaignChamber();
+  if (ch.level === 'us') return ch.chamber === 'upper' ? 'Senator' : 'Representative';
+  if (ch.level === 'state' && ch.state) {
+    const list = chambersOf(ch.state), c = list.find((x) => x.chamber === ch.chamber) || (list.length === 1 ? list[0] : null);
+    if (c) return c.title;
+  }
+  const t = S.campaign.chamber || '';
+  return /senate/i.test(t) ? 'Senator' : /house of delegates/i.test(t) ? 'Delegate' : /council/i.test(t) ? 'Councilmember' : /assembly/i.test(t) && !/wisconsin/i.test(t) ? 'Assemblymember' : /house|assembly/i.test(t) ? 'Representative' : '';
+}
 const lastName = (n) => { const p = String(n).replace(/,? (Jr\.?|Sr\.?|II|III|IV)$/i, '').trim().split(/\s+/); return p[p.length - 1] || n; };
 function suggestedAsk(m) {
   const dir = dirOf(S), c = S.campaign, on = dir > 0 ? m.pos : 4 - m.pos;

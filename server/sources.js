@@ -1,5 +1,5 @@
 import { HttpError } from './db.js';
-import { fedBill, STATES } from './bills.js';
+import { fedBill, STATES, chamberOf } from './bills.js';
 
 // Public data behind the Monitor, the intelligence panels and the action
 // center. Each function returns plain, normalized objects so the rest of the
@@ -209,6 +209,9 @@ export async function stateRoster(cfg, state, chamber) {
   const st = String(state || '').toUpperCase();
   if (!STATES[st]) throw new HttpError(400, 'Choose a state.');
   if (!['upper', 'lower', 'legislature'].includes(chamber)) throw new HttpError(400, 'Choose a chamber.');
+  const named = chamberOf(st, chamber);
+  if (!named) throw new HttpError(400, `${STATES[st]} has no such chamber.`);
+  chamber = named.chamber; // Nebraska and D.C. have one chamber
   const members = [];
   for (let page = 1; page <= 12; page++) {
     const p = new URLSearchParams({ jurisdiction: ocd(st), org_classification: chamber, per_page: '50', page: String(page) });
@@ -225,7 +228,7 @@ export async function stateRoster(cfg, state, chamber) {
   if (!members.length) throw new HttpError(404, `No current legislators were found for that chamber in ${STATES[st]}.`);
   const num = (d) => (Number.parseInt(d, 10) || 0);
   members.sort((a, b) => num(a.d) - num(b.d) || a.d.localeCompare(b.d) || a.n.localeCompare(b.n));
-  const label = `${STATES[st]} ${chamber === 'upper' ? 'Senate' : chamber === 'legislature' ? 'Legislature' : 'House'}`;
+  const label = (chamberOf(st, chamber) || {}).label || `${STATES[st]} ${chamber === 'upper' ? 'Senate' : chamber === 'legislature' ? 'Legislature' : 'House'}`;
   return { key: `os-${st.toLowerCase()}-${chamber}`, label, chamber: label, seats: members.length, asOf: day(new Date()), source: 'Open States', committees: [], members, juris: { level: 'state', state: st, chamber } };
 }
 
@@ -300,5 +303,5 @@ export async function districtsFor(cfg, input) {
   const names = (rec, code) => (rec ? [...new Set([rec.BASENAME, rec.NAME, rec[code]].filter(Boolean).map(normDistrict).filter(Boolean))] : []);
   const upperNames = names(up, 'SLDU'), lowerNames = names(low, 'SLDL');
   return { matched: hit.matchedAddress || addressLine(input), state, cd, upper: upperNames[0] || '', lower: lowerNames[0] || '', upperNames, lowerNames,
-    label: { upper: up ? clip(up.NAME || `State Senate district ${up.BASENAME || up.SLDU}`, 80) : '', lower: low ? clip(low.NAME || `State House district ${low.BASENAME || low.SLDL}`, 80) : '' } };
+    label: { upper: up ? clip(up.NAME || `State Senate district ${up.BASENAME || up.SLDU}`, 80) : '', lower: low ? clip(low.NAME || `${(chamberOf(state, 'lower') || { short: 'House' }).short} district ${low.BASENAME || low.SLDL}`, 80) : '' } };
 }

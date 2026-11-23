@@ -685,6 +685,23 @@ test('rosters for any state chamber load from Open States with offices', async (
   assert.deepEqual(r.members[0], { k: 'aaaa-1111', n: 'Corey Simon', p: 'R', d: '3', ph: '850-487-5003', of: '404 S. Monroe St., Tallahassee, FL 32399', em: 'simon.corey@flsenate.gov', dph: '850-555-0100', dof: '1 Main St, Tallahassee, FL', url: 'https://openstates.org/person/corey-simon/' });
   assert.equal(r.members[1].p, 'D');
   assert.equal((await api('mona', 'GET', '/api/rosters/state?state=ZZ&chamber=upper')).status, 400);
+  assert.equal((await api('mona', 'GET', '/api/rosters/state?state=CA&chamber=legislature')).status, 400, 'California has two chambers');
+});
+
+test('each chamber goes by its own name: House, Assembly, House of Delegates', async () => {
+  const { CHAMBERS, chamberOf } = await import('../server/bills.js');
+  const lower = (st) => chamberOf(st, 'lower');
+  for (const st of ['CA', 'NV', 'NY', 'WI']) assert.equal(lower(st).short, 'Assembly', st);
+  assert.equal(lower('NJ').label, 'New Jersey General Assembly');
+  for (const st of ['MD', 'VA', 'WV']) { assert.equal(lower(st).short, 'House of Delegates', st); assert.equal(lower(st).title, 'Delegate'); }
+  assert.equal(lower('TX').label, 'Texas House'); assert.equal(lower('TX').title, 'Representative');
+  assert.equal(lower('CA').title, 'Assemblymember'); assert.equal(lower('WI').title, 'Representative', 'Wisconsin calls Assembly members Representative');
+  assert.deepEqual(CHAMBERS.NE.map((c) => c.label), ['Nebraska Legislature']); assert.equal(chamberOf('NE', 'upper').chamber, 'legislature');
+  assert.deepEqual(CHAMBERS.DC.map((c) => [c.label, c.title]), [['Council of the District of Columbia', 'Councilmember']]);
+  assert.equal(lower('NE'), null);
+  for (const [st, list] of Object.entries(CHAMBERS)) for (const c of list) assert.doesNotMatch(c.label, /house or assembly/i, st);
+  const cfg = await (await fetch(base + '/api/config')).json();
+  assert.equal(cfg.chambers.CA[1].label, 'California Assembly');
 });
 
 test('action center: supporters find their own legislators by address and their letters reach the office', async () => {
