@@ -544,3 +544,6 @@ td.chips { line-height: 2; }
 .fsrow { display: flex; flex-wrap: wrap; gap: 8px; }
 .fsrow select { flex: 0 0 200px; } .fsrow input { flex: 1 1 280px; font-size: 17px; } .fsrow .btn { padding: 10px 22px; }
 #fs_out { margin-top: 10px; }
+.hub.small.ok { fill: var(--yes); font-weight: 600; } .hub.small.short { fill: var(--und); font-weight: 600; }
+.panel.chamber .hub.small.ok { fill: #2fc08f; } .panel.chamber .hub.small.short { fill: #e9bd45; }
+#path .voted { display: block; margin-bottom: 6px; color: var(--fg); }

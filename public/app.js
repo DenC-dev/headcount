@@ -430,7 +430,7 @@ async function loadStory(force = false) {
     if (STORY.key === key) { STORY = { key, data: r, loading: false, err: '' }; if (page === 'brief') track('story_viewed'); }
     if (STORY.key === storyKey()) hearingDate(r);
   } catch (e) { if (STORY.key === key) STORY = { key, data: STORY.data, loading: false, err: e.message }; }
-  if (STORY.key === storyKey()) { if (page === 'brief' && !briefEdit) renderBrief(); storyLine(); }
+  if (STORY.key === storyKey()) { if (page === 'brief' && !briefEdit) renderBrief(); storyLine(); if (page === 'count' && S.members.length) renderHemi(needs(S)); }
 }
 // When the bill is on a committee's agenda in the chamber being counted, that
 // date becomes the campaign's committee vote (unless someone set a later one).
@@ -952,8 +952,9 @@ function renderHemi(nd) {
   HEMI.pos = new Map(S.members.map((m) => [m.id, m.pos])); HEMI.id = S.id;
   $('#hemi').innerHTML = `<svg class="${intro ? 'intro' : ''}" viewBox="0 0 600 322" style="--sw:${Math.min(2, size / 4).toFixed(2)}px" role="group" aria-label="Seating chart coloured by position">
     ${order.map((m, i) => `<circle class="seat p${m.pos}${m.cmte ? ' cmte' : ''}${inView(m) ? '' : ' dim'}${prev && prev.has(m.id) && prev.get(m.id) !== m.pos ? ' pop' : ''}" style="--i:${i}" cx="${seats[i].x.toFixed(1)}" cy="${seats[i].y.toFixed(1)}" r="${size.toFixed(1)}" tabindex="0" role="button" data-open="${esc(m.id)}" aria-label="${esc(m.name)}, ${POS[m.pos]}"><title>${esc(m.name)} (${esc(m.party)}-${esc(m.district)}): ${POS[m.pos]}</title></circle>`).join('')}
-    <text class="hub" x="300" y="268" text-anchor="middle" font-size="46" font-weight="800">${grp.length ? have : 0}<tspan font-size="22" font-weight="500"> / ${grp.length ? target : 0}</tspan></text>
-    <text class="hub small" x="300" y="292" text-anchor="middle" font-size="13">${defeat ? 'no and lean no / needed to block' : 'yes and lean yes / needed'}${view === 'cmte' ? ' in committee' : ''}</text>
+    <text class="hub" x="300" y="262" text-anchor="middle" font-size="46" font-weight="800">${grp.length ? have : 0}</text>
+    <text class="hub small" x="300" y="284" text-anchor="middle" font-size="13">${defeat ? 'against it' : 'for it'}${view === 'cmte' ? ' in committee' : ''} · ${grp.length ? target : 0} needed</text>
+    <text class="hub small ${have >= target ? 'ok' : 'short'}" x="300" y="302" text-anchor="middle" font-size="12.5">${!grp.length ? '' : have >= target ? `enough to ${defeat ? 'block it' : 'pass'}` : `${target - have} short`}</text>
   </svg>`;
   if (!grp.length) { $('#tally').innerHTML = '<p class="note" style="margin-top:10px">No committee members marked yet. Tick "Sits on the committee" on a member.</p>'; $('#path').textContent = ''; return; }
   const total = grp.length, left = (need / total) * 100;
@@ -964,9 +965,12 @@ function renderHemi(nd) {
   // Reaching the votes you need, after a change you made: a small celebration.
   if (view === 'floor' && prev && HEMI.short > 0 && short <= 0) setTimeout(() => toast(defeat ? 'You have enough votes to block it.' : 'You have the votes to pass it.'), 250);
   if (view === 'floor') HEMI.short = short;
-  $('#path').innerHTML = short > 0
+  const voted = (() => { const d = storyNow(), ch = campaignChamber().chamber; if (!d || view !== 'floor' || !ch) return null; return (d.timeline || []).filter((t) => (t.kind === 'passed' || t.kind === 'failed') && t.chamber === ch).pop() || null; })();
+  const there = voted && storyNow().stage && storyNow().stage.chamber !== campaignChamber().chamber ? legChoices(billLegislature()).find((c) => c.chamber === storyNow().stage.chamber) : null;
+  const votedLine = voted ? `<span class="voted"><b>${esc(voted.plain)}, ${esc(fmtDay(voted.date))}.</b> Positions here come from that vote.${there ? ` It is now in the ${esc(there.label)}. <button class="linkbtn" data-act="pickChamber" data-v="${esc(there.value)}" data-label="${esc(there.label)}">Count the ${esc(there.label)}</button>` : ''}</span> ` : '';
+  $('#path').innerHTML = votedLine || (short > 0
     ? `Counting leaners you are <b>${short} short</b> ${defeat ? 'of blocking it ' : ''}${where}. ${play} undecided or leaning against you are in play.`
-    : `Counting leaners you have <b>${-short} to spare</b> ${where}${defeat ? ' to block it' : ''}. ${soft} of your votes are only leaning.`;
+    : `Counting leaners you have <b>${-short} to spare</b> ${where}${defeat ? ' to block it' : ''}. ${soft} of your votes are only leaning.`);
 }
 function movesList(days) {
   const from = daysAgo(days), out = [], dir = dirOf(S);
@@ -2019,7 +2023,7 @@ function renderPortfolio() {
       <td><b>${esc(c.name || 'Untitled campaign')}</b>${c.archived ? ' <span class="status">Archived</span>' : ''}${c.visibility === 'team' ? ' <span class="status">Closed</span>' : ''}<div class="meta">${esc((todayOf(c.id) || {}).now || s.billStatus || '')}</div></td>
       <td>${esc(c.client || '')}</td>
       <td class="num">${odds === null || odds === undefined ? '<span class="note">No roster</span>' : `<b>${pct(odds)}%</b>${delta ? ` <span class="${delta > 0 ? 'good' : 'bad'}">${delta > 0 ? '+' : ''}${delta}</span>` : ''}<div class="meta">${s.side === 'defeat' ? 'to defeat' : 'to pass'}</div>`}</td>
-      <td class="num">${s.n ? `${have} / ${target}` : ''}</td>
+      <td class="num">${s.n ? `<b>${have}</b> of ${target}<div class="meta">${have >= target ? 'enough' : `${target - have} short`}</div>` : ''}</td>
       <td>${next ? `${esc(next[0])}<div class="meta">${esc(fmtDay(next[1]))}, ${esc(inDays(next[1]))}</div>` : ''}</td>
       <td class="num">${(s.meetings || []).length ? `${s.meetings.length} booked` : ''}${s.requested ? `<div class="meta">${s.requested} requested</div>` : ''}</td>
       <td class="num">${overdue ? `<span class="bad"><b>${overdue} overdue</b></span>` : ''}${s.openTasks ? `<div class="meta">${s.openTasks} open</div>` : ''}</td>
