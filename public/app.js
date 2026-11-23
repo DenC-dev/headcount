@@ -285,10 +285,10 @@ function staffListPanel() {
   loadOrgStaff();
   const L = ORG_STAFF.list, admin = isAdmin();
   return `<div class="panel"><span class="label">Staff list</span>
-    <p class="note">The official lists give staff names and titles but not their email addresses. If your firm subscribes to LegiStorm, upload its staff export here: every campaign in ${esc(ORG.name)} then shows those staff with their real email addresses.</p>
+    <p class="note">Have LegiStorm? Upload its staff export to show real staff emails in every campaign.</p>
     ${L ? `<p><b>${esc(L.count.toLocaleString())} staff</b> from ${esc(L.source)}, uploaded ${esc(fmtDate(L.at))}${L.by ? ` by ${esc(L.by)}` : ''}.</p>` : L === null ? '<p class="note">No staff list uploaded yet.</p>' : ''}
     ${admin ? `<div class="btnrow"><label class="btn${L ? '' : ' primary'}" for="sl_file">${L ? 'Upload a newer file' : 'Upload a LegiStorm export'}</label><input type="file" id="sl_file" accept=".csv,text/csv,text/plain" hidden>${L ? '<button class="btn" data-act="slRemove">Remove it</button>' : ''}</div>
-    <p class="note">In LegiStorm, download the staff contact list as a CSV file. It needs each person's name and the office they work for; titles, emails and phones are used when they are there. Upload only what your LegiStorm agreement lets your firm use this way.</p>
+    <p class="note">A CSV with each person's name and office. Upload only what your LegiStorm license allows.</p>
     <p class="note" id="slMsg" role="status"></p>` : ''}
   </div>`;
 }
@@ -510,7 +510,7 @@ function similarHtml() {
   if (SIMILAR.key && SIMILAR.key !== storyKey()) SIMILAR = { key: '', q: '', html: '' };
   if (!signedIn() || !cfg.bills || !cfg.bills.states || S.example || !storyKey()) return '';
   return `<section class="panel noprint similar"><span class="label">Similar bills elsewhere</span>
-    <p class="note">The same idea in other states or Congress: useful for model language, allies and arguments that already worked.</p>
+    <p class="note">The same idea in other states and Congress.</p>
     <div class="btnrow"><input id="sim_q" value="${esc(SIMILAR.q || similarWords())}" aria-label="Words to search for" placeholder="A few words about the bill"><button class="btn" data-act="simSearch">Search every state</button></div>
     <div id="sim_out">${SIMILAR.html || ''}</div></section>`;
 }
@@ -955,7 +955,7 @@ function renderHemi(nd) {
     <text class="hub" x="300" y="268" text-anchor="middle" font-size="46" font-weight="800">${grp.length ? have : 0}<tspan font-size="22" font-weight="500"> / ${grp.length ? target : 0}</tspan></text>
     <text class="hub small" x="300" y="292" text-anchor="middle" font-size="13">${defeat ? 'no and lean no / needed to block' : 'yes and lean yes / needed'}${view === 'cmte' ? ' in committee' : ''}</text>
   </svg>`;
-  if (!grp.length) { $('#tally').innerHTML = '<p class="note" style="margin-top:10px">No committee members are marked. Open a member and tick "Sits on the committee", or pick a committee when loading a preset.</p>'; $('#path').textContent = ''; return; }
+  if (!grp.length) { $('#tally').innerHTML = '<p class="note" style="margin-top:10px">No committee members marked yet. Tick "Sits on the committee" on a member.</p>'; $('#path').textContent = ''; return; }
   const total = grp.length, left = (need / total) * 100;
   $('#tally').innerHTML = `<div class="tallywrap"><div class="tally" style="margin-top:0">${[4, 3, 2, 1, 0].map((p) => `<i class="b${p}" style="width:${(cnt(p) / total) * 100}%"></i>`).join('')}</div>
     <div class="need${left > 70 ? ' flip' : ''}" style="left:${left}%"><span>${need} to pass</span></div></div>
@@ -996,7 +996,7 @@ function renderOdds(nd, base) {
     : `<div class="stage"><b>${nd.c ? pct(base.cm) + '%' : 'n/a'}</b><span>Clears committee (${nd.needC} of ${nd.c})</span></div><div class="stage"><b>${pct(base.fl)}%</b><span>Wins the floor (${nd.needF} of ${nd.n})</span></div>`;
   const now = goal(S, base.both);
   const pts = S.trend.slice(-30).concat(S.trend.length && S.trend[S.trend.length - 1].d === today() ? [] : [{ d: today(), p: now }]);
-  if (pts.length < 2 || !S.members.length) $('#spark').innerHTML = '<p class="note">The trend line appears once positions change on more than one day.</p>';
+  if (pts.length < 2 || !S.members.length) $('#spark').innerHTML = '<p class="note">The trend appears after a second day of changes.</p>';
   else {
     const X = (i) => 6 + (i * 288) / (pts.length - 1), Y = (p) => 62 - p * 54;
     const line = pts.map((t, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(t.p).toFixed(1)}`).join(' ');
@@ -1022,7 +1022,7 @@ function renderCalls(nd, base) {
       <div><button class="who" data-open="${esc(m.id)}">${verbFor(S, m)} ${esc(m.name)}</button> <span class="note">${esc(m.party)}-${esc(m.district)}</span><div class="why">${esc(why)}</div>
       <div class="why">${contact(m).phone ? `<span class="tel">${esc(contact(m).phone)}</span> · ` : ''}${lc ? `last contact ${esc(inDays(lc.d))}` : 'never contacted'}</div></div>
       <div class="gain">+${(r.gain * 100).toFixed(1)} pts<small>movable ${m.mov}/5</small></div></li>`;
-  }).join('') : `<li style="display:block" class="note">${S.members.length ? 'No single conversation changes the odds right now. Either the count is locked or the remaining members are out of reach.' : 'The call sheet fills in once the campaign has a roster.'}</li>`;
+  }).join('') : `<li style="display:block" class="note">${S.members.length ? 'No single meeting moves the odds right now.' : 'The call sheet fills in once the campaign has a roster.'}</li>`;
   const plan = $('#plan');
   if (S.plan.length) {
     const p = passage(S.members, nudged(S, baseProbs(S), S.plan), nd).both;
@@ -1049,7 +1049,7 @@ function renderTasks() {
   const tf = $('#t_for');
   if (tf) { tf.hidden = !S.cloud || !signedIn(); if (S.cloud && signedIn()) { const v = tf.value; tf.outerHTML = assignSelect('t_for', 'for', v); } ensureMembers(); }
   const open = openTasks(), done = S.tasks.filter((t) => t.done).slice(-8).reverse();
-  $('#tasks').innerHTML = (open.length ? open.map(taskHtml).join('') : upcoming().length ? '' : '<li style="display:block" class="note">Nothing scheduled or outstanding. Schedule a meeting from any member, or add a follow-up below.</li>')
+  $('#tasks').innerHTML = (open.length ? open.map(taskHtml).join('') : upcoming().length ? '' : '<li style="display:block" class="note">Nothing scheduled. Request a meeting from any member, or add a follow-up.</li>')
     + (done.length ? `<li style="display:block"><details><summary class="note">Recently completed (${done.length})</summary><ul class="tasks">${done.map(taskHtml).join('')}</ul></details></li>` : '');
 }
 function lastTouch(m) { const h = m.history[m.history.length - 1]; return h ? `${fmtDay(h.d)} · ${h.type}${h.who ? ` (${h.who})` : ''}` : 'None logged'; }
@@ -1172,7 +1172,7 @@ function briefPanelHtml() {
 function renderBrief() {
   const b = S.brief, ro = !canEditNow(), cfg = CLOUD.config || {};
   const tools = `<div class="brieftools noprint">${ro ? '' : `<button class="btn" data-act="briefEdit">${hasBrief(b) ? 'Edit' : 'Write it by hand'}</button><button class="btn" data-act="briefLookup">Look up the bill</button>${cfg.ai ? '<button class="btn" data-act="briefDraft">Draft it with AI</button>' : ''}`}${hasBrief(b) ? '<button class="btn" data-act="briefCopy">Copy as text</button><button class="btn" data-act="briefPrint">Print or save as PDF</button>' : ''}${typeof intelBriefButtons === 'function' ? intelBriefButtons(b) : ''}</div>`;
-  const empty = `<div class="brief" style="text-align:center"><h2 style="font-size:22px">No brief for this bill yet</h2><p class="note" style="margin:0 auto">Look up the bill to fill in its sponsors, status and official summary, then add your summary, talking points and likely objections. Every meeting brief and meeting request for this campaign uses it.</p></div>`;
+  const empty = `<div class="brief" style="text-align:center"><h2 style="font-size:22px">No brief for this bill yet</h2><p class="note" style="margin:0 auto">Look up the bill to fill in its sponsors, status and summary. Then add your talking points.</p></div>`;
   $('#briefPage').innerHTML = briefEdit ? briefFormHtml(b) : tools + briefPanelHtml() + storyPanelHtml() + (hasBrief(b) ? briefDoc(b) : empty) + similarHtml();
   loadStory();
   if (briefPanel === 'lookup' && $('#lk_j')) $('#lk_j').value = guessJurisdiction();
@@ -1706,7 +1706,7 @@ function reportsDrawer() {
 function presetNote() {
   const sel = $('#s_preset'), p = ROSTERS && ROSTERS[sel.value], box = $('#s_presetBox');
   if (!p) { box.innerHTML = ''; return; }
-  box.innerHTML = `${p.committees.length ? `<label class="note" style="display:flex;flex-direction:column;gap:4px">Committee stage<select id="s_cmte"><option value="-1">No committee marked</option>${p.committees.map((c, i) => `<option value="${i}">${esc(c.name)} (${c.m.length})</option>`).join('')}</select></label>` : '<p class="note">No committee lists are included for this chamber. Mark committee members yourself after loading.</p>'}
+  box.innerHTML = `${p.committees.length ? `<label class="note" style="display:flex;flex-direction:column;gap:4px">Committee stage<select id="s_cmte"><option value="-1">No committee marked</option>${p.committees.map((c, i) => `<option value="${i}">${esc(c.name)} (${c.m.length})</option>`).join('')}</select></label>` : '<p class="note">No committee lists for this chamber. Mark members yourself.</p>'}
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Starting positions<select id="s_backed"><option value="">Everyone undecided</option><option value="D">Democrats lean yes, Republicans lean no</option><option value="R">Republicans lean yes, Democrats lean no</option></select></label>
     <p class="note">${p.members.length} of ${p.seats} seats listed, with office phone${p.members[0].em ? ', email' : ''} and address. Source: ${esc(p.source)}, retrieved ${esc(p.asOf)}.${p.stale ? ' <b>This roster predates the November 3, 2026 election and has not been updated for new members.</b>' : ''} This replaces the current roster, its staff and its history.</p>
     <button class="btn" data-act="preset">Load ${esc(p.label)}</button>`;
@@ -1779,20 +1779,20 @@ function gettingStarted() {
   const st = ORG.setup, cfg = CLOUD.config || {}, how = (id) => ` <a class="note" href="${GUIDE}#${id}" target="_blank" rel="noopener">How?</a>`;
   // For whoever runs Headcount: the two things everyone else depends on
   const admin = OPERATOR ? [
-    [Boolean(cfg.email) && !MAIL_PROBLEM, 'Connect email', 'So people can reset passwords and get invitations, alerts and digests.', '<button class="btn sm" data-x="serverSettings" data-open="email">Connect email</button>', 'admin-email'],
-    [Boolean(cfg.bills && cfg.bills.federal && cfg.bills.states), 'Turn on bill and legislator data', 'Two free keys let Headcount look up bills and load any state legislature.', '<button class="btn sm" data-x="serverSettings" data-open="sources">Add the free keys</button>', 'admin-data'],
+    [Boolean(cfg.email) && !MAIL_PROBLEM, 'Connect email', 'For invitations, password resets and digests.', '<button class="btn sm" data-x="serverSettings" data-open="email">Connect email</button>', 'admin-email'],
+    [Boolean(cfg.bills && cfg.bills.federal && cfg.bills.states), 'Turn on bill data', 'Two free keys load bills and every legislature.', '<button class="btn sm" data-x="serverSettings" data-open="sources">Add the free keys</button>', 'admin-data'],
   ] : [];
   const steps = [...admin,
-    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Name the bill and pick the legislature: the chamber comes from the bill number, and every member and their staff are loaded for you.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
-    [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Counts, meetings and briefs update for everyone within seconds.', '<button class="btn sm" data-page="workspace">Invite</button>', 'invite'],
-    [st.watches > 0, 'Watch for new bills and rules', 'The Monitor checks Congress, the states, new federal rules and contract notices for you.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>', 'monitor'],
+    [ACCOUNT.list.some((c) => c.summary && c.summary.n > 0), 'Count your first bill', 'Pick a legislature and type the bill number.', '<button class="btn sm" data-act="newCamp">New campaign</button>', 'first-count'],
+    [ORG.usage.seats > 1 || st.invites > 0, 'Invite a colleague', 'Everyone sees the same count, live.', '<button class="btn sm" data-page="workspace">Invite</button>', 'invite'],
+    [st.watches > 0, 'Watch for new bills', 'Hear about new bills and rules on your issues.', '<button class="btn sm" data-page="monitor">Open the Monitor</button>', 'monitor'],
   ];
   const done = steps.filter((x) => x[0]).length;
   if (done === steps.length) return '';
   return `<div class="panel getting"><div class="row"><span class="label">Getting started · ${done} of ${steps.length}</span><button class="btn sm" data-act="hideGetting">Hide</button></div>
     <div class="gbar" aria-hidden="true"><i style="width:${Math.round((done / steps.length) * 100)}%"></i></div>
     <ol class="gsteps">${steps.map(([ok, t, d, btn, id]) => `<li class="${ok ? 'done' : ''}"><span class="gcheck" aria-hidden="true"></span><div><b>${t}</b><span class="note">${d}${ok ? '' : how(id)}</span></div>${ok ? '<span class="status ok">Done</span>' : btn}</li>`).join('')}</ol>
-    <p class="note">New to Headcount? The <a href="${GUIDE}" target="_blank" rel="noopener">step-by-step guide</a> walks through everything.</p></div>`;
+    <p class="note">New here? Read the <a href="${GUIDE}" target="_blank" rel="noopener">guide</a>.</p></div>`;
 }
 
 // ---------- bills you follow ----------
@@ -1863,7 +1863,7 @@ function renderBills() {
 function sharePanel() {
   const embed = (u) => `<iframe src="${u}?embed=1" width="100%" height="520" style="border:0" title="Bills we follow"></iframe>`;
   return `<div class="panel"><span class="label">Shared lists</span>
-    <p class="note">A read-only page of the bills, your positions and where each stands, for clients, members or your website. Notes stay private. Anyone with the link can see it.</p>
+    <p class="note">A read-only page for clients or your website. Notes stay private. Anyone with the link can see it.</p>
     ${isAdmin() ? `<div class="btnrow"><select id="sh_client" aria-label="Which bills"><option value="">Every bill in ${esc(ORG.name)}</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">Only ${esc(k.name)}'s bills</option>`).join('')}</select><button class="btn sm primary" data-act="tbShareMake">Create a link</button></div>` : '<p class="note">An admin creates the links.</p>'}
     <ul class="shares">${BILLS.shares.map((x) => `<li><div><b>${esc(x.client ? `${x.client}'s bills` : `Every bill in ${ORG.name}`)}</b><div class="meta">${esc(x.url)}</div></div><span class="btnrow"><a class="btn sm" href="${esc(x.url)}" target="_blank" rel="noopener">Open</a><button class="btn sm" data-act="tbCopy" data-v="${esc(x.url)}">Copy link</button><button class="btn sm" data-act="tbCopy" data-v="${esc(embed(x.url))}">Copy embed code</button>${isAdmin() ? `<button class="btn sm warn" data-act="tbShareOff" data-token="${esc(x.token)}">Turn off</button>` : ''}</span></li>`).join('')}</ul></div>`;
 }
@@ -1961,7 +1961,7 @@ function fastStart() {
     <form id="fsForm" class="fsrow"><select id="fs_leg" aria-label="Legislature">${legs.map(([k, v]) => `<option value="${k}" ${k === last ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
       <input id="fs_bill" placeholder="HB 1021, or a few words like property insurance" aria-label="Bill number or topic" autocomplete="off" required><button class="btn primary">Count it</button></form>
     <div id="fs_out" role="status"></div>
-    <p class="note">Headcount loads every member of the chamber that has the bill, with their office and staff, marks sponsors and recorded votes from the public record, and shows the odds of passage. It takes about ten seconds.</p></div>`;
+    <p class="note">Every member loads with their staff, and votes fill in from the public record. About ten seconds.</p></div>`;
 }
 const looksLikeNumber = (t) => /^\s*(h\.?\s?r\.?|s\.?|[a-z]{1,5}\.?)\s*\d{1,5}\b/i.test(t);
 function fastCreate(bill, leg, session = '') {
@@ -2097,7 +2097,7 @@ function peoplePanel() {
       <div class="wide btnrow"><button class="btn primary">Create invitation</button>${CLOUD.config.email || CLOUD.provider() ? `<label class="check note"><input type="checkbox" id="oi_send" checked> ${CLOUD.config.email ? 'Email the invitation' : `Email it from my ${CLOUD.mailName(CLOUD.provider())}`} when an address is given</label>` : ''}</div>
       </form>
       ${WS.lastInvite ? `<div class="linkbox" style="margin-top:8px"><input id="oi_link" readonly value="${esc(WS.lastInvite)}" aria-label="Invitation link"><button class="btn sm" data-copy="${esc(WS.lastInvite)}">Copy</button></div>` : ''}
-      <p class="note">Members and admins use a seat; admins also manage people, billing and settings. Guests (clients, coalition partners) see only the campaigns they are added to and do not use a seat. An invitation with an email address works once, for that person; without one, anyone with the link can join for 14 days.</p>
+      <p class="note">Guests see only the campaigns you add them to. Links work for 14 days.</p>
       ${WS.invites && WS.invites.length ? `<span class="label">Open invitations</span><ul class="people">${WS.invites.map((i) => `<li><span>${esc(i.email || 'Anyone with the link')} · ${ROLE_LABEL[i.role]}<br><span class="note">expires ${esc(fmtDate(i.expiresAt))}${i.email ? '' : `, used ${i.uses} time${i.uses === 1 ? '' : 's'}`}</span></span><span class="btnrow"><button class="btn sm" data-copy="${esc(location.origin + '/invite/' + i.code)}">Copy link</button><button class="btn sm warn" data-act="orgRevoke" data-code="${esc(i.code)}">Revoke</button></span></li>`).join('')}</ul>` : ''}` : ''}
   </div>`;
 }
@@ -2113,7 +2113,7 @@ function domainPanel() {
   const d = ORG.domain, on = ORG.plan.features.domain;
   let body;
   if (!on) return upsell('Email domain', 'Team', 'Colleagues with an email address at your firm\'s domain join without an invitation.');
-  else if (!d) body = `<p class="note">Let colleagues with an email address at your firm (like @yourfirm.com) join this workspace without an invitation. First you prove the address belongs to your firm, with help from whoever manages your firm's website or email.</p><form id="dmForm" class="taskadd"><input id="dm_name" name="domain" placeholder="yourfirm.com" aria-label="Domain" required><button class="btn">Add domain</button></form>`;
+  else if (!d) body = `<p class="note">Let anyone @yourfirm.com join without an invitation, once you prove you own the domain.</p><form id="dmForm" class="taskadd"><input id="dm_name" name="domain" placeholder="yourfirm.com" aria-label="Domain" required><button class="btn">Add domain</button></form>`;
   else if (!d.verified) body = `<p class="note">Ask whoever manages <b>${esc(d.name)}</b> (often your IT person, or the company where you bought the domain, such as GoDaddy or Squarespace) to add this TXT record to it. Then press Verify. It can take up to an hour to show up.</p><div class="linkbox"><input readonly value="headcount-verification=${esc(d.token)}" aria-label="TXT record"><button class="btn sm" data-copy="headcount-verification=${esc(d.token)}">Copy</button></div><div class="btnrow" style="margin-top:8px"><button class="btn primary" data-act="dmVerify">Verify</button><button class="btn" data-act="dmRemove">Remove</button></div>`;
   else body = `<p><span class="status ok">Verified</span> ${esc(d.name)}</p><label class="check"><input type="checkbox" id="dm_join" ${d.join ? 'checked' : ''}> Anyone who signs in with a verified @${esc(d.name)} address can join as a member (each uses a seat)</label><div><button class="btn sm" data-act="dmRemove">Remove domain</button></div>`;
   return `<div class="panel"><span class="label">Email domain</span>${body}</div>`;
@@ -2161,7 +2161,7 @@ function reportPanel() {
     ${r ? `<p class="note">${r.rows.length} contact${r.rows.length === 1 ? '' : 's'} logged from ${esc(fmtDay(r.from))} to ${esc(fmtDay(r.to))}.</p>
       ${r.summary.length ? `<div class="tablewrap" style="max-height:none"><table><thead><tr><th>Client</th><th>Contacts</th><th>Issues</th><th>Chambers</th><th>Lobbyists</th></tr></thead><tbody>${r.summary.map((g) => `<tr><td><b>${esc(g.client)}</b></td><td class="num">${g.contacts}</td><td>${esc(g.issues.join('; '))}</td><td>${esc(g.chambers.join('; '))}</td><td>${esc(g.lobbyists.join(', '))}</td></tr>`).join('')}</tbody></table></div>` : ''}
       ${r.rows.length ? `<details><summary class="note">Every contact</summary><div class="tablewrap"><table><thead><tr><th>Date</th><th>Client</th><th>Member</th><th>With</th><th>Type</th><th>Logged by</th></tr></thead><tbody>${r.rows.map((x) => `<tr><td class="num">${esc(x.date)}</td><td>${esc(x.client)}</td><td>${esc(x.member)} <span class="note">${esc(x.party || '')}-${esc(x.district || '')}</span></td><td>${esc(x.withWhom)}</td><td>${esc(x.type)}</td><td>${esc(x.loggedBy)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}` : ''}
-    <p class="note">This lists contacts logged in Headcount. It is a worksheet, not a filing: disclosure laws define lobbying contacts and activities in their own terms, and some work happens outside the app. Check it against your records and with counsel.</p></div>`;
+    <p class="note">A worksheet of logged contacts, not a filing. Check it against your records.</p></div>`;
 }
 function auditPanel() {
   if (!isAdmin()) return '';
@@ -2185,7 +2185,7 @@ function onboardingHtml() {
   return `<div class="panel" style="max-width:640px;margin:0 auto">
     <h2 style="margin:0 0 8px;font:700 22px var(--display)">Set up your workspace</h2>
     ${DOMAIN_MATCHES.map((o) => `<p>Your colleagues at <b>${esc(o.name)}</b> already use Headcount. <button class="btn sm primary" data-act="joinDomain" data-id="${esc(o.id)}">Join ${esc(o.name)}</button></p>`).join('')}
-    <p class="note">A workspace holds your firm's campaigns, clients and team. You can invite colleagues once it exists.${CLOUD.config && CLOUD.config.billing ? ` New workspaces start with a ${CLOUD.config.billing.trialDays}-day Team trial.` : ''}</p>
+    <p class="note">Your firm's campaigns, clients and team, in one place.${CLOUD.config && CLOUD.config.billing ? ` New workspaces start with a ${CLOUD.config.billing.trialDays}-day Team trial.` : ''}</p>
     <form id="woForm" class="taskadd"><input id="wo_name" name="name" placeholder="Your firm or organization" value="${esc(domainName)}" aria-label="Workspace name" required><button class="btn primary">Create workspace</button></form>
     <p class="note">Invited to someone else's workspace? Open the link from your invitation.</p></div>`;
 }
@@ -2285,7 +2285,7 @@ function render() {
     { const rn = $('#hRename'); if (rn) rn.hidden = true; }
     $('#hBill').textContent = page === 'portfolio' ? (ORG ? ORG.name : 'Portfolio') : page === 'bills' ? 'Bills you follow' : page === 'people' ? 'Legislators' : page === 'monitor' ? 'Monitor' : page === 'contacts' ? 'Contacts' : ORG ? `${ORG.name} settings` : 'Workspace';
     storyLine();
-    $('#hSub').textContent = ORG ? `${ORG.plan.label} · ${ROLE_LABEL[ORG.role]}${ORG.role === 'guest' ? ': you see only the campaigns you were added to' : ''}` : '';
+    $('#hSub').textContent = ORG && (page === 'portfolio' || page === 'workspace') ? `${ORG.plan.label} · ${ROLE_LABEL[ORG.role]}${ORG.role === 'guest' ? ': you see only the campaigns you were added to' : ''}` : '';
     $('#hDates').textContent = '';
   }
   const b = $('#banner'); let banner = '';
@@ -2301,12 +2301,12 @@ function render() {
   else if (signedIn() && match) banner = `<span>Your colleagues at <b>${esc(match.name)}</b> use Headcount.</span><button class="btn sm primary" data-act="joinDomain" data-id="${esc(match.id)}">Join ${esc(match.name)}</button>`;
   else if (signedIn() && !ORG && page !== 'workspace') banner = '<span>Set up a workspace to save campaigns to your account and work with your team.</span><button class="btn sm primary" data-page="workspace">Set up a workspace</button>';
   else if (signedIn() && OPERATOR && MAIL_PROBLEM) banner = `<span><b>Emails aren't going out.</b> ${esc(MAIL_PROBLEM.explain)}</span><button class="btn sm primary" data-x="serverSettings" data-open="email">Fix email</button>`;
-  else if (signedIn() && OPERATOR && !(page === 'portfolio' && ORG && ORG.setup && !lsGet('headcount.gs.' + ORG.id)) && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setting up Headcount.</b> ${!cfg.email ? 'Connect email so people can reset passwords and get invitations and alerts.' : 'Add free keys so Headcount can look up bills and legislators.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
+  else if (signedIn() && OPERATOR && !(page === 'portfolio' && ORG && ORG.setup && !lsGet('headcount.gs.' + ORG.id)) && (!cfg.email || !(cfg.bills && (cfg.bills.federal || cfg.bills.states)))) banner = `<span><b>Finish setup:</b> ${!cfg.email ? 'connect email for invitations, resets and alerts.' : 'add the free bill data keys.'}</span><button class="btn sm primary" data-x="serverSettings">Admin settings</button>`;
   else if (signedIn() && ORG && ORG.role !== 'guest' && localIds().length) banner = `<span>${localIds().length} campaign${localIds().length === 1 ? ' is' : 's are'} saved only in this browser.</span><button class="btn sm" data-act="moveLocal">Move to ${esc(ORG.name)}</button>`;
   else if (ORG && isAdmin() && page === 'portfolio' && (ORG.plan.key === 'trial' || ORG.plan.key === 'free' || ORG.plan.status === 'past_due') && cfg.billing) {
     const d = ORG.plan.trialEnds ? Math.max(0, Math.ceil((ORG.plan.trialEnds - Date.now()) / 864e5)) : 0;
     banner = `<span>${ORG.plan.status === 'past_due' ? 'The last payment failed. Update the card to keep your plan.' : ORG.plan.key === 'trial' ? `Team trial: ${d} day${d === 1 ? '' : 's'} left.` : `Free plan: up to ${ORG.plan.seats} people and ${ORG.plan.campaigns} active campaigns.`}</span><button class="btn sm" data-act="gotoPlans">${ORG.plan.status === 'past_due' ? 'Update payment' : 'See plans'}</button>`;
-  } else if (S.example && campaignPage) banner = `<span><b>Example campaign.</b> The chamber, bill and members are invented. Edit anything to make it yours${signedIn() ? '' : ', or load a real roster'}.</span><button class="btn sm" data-act="setup">Load a roster</button>`;
+  } else if (S.example && campaignPage) banner = `<span><b>Example.</b> Invented members, to try things out.</span><button class="btn sm primary" data-act="newCamp">Count a real bill</button>`;
   b.hidden = !banner; b.innerHTML = banner;
   const w = $('#warn'), ro = campaignPage && S.cloud && ROLE === 'viewer'; w.hidden = !(ro || (campaignPage && S.preset && S.preset.stale));
   if (ro) w.textContent = 'You have view-only access to this campaign. Ask its owner to make you an editor to change it.';
@@ -2420,7 +2420,7 @@ async function loadTeam() {
     ${owner && addable.length ? `<div class="btnrow" style="margin-top:10px"><select id="add_person" aria-label="Colleague">${addable.map((m) => `<option value="${esc(m.id)}">${esc(m.name || m.email)}</option>`).join('')}</select><select id="add_role" aria-label="Role"><option value="editor">Editor</option><option value="viewer">Viewer</option></select><button class="btn sm" data-act="addPerson">Add</button></div>` : ''}
     ${ROLE !== 'viewer' ? `<div class="btnrow" style="margin-top:10px"><span class="note">Link for someone outside ${esc(info.workspace)}, as</span><select id="inv_role" aria-label="Invite as"><option value="viewer">a viewer</option><option value="editor">an editor</option></select><button class="btn sm" data-act="mkInvite">Create link</button></div>
     <div id="invOut"></div>
-    <p class="note">People outside the workspace, such as clients or coalition partners, join as guests and see only the campaigns they are added to. Links work for 14 days.</p>
+    <p class="note">Outsiders join as guests and see only this campaign. Links work for 14 days.</p>
     ${owner ? '<div class="btnrow"><button class="btn sm" data-act="revokeInvites">Turn off all links</button>' + `<button class="btn sm" data-act="campArchive">${camp.archived ? 'Restore this campaign' : 'Archive this campaign'}</button></div>` : ''}` : ''}`;
 }
 function setupDrawer() {
@@ -2451,7 +2451,7 @@ function setupDrawer() {
   })()}
   <div class="btnrow"><span class="note">Set</span><select id="b_party" aria-label="Party"><option value="D">every Democrat</option><option value="R">every Republican</option><option value="I">every independent</option></select><span class="note">to</span><select id="b_pos" aria-label="Position">${[4, 3, 2, 1, 0].map((p) => `<option value="${p}">${POS[p]}</option>`).join('')}</select><button class="btn" data-act="bulk">Apply</button></div>
   <details><summary class="note">Paste your own roster</summary>
-  <p class="note">One member per line: name, party (D/R/I), district, committee (y/n), position, phone, email. Only the name is required. This replaces every current member and their history.</p>
+  <p class="note">One per line: name, party, district, committee (y/n), position, phone, email. Replaces the current roster.</p>
   <textarea id="s_csv" style="min-height:110px" placeholder="Jordan Avery, D, 12, y, lean yes, 555-0100, javery@example.org" aria-label="Roster to import"></textarea>
   <div class="btnrow"><button class="btn" data-act="import">Replace roster</button></div>
   <div class="note" id="impMsg"></div></details></details>`}
@@ -2569,9 +2569,9 @@ function localSignInDrawer(mode) {
   const m = LOC.mode, title = first ? 'Set up Headcount' : { signin: 'Sign in', signup: 'Create your account', forgot: 'Reset your password', reset: 'Choose a new password', code: 'Two-step sign-in' }[m];
   const field = (id, label, type, ac, extra = '') => `<label class="wide">${label}<input id="${id}" type="${type}" autocomplete="${ac}" required ${extra}></label>`;
   showDrawer(`<div class="row"><h2>${title}</h2><button class="btn sm" data-act="close">Close</button></div>
-  ${m === 'code' ? '<p class="note">Open your authenticator app and enter the six-digit code for Headcount. If you no longer have your phone, enter one of your recovery codes instead.</p>' : ''}
-  ${first ? '<p class="note">You are the first person here, so your account will also manage the settings for Headcount: email, bill data, payments and who can sign up.</p>' : ''}
-  ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts here need an invitation. Open the invitation link you were sent, then create your account.</p>' : ''}
+  ${m === 'code' ? '<p class="note">Enter the six-digit code from your authenticator app, or a recovery code.</p>' : ''}
+  ${first ? '<p class="note">You are the first person here, so you will also manage Headcount\'s settings.</p>' : ''}
+  ${m === 'signup' && inviteOnly && !JOIN && !first ? '<p class="note">New accounts need an invitation. Open the link you were sent.</p>' : ''}
   ${(m === 'signin' || m === 'signup') && CLOUD.googleClientId() ? `<div class="gsiwrap"><div id="gsiBtn"></div><p class="note" id="gsiMsg" role="status"></p></div><p class="orline"><span>or with your email</span></p>` : ''}
   <form id="locForm" class="form" data-mode="${m}">
     ${m === 'signup' ? field('loc_name', 'Your name', 'text', 'name') : ''}
@@ -2624,7 +2624,7 @@ function signInDrawer(mode) {
     ${cfg.sso ? `<details class="sect" ${mode === 'sso' ? 'open' : ''}><summary>Sign in with single sign-on</summary>
       <form id="ssoForm" class="taskadd"><input id="sso_email" name="email" type="email" required placeholder="you@yourfirm.com" aria-label="Work email" value="${esc((SSO_STEP && SSO_STEP.email) || '')}"><button class="btn">Continue</button></form>
       <div id="ssoNext" class="note">${SSO_STEP && SSO_STEP.provider ? `<button class="btn primary" data-act="ssoGo">Continue to ${esc(SSO_STEP.workspace)} sign-in</button>` : 'For firms with their own login page, such as Okta or Microsoft Entra ID.'}</div></details>` : ''}
-    <p class="note">Signing in saves your campaigns to your firm's workspace so you can use them on any device and share them with colleagues. Headcount asks for access to your calendar and email only when you first send a meeting request, and uses it only to send what you ask it to. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+    <p class="note">Save your campaigns to your firm's workspace and share them. Calendar and email access is asked for only when you first send a meeting request. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
   </div>`);
 }
 // ---------- calendar feed ----------
@@ -2634,7 +2634,7 @@ async function loadCalendar(renew) {
     const r = await CLOUD.api(renew ? 'POST' : 'GET', '/api/me/calendar');
     box.innerHTML = `<label class="note" style="display:flex;flex-direction:column;gap:4px">Your private link<input id="calUrl" readonly value="${esc(r.url)}"></label>
       <div class="btnrow"><button class="btn sm primary" data-act="calCopy">Copy link</button><a class="btn sm" href="${esc(r.url.replace(/^https?:/, 'webcal:'))}">Open in my calendar app</a><button class="btn sm" data-act="calRenew">Make a new link</button></div>
-      <p class="note">Outlook: Add calendar, then Subscribe from web. Google Calendar: Other calendars, then From URL. Anyone with the link can see these events, so keep it to yourself; making a new link stops the old one.</p>`;
+      <p class="note">Add it in Outlook or Google Calendar as a calendar from a web address. Keep the link private.</p>`;
     if (renew) toast('New calendar link. The old one no longer works.');
   } catch (err) { box.innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
 }
@@ -2647,7 +2647,7 @@ function twoFactorSect() {
     <div id="tfBody"><form id="tfRecForm" class="form"><label class="wide">Code from your app<input id="tf_rcode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label><div class="wide"><button class="btn sm">Make new recovery codes</button></div><p class="note wide" id="tfRecMsg" role="status"></p></form>
     <form id="tfOffForm" class="form"><label class="wide">Password<input id="tf_pw" type="password" autocomplete="current-password" required></label><label class="wide">Code from your app, or a recovery code<input id="tf_ocode" autocomplete="one-time-code" maxlength="12" required></label><div class="wide"><button class="btn sm warn">Turn off two-step sign-in</button></div><p class="note wide" id="tfOffMsg" role="status"></p></form></div></details>`;
   return `<details class="sect" id="tfSect"><summary>Two-step sign-in <span class="status">Off</span></summary>
-    <p class="note">Ask for a code from an authenticator app, such as Google Authenticator, Microsoft Authenticator, 1Password or Authy, whenever you sign in on a new device. It keeps your clients' work safe even if your password leaks.</p>
+    <p class="note">Ask for a code from an authenticator app when you sign in on a new device.</p>
     <div id="tfBody"><button class="btn sm" data-act="tfStart">Turn on</button></div></details>`;
 }
 function showRecovery(codes, lead) {
@@ -2701,17 +2701,17 @@ function accountDrawer(scrollToEmail) {
   ${cfg.email ? `<details class="sect" id="emailSect" open><summary>Email from Headcount</summary>
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Digest<select id="pf_digest"><option value="daily" ${pr.digest === 'daily' ? 'selected' : ''}>Every morning</option><option value="weekly" ${pr.digest === 'weekly' ? 'selected' : ''}>Monday mornings</option><option value="off" ${pr.digest === 'off' ? 'selected' : ''}>No digest</option></select></label>
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Send it at<select id="pf_hour">${[6, 7, 8, 9, 10, 11, 12].map((h) => `<option value="${h}" ${pr.digestHour === h ? 'selected' : ''}>${h <= 12 ? h : h - 12}${h < 12 ? ' a.m.' : ' p.m.'}</option>`).join('')}</select></label>
-    <p class="note">The digest covers position changes, contacts logged, votes and meetings coming up, and your overdue follow-ups, in your time zone${pr.tz ? ` (${esc(pr.tz)})` : ''}.</p>
+    <p class="note">Moves, contacts, what's coming up and overdue follow-ups, in your time zone${pr.tz ? ` (${esc(pr.tz)})` : ''}.</p>
     <label class="note" style="display:flex;flex-direction:column;gap:4px">Monitor alerts<select id="pf_monitor"><option value="instant" ${pr.monitor === 'instant' ? 'selected' : ''}>Email me as soon as something relevant appears</option><option value="digest" ${pr.monitor !== 'instant' && pr.monitor !== 'off' ? 'selected' : ''}>Include them in my digest</option><option value="off" ${pr.monitor === 'off' ? 'selected' : ''}>Only show them in the app</option></select></label>
     <label class="check"><input type="checkbox" id="pf_assigned" ${pr.notifyAssigned ? 'checked' : ''}> Email me when someone assigns me a follow-up</label>
     <label class="check"><input type="checkbox" id="pf_added" ${pr.notifyAdded ? 'checked' : ''}> Email me when someone adds me to a campaign</label>
   </details>` : ''}
   <details class="sect" id="calSect"><summary>Calendar feed</summary>
-    <p class="note">See committee and floor votes, the meetings you sent invitations for, and your follow-ups in Outlook, Google Calendar or Apple Calendar. They refresh on their own, about every hour.</p>
+    <p class="note">Votes, meetings and follow-ups in your own calendar, kept up to date.</p>
     <div id="calBody"><p class="note">Loading</p></div></details>
   ${OPERATOR ? '<div class="btnrow"><button class="btn" data-x="serverSettings">Admin settings</button></div>' : ''}
   <div class="btnrow"><button class="btn" data-act="signout">Sign out</button>${CLOUD.local() ? '<button class="btn" data-act="signoutAll">Sign out on every device</button>' : ''}</div>
-  <details class="sect"><summary>Delete my account</summary><p class="note">This removes you from every workspace. A workspace you alone own passes to its longest-standing admin or member, or is deleted if nobody else is in it. It cannot be undone.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
+  <details class="sect"><summary>Delete my account</summary><p class="note">Removes you from every workspace and deletes your account. A workspace you own passes to its next admin.</p><div><button class="btn sm warn" data-act="delAccount">Delete my account</button></div></details>`);
   if (scrollToEmail && $('#emailSect')) $('#emailSect').scrollIntoView({ block: 'start' });
 }
 async function reloadClients() { CLIENTS = (await CLOUD.api('GET', `/api/workspaces/${ORG.id}/clients`)).clients; }

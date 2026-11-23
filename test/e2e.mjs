@@ -129,7 +129,7 @@ try {
   // ===== Signed out: everything works in the browser =====
   const guest = await person('Guest', 'google');
   await guest.page.goto(`${BASE}/app`); await guest.page.waitForSelector('.seat');
-  assert.match(await guest.page.locator('#banner').innerText(), /Example campaign/);
+  assert.match(await guest.page.locator('#banner').innerText(), /Example/);
   await guest.page.locator('#calls .who').first().click();
   await guest.page.click('[data-tab=staff]'); await guest.page.click('[data-act=addStaff]');
   await guest.page.fill('#st_name', 'Jamie Ortiz'); await guest.page.fill('#st_role', 'Scheduler'); await guest.page.fill('#st_email', 'jamie@senate.example.gov'); await guest.page.click('#stForm .primary');
