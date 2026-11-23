@@ -483,7 +483,7 @@ function storyPanelHtml() {
   const news = (d.news || []).filter((n) => Date.now() - n.foundAt < 14 * 864e5);
   const tl = (d.timeline || []).slice().reverse();
   return `<section class="story" aria-label="Where the bill stands">
-    <div class="row"><span class="label">Where it stands</span><button class="btn sm" data-act="storyAgain" title="Read the record again now">Check now</button></div>
+    <div class="row"><span class="label">Where it stands</span><span class="btnrow"><button class="linkbtn" data-act="glossary">What the words mean</button><button class="btn sm" data-act="storyAgain" title="Read the record again now">Check now</button></span></div>
     ${steps}
     <p class="now"><b>Now.</b> ${esc(st.now || 'No recorded actions yet.')}</p>
     ${st.last && st.last.plain && !(st.now || '').startsWith(st.last.plain) ? `<p class="next"><b>Latest.</b> ${esc(st.last.plain)}${st.last.date ? `, ${esc(fmtDay(st.last.date))}` : ''}.</p>` : ''}
@@ -2232,10 +2232,12 @@ function newCampDrawer() {
   const cloud = signedIn() && ORG && ORG.role !== 'guest';
   showDrawer(`<div class="row"><h2>New campaign</h2><button class="btn sm" data-act="close">Close</button></div>
   <form id="nForm" class="form">
+    <label class="wide">Legislature<select id="n_leg" name="leg"><option value="">Choose</option>${legOptions().map(([k, v]) => `<option value="${k}" ${k === lastLeg() ? 'selected' : ''}>${esc(v)}</option>`).join('')}${S.members.length && !S.example ? `<option value="copy">Same members as ${esc(clipWords(S.campaign.bill || 'this campaign', 60))}</option>` : ''}<option value="blank">Something else: I'll add the members</option></select></label>
     <label class="wide">Bill or vote<input id="n_bill" name="bill" required placeholder="HB 1021: Property insurance reform"></label>
-    <label>Your goal<select id="n_side" name="side"><option value="pass">Pass it</option><option value="defeat">Defeat it</option></select></label>
-    <label>Legislature<select id="n_leg" name="leg"><option value="">Choose</option>${legOptions().map(([k, v]) => `<option value="${k}" ${k === lastLeg() ? 'selected' : ''}>${esc(v)}</option>`).join('')}${S.members.length && !S.example ? `<option value="copy">Same members as ${esc(clipWords(S.campaign.bill || 'this campaign', 60))}</option>` : ''}<option value="blank">Something else: I'll add the members</option></select></label>
+    ${signedIn() && (CLOUD.config || {}).bills && CLOUD.config.bills.states ? `<p class="wide note" style="margin-top:-6px"><button type="button" class="linkbtn" data-act="nSearchToggle">Don't know the number? Search by topic</button></p>
+    <div class="wide nsearch" id="nSearch" hidden><div class="btnrow"><input id="ns_q" placeholder="A few words, like sales tax or broadband" aria-label="Search bills by topic" autocomplete="off"><button type="button" class="btn" data-act="nSearch">Search</button></div><div id="ns_out" class="ns-out" role="status"></div></div>` : ''}
     <label id="n_chWrap">Chamber<select id="n_from" name="from"></select><span class="note" id="n_hint" style="text-transform:none;font-stretch:100%"></span></label>
+    <label>Your goal<select id="n_side" name="side"><option value="pass">Pass it</option><option value="defeat">Defeat it</option></select></label>
     ${cloud ? `<label>Client<select id="n_client" name="clientId"><option value="">No client</option>${CLIENTS.filter((k) => !k.archived).map((k) => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('')}</select></label>
     <label>Who can see it<select id="n_vis" name="vis"><option value="org">Everyone in ${esc(ORG.name)}</option><option value="team">Only people I add</option></select></label>` : ''}
     <p class="wide note">Every current member is loaded with their office, phone and staff. ${cloud ? `It is saved to ${esc(ORG.name)}.` : signedIn() ? 'It is saved in this browser only until you set up a workspace.' : 'It is saved in this browser only. Sign in to save campaigns to your firm\'s workspace and share them.'}</p>
@@ -2244,6 +2246,54 @@ function newCampDrawer() {
   </form>`);
   nChamberSync();
 }
+// Finding a bill by topic, in the chosen legislature.
+async function billSearch() {
+  const out = $('#ns_out'), q = $('#ns_q').value.trim(), leg = ($('#n_leg') || {}).value || '';
+  if (!leg || leg === 'copy' || leg === 'blank') { out.innerHTML = '<p class="note">Choose the legislature below first, then search.</p>'; return; }
+  if (q.length < 3) { out.innerHTML = '<p class="note">Type a few words about the bill.</p>'; return; }
+  out.innerHTML = `<p class="note">Searching ${esc(legName(leg))}</p>`;
+  try {
+    const r = await CLOUD.api('GET', `/api/bills/search?${new URLSearchParams({ leg, q })}`);
+    out.innerHTML = r.bills.length ? `<ul class="ns-list">${r.bills.map((b) => `<li><div><b>${esc(b.number)}</b> <span class="meta">${esc(b.session)}</span><div>${esc(clipWords(b.title, 160))}</div><div class="meta">${esc(b.status)}${b.statusDate ? `, ${esc(fmtDay(b.statusDate))}` : ''}</div></div><button type="button" class="btn sm" data-act="nPick" data-n="${esc(b.number)}" data-title="${esc(b.title)}" data-leg="${esc(b.leg)}" data-s="${esc(b.session)}">Count this bill</button></li>`).join('')}</ul>` : `<p class="note">Nothing in ${esc(legName(leg))} matches "${esc(q)}". Try other words.</p>`;
+  } catch (e) { out.innerHTML = `<p class="note">${esc(e.message)}</p>`; }
+}
+// Plain meanings of the words legislatures and whip counts use.
+const GLOSSARY = [
+  ['Whip count', 'A tally of where every member stands on a bill, to see whether it has the votes. Headcount keeps one per campaign.'],
+  ['Yes, lean yes, undecided, lean no, no', 'Where a member stands. "Lean" means they are inclined that way but have not committed.'],
+  ['Odds of passage', 'Headcount\'s estimate that the bill would pass if the vote were today, from each member\'s position and how movable they are. It updates as you mark members.'],
+  ['Movable', 'How likely a member is to change position, from 1 (settled) to 5 (very persuadable). It shapes "Who to see next".'],
+  ['Floor threshold', 'How many votes it takes to pass: usually a majority of the members, sometimes two-thirds or three-fifths.'],
+  ['Committee', 'A small group of members who review bills on one subject before the full chamber votes. Most bills never get out of committee.'],
+  ['Referred', 'Sent to a committee for review.'],
+  ['Agenda, hearing', 'A committee meeting where the bill is scheduled to be discussed and often voted on. Meet the committee\'s members before it.'],
+  ['Committee substitute (CS)', 'A rewritten version of the bill that a committee adopts. In Florida, "CS by Commerce" means the Commerce committee approved it with changes.'],
+  ['Reported', 'Sent on by a committee to the full chamber, usually after approving it.'],
+  ['First, second and third reading', 'Formal stages on the floor. Amendments usually come at second reading; the final vote follows third reading.'],
+  ['Floor vote', 'A vote of the full House, Assembly or Senate.'],
+  ['Tabled', 'Set aside. A tabled bill can be taken up again later, but often is not.'],
+  ['Crossed over', 'Passed one chamber and went to the other, which repeats the committee and floor steps.'],
+  ['Concur', 'One chamber agrees to the other chamber\'s changes, so both have passed the same text.'],
+  ['Conference committee', 'Members of both chambers who work out the differences between their versions of a bill.'],
+  ['Enrolled', 'The final version passed by both chambers, prepared for the governor or the President.'],
+  ['Veto and override', 'The governor or the President rejects the bill. Lawmakers can override the veto, usually with two-thirds of each chamber.'],
+  ['Cloture', 'In the U.S. Senate, a vote to end debate so the Senate can vote. It takes 60 votes, which is why many bills need more than a majority there.'],
+  ['Motion to proceed', 'In the U.S. Senate, the motion to start working on a bill. It can itself need cloture.'],
+  ['Rules Committee', 'In the U.S. House, the committee that sets how long a bill is debated and which amendments are allowed.'],
+  ['Sponsor, cosponsor', 'The member who files the bill, and the members who sign on to support it.'],
+  ['Session', 'The period a legislature meets. Bills that have not passed by the end usually die and have to be filed again.'],
+  ['Chapter, Act number, Public Law', 'The number a bill gets when it becomes law.'],
+  ['Scheduler', 'The staffer who runs a legislator\'s calendar and answers meeting requests.'],
+  ['House, Assembly, House of Delegates', 'Different states\' names for the larger chamber. Headcount uses each state\'s own name.'],
+];
+function glossaryDrawer(term) {
+  showDrawer(`<div class="row"><h2>What the words mean</h2><button class="btn sm" data-act="close">Close</button></div>
+    <input id="gl_q" placeholder="Find a word" aria-label="Find a word" value="${esc(term)}">
+    <dl class="glossary" id="gl_list">${GLOSSARY.map(([w, d]) => `<div data-w="${esc(`${w} ${d}`.toLowerCase())}"><dt>${esc(w)}</dt><dd>${esc(d)}</dd></div>`).join('')}</dl>
+    <p class="note">Missing a word? The <a href="${GUIDE}" target="_blank" rel="noopener">step-by-step guide</a> explains each part of Headcount.</p>`);
+  glossaryFilter();
+}
+function glossaryFilter() { const q = (($('#gl_q') || {}).value || '').trim().toLowerCase(); document.querySelectorAll('#gl_list > div').forEach((d) => { d.hidden = Boolean(q) && !d.dataset.w.includes(q); }); }
 // The legislatures a campaign can be for: Congress and the states whose members load here.
 function legOptions() {
   const cfg = CLOUD.config || {}, states = Object.assign({}, cfg.rosters && signedIn() ? cfg.states || {} : {});
@@ -2437,7 +2487,7 @@ function newOrgDrawer() {
 // ---------- events ----------
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-open],[data-act],[data-view],[data-copy],[data-rep],[data-tab],[data-page],[data-rqmode],[data-opencamp],#scrim');
-  const menu = $('#moreMenu'); if (menu.open && !(e.target.closest('summary') && menu.contains(e.target))) menu.open = false;
+  for (const menu of [$('#moreMenu'), $('#helpMenu')]) if (menu && menu.open && !(e.target.closest('summary') && menu.contains(e.target))) menu.open = false;
   if (!t) return;
   if (t.dataset.tab) { tab = t.dataset.tab; staffEdit = null; return memberDrawer(openId); }
   if (t.id === 'scrim') return closeDrawer();
@@ -2644,6 +2694,14 @@ document.addEventListener('click', async (e) => {
     case 'briefCopy': return copyText(briefPlain(S.brief));
     case 'briefPrint': return window.print();
     case 'storyAgain': STORY.err = ''; loadStory(true); return;
+    case 'nSearchToggle': { const box = $('#nSearch'); box.hidden = !box.hidden; if (!box.hidden) $('#ns_q').focus(); return; }
+    case 'nSearch': return billSearch();
+    case 'nPick': {
+      $('#n_bill').value = `${t.dataset.n}: ${clipWords(t.dataset.title, 100)}`; const leg = $('#n_leg'); if (leg && [...leg.options].some((o) => o.value === t.dataset.leg)) leg.value = t.dataset.leg;
+      const f = $('#nForm'); f.dataset.session = t.dataset.s || ''; const ch = $('#n_from'); if (ch) delete ch.dataset.user;
+      nChamberSync(true); $('#nSearch').hidden = true; $('#nMsg').textContent = `${t.dataset.n} chosen. Check the chamber, then create the campaign.`; return;
+    }
+    case 'glossary': { const m = $('#helpMenu'); if (m) m.open = false; return glossaryDrawer(t.dataset.term || ''); }
     case 'pickChamber': {
       const v = t.dataset.v, label = t.dataset.label || t.textContent.trim(); if (!v) return;
       if (S.members.length && !S.example && !sure(`Replace the current roster with the ${label}`)) return;
@@ -2725,7 +2783,9 @@ document.addEventListener('input', (e) => {
   else if (id === 'sd_q') staffDirList();
   else if ((id === 'rq_body' || id === 'rq_subject') && RQ) { RQ.edited = true; rqRead(); }
   else if (id === 'n_bill') nChamberSync();
+  else if (id === 'gl_q') glossaryFilter();
 });
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target && e.target.id === 'ns_q') { e.preventDefault(); billSearch(); } });
 document.addEventListener('change', (e) => {
   const id = e.target.id;
   if (id === 'n_leg') { const f = $('#n_from'); if (f) delete f.dataset.user; nChamberSync(true); }
@@ -2772,6 +2832,7 @@ document.addEventListener('submit', async (e) => {
     const leg = String(fd.get('leg') || ''), from = String(fd.get('from') || '');
     if (!leg) { $('#nMsg').textContent = 'Choose the legislature, or "Something else" to add the members yourself.'; return; }
     if (!from) { $('#nMsg').textContent = 'Choose the chamber you are counting.'; return; }
+    if (e.target.dataset.session) st.brief.session = e.target.dataset.session.slice(0, 40);
     if (!['copy', 'blank'].includes(leg)) { st.campaign.leg = leg; try { localStorage.setItem('headcount.leg', leg); } catch (_) { /* fine */ } }
     let pick = from;
     if (/^[ps]:/.test(from)) {

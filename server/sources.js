@@ -1,5 +1,5 @@
 import { HttpError } from './db.js';
-import { fedBill, STATES, chamberOf } from './bills.js';
+import { fedBill, STATES, chamberOf, parseFederal } from './bills.js';
 
 // Public data behind the Monitor, the intelligence panels and the action
 // center. Each function returns plain, normalized objects so the rest of the
@@ -82,6 +82,29 @@ export async function stateBills(cfg, { states, q, since }) {
     }
   }
   return out;
+}
+
+// ---------- finding a bill by topic ----------
+// "sales tax" in Pennsylvania, "broadband" in Congress: the newest matching
+// bills, for someone who does not know the number. Open States covers
+// Congress as well as every state. Kept ten minutes.
+const SEARCH_CACHE = new Map();
+export async function searchBills(cfg, { leg, q }) {
+  if (!cfg.openStatesKey) throw new HttpError(501, 'Searching bills needs a free Open States key, which an admin adds under Admin settings.');
+  const st = String(leg || '').toUpperCase(), words = clip(q, 120);
+  if (st !== 'US' && !STATES[st]) throw new HttpError(400, 'Choose the legislature to search.');
+  if (words.length < 3) throw new HttpError(400, 'Type a few words about the bill, like "sales tax" or "broadband".');
+  const key = `${st}|${words.toLowerCase()}`, hit = SEARCH_CACHE.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60e3) return hit.value;
+  const terms = phrases(words).map((p) => (p.includes(' ') ? `"${p}"` : p)).join(' ');
+  const p = new URLSearchParams({ jurisdiction: st === 'US' ? 'ocd-jurisdiction/country:us/government' : ocd(st), q: terms || words, sort: 'updated_desc', per_page: '12' });
+  const body = await getJson(`${cfg.openStatesBase}/bills?${p}`, { headers: { 'X-API-KEY': cfg.openStatesKey }, name: 'Open States' });
+  const value = ((body && body.results) || []).map((b) => {
+    const f = st === 'US' ? parseFederal(b.identifier) : null;
+    return { number: f ? f.label : clip(b.identifier, 40), title: clip(b.title, 400), session: clip(b.session, 40), status: clip(b.latest_action_description, 200), statusDate: clip(b.latest_action_date, 10), leg: st };
+  });
+  SEARCH_CACHE.set(key, { at: Date.now(), value }); if (SEARCH_CACHE.size > 200) SEARCH_CACHE.delete(SEARCH_CACHE.keys().next().value);
+  return value;
 }
 
 // ---------- regulations ----------

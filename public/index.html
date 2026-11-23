@@ -40,7 +40,12 @@
     </div>
     <div class="tools">
       <span class="note" id="saveState"></span>
-      <a class="btn" id="helpBtn" href="/guide" target="_blank" rel="noopener">Help</a>
+      <details class="menu" id="helpMenu"><summary class="btn" id="helpBtn">Help</summary>
+        <div class="menulist">
+          <a href="/guide" target="_blank" rel="noopener">Step-by-step guide</a>
+          <button data-act="glossary">What the words mean</button>
+        </div>
+      </details>
       <button class="btn" data-act="setup" id="setupBtn">Edit campaign</button>
       <details class="menu" id="moreMenu"><summary class="btn">More</summary>
         <div class="menulist">

@@ -688,6 +688,13 @@ test('rosters for any state chamber load from Open States with offices', async (
   assert.equal((await api('mona', 'GET', '/api/rosters/state?state=CA&chamber=legislature')).status, 400, 'California has two chambers');
 });
 
+test('finding a bill by topic in one legislature', async () => {
+  const r = ok(await api('mona', 'GET', '/api/bills/search?leg=FL&q=property%20insurance'));
+  assert.ok(r.bills.length); assert.match(r.bills[0].number, /^HB \d+$/); assert.equal(r.bills[0].leg, 'FL'); assert.ok(r.bills[0].title);
+  assert.equal((await api('mona', 'GET', '/api/bills/search?leg=ZZ&q=insurance')).status, 400);
+  assert.equal((await api('mona', 'GET', '/api/bills/search?leg=FL&q=a')).status, 400);
+});
+
 test('the bill record says where it started and which chamber has it now', async () => {
   const r = ok(await api('mona', 'GET', '/api/bills/record?jurisdiction=FL&number=HB%20123'));
   assert.equal(r.origin, 'lower'); assert.equal(r.now, 'upper', 'it crossed over to the Senate');

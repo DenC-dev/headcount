@@ -498,3 +498,13 @@ details.timeline li.minor { opacity: .62; font-size: 14px; }
 .today .panel { margin: 0; }
 .story .hearing { border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .story .hearing p { margin: 0; flex: 1 1 260px; }
+.nsearch { border: 1px solid var(--line); background: var(--soft); padding: 12px; display: grid; gap: 10px; animation: popIn .2s var(--spring); }
+.nsearch .btnrow input { flex: 1 1 220px; }
+.ns-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); max-height: 360px; overflow: auto; }
+.ns-list li { background: var(--panel); padding: 10px 12px; display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; font-size: 14.5px; }
+.glossary { margin: 12px 0 0; display: grid; gap: 14px; }
+.glossary dt { font: 600 15px var(--body); }
+.glossary dd { margin: 2px 0 0; color: var(--muted); }
+#helpMenu .menulist a { display: block; padding: 8px 12px; color: var(--fg); text-decoration: none; }
+#helpMenu .menulist a:hover { background: var(--soft); }
+.ns-list .btn { white-space: nowrap; flex: none; }

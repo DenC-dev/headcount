@@ -424,6 +424,7 @@ export function createServer({ store = openDb(path.join(config.dataDir, 'headcou
     ['DELETE', `/api/campaigns/${C}/invites`, (m, x) => store.revokeInvites(m[1], x.user.id)],
     ['GET', '/api/bills/lookup', async (m, x) => { limit('bills:' + x.user.id, 20); const q = x.url.searchParams; return lookupBill(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
     ['GET', `/api/workspaces/${W}/today`, async (m, x) => ({ bills: store.listOrgCampaigns(m[1], x.user.id).filter((c) => !c.archived).map((c) => { const t = tracker.todayFor(c.summary); return t ? { id: c.id, name: c.name, ...t } : null; }).filter(Boolean) })],
+    ['GET', '/api/bills/search', async (m, x) => { limit('search:' + x.user.id, 20); const q = x.url.searchParams; return { bills: await sources.searchBills(config, { leg: q.get('leg'), q: q.get('q') }) }; }],
     ['GET', '/api/bills/story', async (m, x) => { limit('story:' + x.user.id, 60); const q = x.url.searchParams; return tracker.story(q.get('jurisdiction'), q.get('number'), q.get('session') || '', { force: q.get('fresh') === '1' }); }],
     ['GET', '/api/bills/record', async (m, x) => { limit('record:' + x.user.id, 30); const q = x.url.searchParams; return billRecord(config, { jurisdiction: q.get('jurisdiction'), number: q.get('number'), session: q.get('session') }); }],
     ['POST', '/api/bills/draft', async (m, x) => {
